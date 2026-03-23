@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.*
+agent/vault/
+agent/finance/*.key
+agent/finance/*.secret
+*.pem
+*.key
+.claude/
+.tools/
