@@ -551,12 +551,18 @@ class TelegramHandler:
                 from agent.core.web import WebAccess
                 web = WebAccess()
                 for url in urls_in_text[:2]:  # Max 2 URLs
+                    logger.info("auto_fetch_url", url=url)
                     result = await web.scrape_text(url, max_chars=2000)
-                    if "error" not in result and result.get("text"):
+                    if "error" in result:
+                        logger.warning("auto_fetch_error", url=url, error=result["error"])
+                    elif result.get("text"):
                         url_context += f"\n--- Obsah {url} ---\n{result['text'][:2000]}\n"
+                        logger.info("auto_fetch_ok", url=url, chars=len(result["text"]))
+                    else:
+                        logger.warning("auto_fetch_empty", url=url)
                 await web.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("auto_fetch_exception", error=str(e))
 
         # === STEP 5: Build prompt based on task type ===
         if task_type == "programming":
