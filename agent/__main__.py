@@ -76,16 +76,21 @@ async def run_agent(data_dir: str = "agent") -> None:
             telegram_task = asyncio.create_task(bot.start())
             logger.info("telegram_bot_enabled")
 
-            # Preload semantic router model in background (avoids 35s delay on first message)
-            async def _preload_semantic():
+            # Preload semantic models in background
+            async def _preload_models():
                 try:
                     from agent.brain.semantic_router import _load_model, _get_intent_embeddings
                     _load_model()
                     _get_intent_embeddings()
                     logger.info("semantic_router_preloaded")
+
+                    from agent.memory.rag import RAGIndex
+                    rag = RAGIndex()
+                    count = rag.build_index()
+                    logger.info("rag_index_preloaded", documents=count)
                 except Exception as e:
-                    logger.warning("semantic_router_preload_failed", error=str(e))
-            asyncio.create_task(_preload_semantic())
+                    logger.warning("preload_failed", error=str(e))
+            asyncio.create_task(_preload_models())
 
             # Start cron (John's initiative)
             from agent.core.cron import AgentCron

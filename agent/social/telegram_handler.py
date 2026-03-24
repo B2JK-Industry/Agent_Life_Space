@@ -56,6 +56,9 @@ class TelegramHandler:
         self._total_input_tokens: int = 0
         self._total_output_tokens: int = 0
         self._total_requests: int = 0
+        # Semantic cache and RAG (lazy init)
+        self._semantic_cache = None
+        self._rag_index = None
 
     async def handle(self, text: str, user_id: int, chat_id: int) -> str:
         text = text.strip()
@@ -446,19 +449,45 @@ class TelegramHandler:
         if internal_result:
             return internal_result
 
-        # === STEP 2: Classify task → select model ===
+        # === STEP 2: Semantic cache — already answered similar question? ===
+        try:
+            if self._semantic_cache is None:
+                from agent.memory.semantic_cache import SemanticCache
+                self._semantic_cache = SemanticCache()
+
+            cached = self._semantic_cache.lookup(text)
+            if cached:
+                return f"{cached}\n\n_📦 cache hit_"
+        except Exception:
+            pass  # Cache not available — continue
+
+        # === STEP 3: Self-RAG — search knowledge base before LLM ===
+        rag_context = ""
+        try:
+            if self._rag_index is None:
+                from agent.memory.rag import RAGIndex
+                self._rag_index = RAGIndex()
+
+            rag_result = self._rag_index.retrieve_for_llm(text)
+            if rag_result["action"] == "direct":
+                # High confidence KB match — answer directly
+                return f"Z knowledge base ({rag_result['source']}):\n{rag_result['context']}"
+            elif rag_result["action"] == "augment":
+                # Medium confidence — use as context for LLM
+                rag_context = rag_result["context"]
+        except Exception:
+            pass  # RAG not available — continue
+
+        # === STEP 4: Classify task → select model ===
         from agent.core.models import classify_task, get_model
         task_type = classify_task(text)
         model = get_model(task_type)
 
-        # === STEP 3: Build prompt based on task type ===
-        # Stable prefix (cacheable by Anthropic) + dynamic suffix
+        # === STEP 5: Build prompt based on task type ===
         if task_type == "programming":
             prompt = (
-                # --- STABLE PREFIX (cached across calls) ---
                 f"{SYSTEM_PROMPT}\n"
                 f"Si programátor. Pracuješ v ~/agent-life-space.\n\n"
-                # --- DYNAMIC (changes per request) ---
                 f"ÚLOHA: {text}\n\n"
                 f"Prečítaj súbory, napíš/uprav kód, spusti testy, commitni.\n"
                 f"Na konci VŽDY napíš zhrnutie. Odpovedaj po slovensky."
@@ -470,17 +499,20 @@ class TelegramHandler:
                 f"Odpovedz stručne, 1-2 vety max."
             )
         else:
-            # Chat — lean context, only relevant memories
-            context_json = await self._build_context_json(text)
-            context_str = orjson.dumps(context_json).decode() if context_json.get("memory", {}).get("semantic") else ""
-            prompt = (
-                # --- STABLE PREFIX ---
-                f"{SYSTEM_PROMPT}\n"
-                # --- DYNAMIC ---
-                f"{context_str}\n" if context_str else ""
-                f"Daniel: {text}\n"
-                f"Odpovedaj po slovensky. Na konci VŽDY napíš textovú odpoveď."
-            )
+            # Chat — add RAG context if available
+            if rag_context:
+                prompt = (
+                    f"{SYSTEM_PROMPT}\n"
+                    f"Relevantný kontext z tvojej knowledge base:\n{rag_context}\n\n"
+                    f"Daniel: {text}\n"
+                    f"Použi kontext vyššie ak je relevantný. Odpovedaj po slovensky."
+                )
+            else:
+                prompt = (
+                    f"{SYSTEM_PROMPT}\n"
+                    f"Daniel: {text}\n"
+                    f"Odpovedaj po slovensky."
+                )
 
         try:
             import subprocess
@@ -588,6 +620,15 @@ class TelegramHandler:
 
             # Auto-update skills based on what Claude actually did
             await self._auto_update_skills(reply)
+
+            # Store in semantic cache for future similar queries
+            try:
+                if self._semantic_cache and task_type not in ("programming",):
+                    # Strip usage line before caching
+                    clean_reply = reply.split("\n\n_💰")[0] if "_💰" in reply else reply
+                    self._semantic_cache.store(text, clean_reply)
+            except Exception:
+                pass
 
             return reply
 
