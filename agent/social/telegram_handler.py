@@ -142,6 +142,7 @@ class TelegramHandler:
             "/web": self._cmd_web,
             "/sandbox": self._cmd_sandbox,
             "/usage": self._cmd_usage,
+            "/review": self._cmd_review,
             "/help": self._cmd_help,
         }
 
@@ -173,6 +174,7 @@ class TelegramHandler:
             "/budget — finančný stav\n"
             "/newtask [názov] — vytvor novú úlohu\n"
             "/consolidate — spusti konsolidáciu pamäte\n"
+            "/review [súbor] — code review Python súboru\n"
             "/web [url] — stiahni a prečítaj webovú stránku\n"
             "/sandbox [python kód] — spusti kód v Docker sandboxe\n"
             "/usage — spotreba tokenov a náklady\n"
@@ -349,6 +351,56 @@ class TelegramHandler:
             f"_Priemer na požiadavku: "
             f"${self._total_cost_usd / max(self._total_requests, 1):.4f}_"
         )
+
+    async def _cmd_review(self, args: str) -> str:
+        """Code review Python súboru cez Programmer.review_file()."""
+        filepath = args.strip()
+        if not filepath:
+            return "Použi: /review [súbor]\nNapr: /review agent/core/router.py"
+
+        from agent.brain.programmer import Programmer
+
+        prog = Programmer()
+        review = prog.review_file(filepath)
+
+        # File not found or unreadable
+        if not review.passed:
+            error_msgs = [i["message"] for i in review.issues if i["type"] == "error"]
+            return f"*Review FAILED*\n`{filepath}`\n\n" + "\n".join(f"• {m}" for m in error_msgs)
+
+        # Count lines for context
+        from pathlib import Path
+        path = prog._root / filepath if not Path(filepath).is_absolute() else Path(filepath)
+        line_count = len(path.read_text(encoding="utf-8").splitlines()) if path.exists() else 0
+
+        # Build response
+        warnings = [i for i in review.issues if i["type"] == "warning"]
+        infos = [i for i in review.issues if i["type"] == "info"]
+
+        header = "*Code Review*"
+        if not review.issues and not review.suggestions:
+            header += " — OK ✓"
+        lines = [header, f"`{filepath}` ({line_count} riadkov)\n"]
+
+        if warnings:
+            lines.append(f"*Warnings ({len(warnings)}):*")
+            for w in warnings:
+                lines.append(f"  ⚠️ {w['message']}")
+
+        if infos:
+            lines.append(f"*Info ({len(infos)}):*")
+            for info in infos:
+                lines.append(f"  ℹ️ {info['message']}")
+
+        if review.suggestions:
+            lines.append(f"*Návrhy ({len(review.suggestions)}):*")
+            for s in review.suggestions:
+                lines.append(f"  💡 {s}")
+
+        if not review.issues and not review.suggestions:
+            lines.append("Žiadne problémy nájdené. Kód vyzerá čisto.")
+
+        return "\n".join(lines)
 
     async def _cmd_sandbox(self, args: str) -> str:
         """Run Python code in Docker sandbox."""
