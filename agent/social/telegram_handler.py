@@ -102,6 +102,7 @@ class TelegramHandler:
             "/sandbox": self._cmd_sandbox,
             "/usage": self._cmd_usage,
             "/review": self._cmd_review,
+            "/wallet": self._cmd_wallet,
             "/help": self._cmd_help,
         }
 
@@ -136,6 +137,7 @@ class TelegramHandler:
             "/review [súbor] — code review Python súboru\n"
             "/web [url] — stiahni a prečítaj webovú stránku\n"
             "/sandbox [python kód] — spusti kód v Docker sandboxe\n"
+            "/wallet — stav peňaženiek (ETH, BTC)\n"
             "/usage — spotreba tokenov a náklady\n"
             "/queue — stav pracovnej fronty\n"
             "/help — tento help\n\n"
@@ -360,6 +362,30 @@ class TelegramHandler:
             lines.append("Žiadne problémy nájdené. Kód vyzerá čisto.")
 
         return "\n".join(lines)
+
+    async def _cmd_wallet(self, args: str) -> str:
+        """Show wallet addresses and balances. NEVER show private keys."""
+        try:
+            import os
+            from agent.vault.secrets import SecretsManager
+            vault_dir = os.path.expanduser("~/agent-life-space/agent/vault")
+            master_key = os.environ.get("AGENT_VAULT_KEY", "")
+            if not master_key:
+                return "Vault nie je nakonfigurovaný. Spusti scripts/setup_vault.py."
+
+            vault = SecretsManager(vault_dir=vault_dir, master_key=master_key)
+
+            eth_addr = vault.get_secret("ETH_ADDRESS") or "nie je vytvorená"
+            btc_addr = vault.get_secret("BTC_ADDRESS") or "nie je vytvorená"
+
+            return (
+                f"*Peňaženky*\n\n"
+                f"ETH: `{eth_addr}`\n"
+                f"BTC: `{btc_addr}`\n\n"
+                f"_Private keys sú v šifrovanom vaulte. Nikdy ich neposielam._"
+            )
+        except Exception as e:
+            return f"Wallet chyba: {e}"
 
     async def _cmd_sandbox(self, args: str) -> str:
         """Run Python code in Docker sandbox."""
