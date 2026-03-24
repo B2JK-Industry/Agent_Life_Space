@@ -410,22 +410,40 @@ class TelegramHandler:
             )
         )
 
-        # Build structured JSON context
-        context_json = await self._build_context_json(text)
+        # Detect programming task — use lean prompt, let Claude Code work
+        programming_keywords = [
+            "naprogramuj", "implementuj", "napíš kód", "pridaj", "oprav bug",
+            "vytvor modul", "refaktoruj", "fix", "uprav kód", "pridaj príkaz",
+            "napíš test", "debug",
+        ]
+        is_programming = any(kw in text.lower() for kw in programming_keywords)
 
-        # Build prompt: identity + JSON context + user message
-        prompt = (
-            f"{SYSTEM_PROMPT}\n\n"
-            f"--- MÔJÉ AKTUÁLNE DÁTA (JSON) ---\n"
-            f"{orjson.dumps(context_json, option=orjson.OPT_INDENT_2).decode()}\n\n"
-            f"--- SPRÁVA OD DANIELA ---\n"
-            f"{text}\n\n"
-            f"Odpovedaj po slovensky, ako John. Použi reálne dáta z JSON kontextu vyššie.\n"
-            f"Ak dostaneš viacero úloh, sprav všetky a na konci zhrň výsledky do jednej odpovede.\n"
-            f"DÔLEŽITÉ: Na konci VŽDY napíš textovú odpoveď pre Daniela — zhrň čo si urobil alebo zistil.\n"
-            f"Nikdy neskonči len s výstupom z nástroja — vždy pridaj ľudskú odpoveď.\n"
-            f"Ak niečo spúšťaš (Python, Bash), na konci povedz výsledok."
-        )
+        if is_programming:
+            prompt = (
+                f"Si John, autonómny agent. Pracuješ v ~/agent-life-space.\n"
+                f"Daniel ti dal programátorskú úlohu cez Telegram.\n\n"
+                f"ÚLOHA: {text}\n\n"
+                f"POSTUP:\n"
+                f"1. Prečítaj relevantné súbory\n"
+                f"2. Napíš/uprav kód\n"
+                f"3. Spusti testy (python3 -m pytest tests/ -q)\n"
+                f"4. Ak testy prechádzajú, commitni a pushni (git add, commit, push)\n"
+                f"5. Na konci VŽDY napíš zhrnutie čo si urobil pre Daniela\n\n"
+                f"Odpovedaj po slovensky. MUSÍŠ skončiť textovou odpoveďou."
+            )
+        else:
+            # Regular conversation — full JSON context
+            context_json = await self._build_context_json(text)
+            prompt = (
+                f"{SYSTEM_PROMPT}\n\n"
+                f"--- MÔJÉ AKTUÁLNE DÁTA (JSON) ---\n"
+                f"{orjson.dumps(context_json, option=orjson.OPT_INDENT_2).decode()}\n\n"
+                f"--- SPRÁVA OD DANIELA ---\n"
+                f"{text}\n\n"
+                f"Odpovedaj po slovensky, ako John. Použi reálne dáta z JSON kontextu vyššie.\n"
+                f"DÔLEŽITÉ: Na konci VŽDY napíš textovú odpoveď pre Daniela.\n"
+                f"Ak niečo spúšťaš (Python, Bash), na konci povedz výsledok."
+            )
 
         try:
             import subprocess
