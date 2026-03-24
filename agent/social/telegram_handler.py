@@ -569,8 +569,9 @@ class TelegramHandler:
                 knowledge_dir=f"{base}/agent/brain/knowledge",
             )
             return ls.what_do_i_know()
-        except Exception:
-            return {"error": "learning system not loaded"}
+        except Exception as e:
+            logger.error("learning_load_error", error=str(e))
+            return {"error": f"learning: {e!s}"}
 
     async def _parse_and_execute_actions(self, user_text: str, reply: str) -> None:
         """
