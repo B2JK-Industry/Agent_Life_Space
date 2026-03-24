@@ -82,6 +82,7 @@ async def run_agent(data_dir: str = "agent") -> None:
             cron_task = asyncio.create_task(cron.start())
             logger.info("cron_enabled", owner_chat_id=owner_id)
         else:
+            work_loop = None
             cron = None
             cron_task = None
             logger.info("telegram_bot_disabled", reason="no TELEGRAM_BOT_TOKEN")
