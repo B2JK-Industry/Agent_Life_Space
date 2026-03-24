@@ -35,15 +35,16 @@ class InternalDispatcher:
         self._agent = agent
         self._patterns: list[tuple[list[str], str]] = [
             # (kľúčové slová, handler method name)
+            # NOTE: Order matters! More specific patterns FIRST.
+            (["kto si", "kto som", "identita", "o sebe"], "_handle_identity"),
+            (["čo vieš robiť", "čo všetko vieš", "schopnosti", "aké máš schopnosti"], "_handle_capabilities"),
+            (["skill", "schopnost", "ovládaš", "aké skills"], "_handle_skills"),
             (["stav", "status", "ako sa máš", "bežíš"], "_handle_status"),
             (["zdravie", "health", "cpu", "ram", "disk"], "_handle_health"),
-            (["úloh", "tasks", "task", "čo robíš", "čo máš"], "_handle_tasks"),
+            (["úloh", "tasks", "task", "čo robíš", "čo máš robiť"], "_handle_tasks"),
             (["pamäť", "memory", "spomienky", "pamätáš", "zapamätaj"], "_handle_memory"),
             (["rozpočet", "budget", "peniaze", "financ"], "_handle_budget"),
-            (["skill", "schopnost", "vieš", "ovládaš", "umíš"], "_handle_skills"),
             (["usage", "spotreba", "token", "náklad"], "_handle_usage"),
-            (["kto si", "kto som", "identita", "o sebe"], "_handle_identity"),
-            (["čo vieš", "čo všetko", "schopnosti"], "_handle_capabilities"),
         ]
 
     async def try_handle(self, text: str, handler_ref: Any = None) -> str | None:
