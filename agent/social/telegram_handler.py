@@ -627,7 +627,8 @@ class TelegramHandler:
             )
             reply += usage_line
 
-            await self._parse_and_execute_actions(text, reply, chat_id=self._owner_chat_id)
+            # Work queue triggered ONLY from user input (before Claude call).
+            # Claude has 15 turns — does multiple things itself, no re-queuing.
             return reply
 
         except subprocess.TimeoutExpired:
