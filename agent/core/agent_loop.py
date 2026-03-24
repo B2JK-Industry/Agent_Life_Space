@@ -172,7 +172,7 @@ class AgentLoop:
                 claude_bin,
                 "--print",
                 "--output-format", "json",
-                "--model", "claude-opus-4-6",
+                "--model", "claude-sonnet-4-6",
                 "--max-turns", "10",
                 "--dangerously-skip-permissions",
             ],
