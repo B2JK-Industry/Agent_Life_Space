@@ -44,16 +44,16 @@
   "file_write": {
     "category": "filesystem",
     "command_example": "echo 'text' > file",
-    "confidence": 0.0,
+    "confidence": 0.9,
     "description": "Zápis do súborov",
     "fail_count": 0,
-    "first_learned": "",
+    "first_learned": "2026-03-24",
     "last_error": "",
-    "last_used": "",
+    "last_used": "2026-03-24",
     "name": "file_write",
-    "notes": "",
-    "status": "unknown",
-    "success_count": 0
+    "notes": "Otestované 2x - zápis do /tmp aj do workspace (~agent-life-space/). Textové aj JSON súbory. Cleanup funguje. Spoľahlivý skill.",
+    "status": "learned",
+    "success_count": 2
   },
   "git_commit": {
     "category": "git",
@@ -240,43 +240,43 @@
   "task_create": {
     "category": "agent",
     "command_example": "tasks.create_task(name=...)",
-    "confidence": 0.0,
+    "confidence": 0.9,
     "description": "Vytvorenie úlohy",
     "fail_count": 0,
-    "first_learned": "",
+    "first_learned": "2026-03-24",
     "last_error": "",
-    "last_used": "",
+    "last_used": "2026-03-24",
     "name": "task_create",
-    "notes": "",
-    "status": "unknown",
-    "success_count": 0
+    "notes": "Otestované 6 testov - vytvorenie, dependency blocking, unblock po complete, get_next_task, validácia prázdneho mena, stats. Všetko OK. TaskManager vyžaduje async init s DB path.",
+    "status": "learned",
+    "success_count": 1
   },
   "telegram_send": {
     "category": "communication",
     "command_example": "via TelegramBot.send_message",
-    "confidence": 0.0,
+    "confidence": 0.9,
     "description": "Posielanie Telegram správ",
     "fail_count": 0,
-    "first_learned": "",
+    "first_learned": "2026-03-24",
     "last_error": "",
-    "last_used": "",
+    "last_used": "2026-03-24",
     "name": "telegram_send",
-    "notes": "",
-    "status": "unknown",
-    "success_count": 0
+    "notes": "Otestované - getMe OK (@b2jk_john_bot, id=8701046998), send_message OK (message_id=210). Markdown fallback funguje (prvý pokus s emoji v Markdown zlyhá, automaticky pošle plain text). TELEGRAM_USER_ID obsahuje viac ID oddelených čiarkou, treba split. Spoľahlivý skill.",
+    "status": "learned",
+    "success_count": 1
   },
   "web_scraping": {
     "category": "internet",
-    "command_example": "curl -s URL | python3 parse",
-    "confidence": 0.0,
+    "command_example": "requests.get(url) + BeautifulSoup(html, \"html.parser\")",
+    "confidence": 0.95,
     "description": "Čítanie webových stránok",
     "fail_count": 0,
-    "first_learned": "",
+    "first_learned": "2026-03-24",
     "last_error": "",
-    "last_used": "",
+    "last_used": "2026-03-24",
     "name": "web_scraping",
-    "notes": "",
-    "status": "unknown",
-    "success_count": 0
+    "notes": "Otestované 5 scenárov: 1) Základný GET+parse (quotes.toscrape.com) - OK, 2) Stránkovanie (pagination cez 3 strany) - OK, 3) Extrahovanie linkov (a[href]) - OK, 4) Custom User-Agent headers - OK, 5) JSON API scraping (github.com) - OK. Používa requests + BeautifulSoup4. Dôležité: vždy nastaviť timeout, rešpektovať robots.txt, neposielať spam.",
+    "status": "mastered",
+    "success_count": 3
   }
 }
