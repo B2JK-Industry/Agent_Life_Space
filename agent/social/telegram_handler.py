@@ -112,7 +112,7 @@ class TelegramHandler:
             "/usage": self._cmd_usage,
             "/review": self._cmd_review,
             "/wallet": self._cmd_wallet,
-            "/search": self._cmd_search,
+            "/hladaj": self._cmd_search,
             "/help": self._cmd_help,
         }
 
@@ -146,7 +146,7 @@ class TelegramHandler:
             "/consolidate — spusti konsolidáciu pamäte\n"
             "/review [súbor] — code review Python súboru\n"
             "/web [url] — stiahni a prečítaj webovú stránku\n"
-            "/search [query] — hľadaj na webe (DuckDuckGo)\n"
+            "/hladaj [query] — hľadaj na webe (DuckDuckGo)\n"
             "/sandbox [python kód] — spusti kód v Docker sandboxe\n"
             "/wallet — stav peňaženiek (ETH, BTC)\n"
             "/usage — spotreba tokenov a náklady\n"
@@ -438,7 +438,7 @@ class TelegramHandler:
         """Search the web via DuckDuckGo."""
         query = args.strip()
         if not query:
-            return "Použi: /search [čo hľadáš]\nNapr: /search moltbook ai agents"
+            return "Použi: /hladaj [čo hľadáš]\nNapr: /hladaj moltbook ai agents"
 
         from agent.core.web import WebAccess
         web = WebAccess()
