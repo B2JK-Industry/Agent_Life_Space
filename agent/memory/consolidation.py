@@ -166,8 +166,9 @@ class MemoryConsolidation:
         }
 
         if frequent_topics:
+            sorted_topics = sorted(frequent_topics.items(), key=lambda x: x[1], reverse=True)[:10]
             topic_summary = ", ".join(
-                f"{tag} ({count}×)" for tag, count in frequent_topics.most_common(10)
+                f"{tag} ({count}×)" for tag, count in sorted_topics
             )
             existing = await self._store.query(
                 memory_type=MemoryType.SEMANTIC,
