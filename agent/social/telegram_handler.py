@@ -633,28 +633,39 @@ class TelegramHandler:
         self, user_text: str, reply: str, chat_id: int = 0
     ) -> None:
         """
-        If reply contains multiple tasks, queue them in work loop.
-        If reply implies a single action, create a task.
+        If reply contains FUTURE action items, queue them.
+        Skip past-tense summaries (what was already done).
         """
-        reply_lower = reply.lower()
-
-        # Detect numbered list of tasks (e.g. "1. do X\n2. do Y\n3. do Z")
         import re
+
+        # Detect numbered list in reply
         numbered_items = re.findall(r"^\d+[\.\)]\s+(.+)$", reply, re.MULTILINE)
 
         if len(numbered_items) >= 2 and self._work_loop:
-            # Multiple tasks — queue them
-            cid = chat_id or self._owner_chat_id
-            added = self._work_loop.add_work(numbered_items, chat_id=cid)
-            if added > 0 and self._bot and cid:
-                await self._bot.send_message(
-                    cid,
-                    f"📋 Zaradil som {added} úloh do fronty. Spracúvam postupne.",
-                )
-            logger.info("work_queued_from_reply", items=added)
-            return
+            # Filter: only queue items that look like FUTURE actions, not past summaries
+            past_tense_markers = [
+                "som ", "bolo ", "prešlo", "hotovo", "urobil", "otestoval",
+                "zapísal", "funguje", "fungovalo", "OK", "✅", "naučil",
+                "commitol", "pushol", "stiahol", "parsoval",
+            ]
+            action_items = [
+                item for item in numbered_items
+                if not any(marker in item.lower() for marker in past_tense_markers)
+            ]
 
-        # Single action — create task
+            if len(action_items) >= 2:
+                cid = chat_id or self._owner_chat_id
+                added = self._work_loop.add_work(action_items, chat_id=cid)
+                if added > 0 and self._bot and cid:
+                    await self._bot.send_message(
+                        cid,
+                        f"📋 Zaradil som {added} úloh do fronty. Spracúvam postupne.",
+                    )
+                logger.info("work_queued_from_reply", items=added)
+                return
+
+        # Single future action — create task
+        reply_lower = reply.lower()
         action_phrases = ["urobím", "pripravím", "zistím", "naplánujem", "vytvorím", "preskúmam"]
         if any(phrase in reply_lower for phrase in action_phrases):
             first_sentence = reply.split(".")[0].split("!")[0].strip()
