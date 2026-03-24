@@ -209,11 +209,21 @@ class TelegramHandler:
         if text.startswith("/"):
             return await self._handle_command(text)
 
-        # Send typing indicator so Daniel sees John is thinking
+        # Keep sending typing indicator while John thinks
+        typing_task = None
         if self._bot:
-            await self._bot._api_call("sendChatAction", chat_id=chat_id, action="typing")
+            async def keep_typing():
+                while True:
+                    await self._bot._api_call("sendChatAction", chat_id=chat_id, action="typing")
+                    await asyncio.sleep(4)  # Telegram typing expires after 5s
 
-        return await self._handle_text(text)
+            typing_task = asyncio.create_task(keep_typing())
+
+        try:
+            return await self._handle_text(text)
+        finally:
+            if typing_task:
+                typing_task.cancel()
 
     async def _handle_command(self, text: str) -> str:
         parts = text.split(maxsplit=1)
@@ -461,42 +471,58 @@ class TelegramHandler:
             return f"Chyba: {e!s}"
 
     async def _build_context(self, text: str) -> str:
-        """Gather agent's internal state as context for thinking."""
+        """Gather agent's real internal state as context. Not generic — actual data."""
+        import psutil
+
         parts = [SYSTEM_PROMPT]
 
-        # Query relevant memories
+        # --- LIVE SYSTEM DATA ---
+        health = self._agent.watchdog.get_system_health()
+        mem_stats = self._agent.memory.get_stats()
+        task_stats = self._agent.tasks.get_stats()
+        job_stats = self._agent.job_runner.get_stats()
+
+        # Uptime
+        boot_time = psutil.boot_time()
+        import time
+        uptime_hours = (time.time() - boot_time) / 3600
+
+        parts.append(f"""
+--- LIVE STAV (reálne dáta, nie template) ---
+Server: b2jk-agentlifespace, Ubuntu 24.04, i7-5500U, 8GB RAM
+CPU: {health.cpu_percent:.1f}%, RAM: {health.memory_percent:.1f}% ({health.memory_used_mb:.0f}MB / {health.memory_available_mb:.0f}MB free)
+Disk: {health.disk_percent:.1f}%, Uptime: {uptime_hours:.0f} hodín
+Moduly: {', '.join(f'{n}={s}' for n, s in health.modules.items())}
+Spomienky: {mem_stats['total_memories']} (typy: {mem_stats.get('by_type', {})})
+Úlohy: {task_stats['total_tasks']} (stavy: {task_stats.get('by_status', {})})
+Joby: {job_stats['total_completed']} dokončených, {job_stats['total_failed']} zlyhaných
+GitHub: B2JK-Industry (token aktívny)
+Telegram: @b2jk_john_bot (tento chat)
+LLM: Claude Opus 4.6 cez Max predplatné""")
+
+        # Alerts
+        if health.alerts:
+            parts.append(f"ALERTY: {', '.join(health.alerts)}")
+
+        # --- RELEVANT MEMORIES (max 5, short) ---
         keywords = [w for w in text.split() if len(w) > 3]
         if keywords:
-            memories = await self._agent.memory.query(
-                keyword=keywords[0], limit=5
-            )
-            if memories:
-                parts.append("\n--- MOJE SPOMIENKY ---")
-                for m in memories:
-                    parts.append(f"[{m.memory_type.value}] {m.content}")
+            memories = await self._agent.memory.query(keyword=keywords[0], limit=3)
+        else:
+            memories = await self._agent.memory.query(limit=3)
 
-        # Current tasks
+        if memories:
+            parts.append("\n--- RELEVANTNÉ SPOMIENKY ---")
+            for m in memories:
+                parts.append(f"[{m.memory_type.value}] {m.content[:150]}")
+
+        # --- ACTIVE TASKS (max 3) ---
         from agent.tasks.manager import TaskStatus
         queued = self._agent.tasks.get_tasks_by_status(TaskStatus.QUEUED)
         if queued:
-            parts.append("\n--- MOJE ÚLOHY ---")
-            for t in queued[:5]:
-                parts.append(f"- {t.name} (dôležitosť: {t.importance})")
-
-        # System health summary
-        health = self._agent.watchdog.get_system_health()
-        parts.append(
-            f"\n--- MÔJ STAV ---\n"
-            f"CPU: {health.cpu_percent:.0f}%, RAM: {health.memory_percent:.0f}%, "
-            f"Disk: {health.disk_percent:.0f}%"
-        )
-        unhealthy = [n for n, s in health.modules.items() if s != "healthy"]
-        if unhealthy:
-            parts.append(f"Nezdravé moduly: {', '.join(unhealthy)}")
-
-        # Memory stats
-        mem_stats = self._agent.memory.get_stats()
-        parts.append(f"Spomienok: {mem_stats['total_memories']}")
+            parts.append("\n--- AKTÍVNE ÚLOHY ---")
+            for t in queued[:3]:
+                parts.append(f"- {t.name}")
 
         return "\n".join(parts)
 
