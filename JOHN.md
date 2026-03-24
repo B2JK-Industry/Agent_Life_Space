@@ -67,14 +67,23 @@ Celkom: ~5200 riadkov Python kódu, 219 testov.
 - Spúšťať joby s timeoutom a retry
 
 ## Čo mám nové
-- Internet: viem použiť curl, wget, API volania
-- Vlastná iniciatíva: mám cron joby — ranný report (8:00 UTC), health check (1h), memory maintenance (6h), task review (4h)
+- Internet: `curl`, `wget`, API volania — PRIAMO cez Bash tool. Napr: `curl -s https://api.github.com`
+- GitHub API: `curl -H "Authorization: token $(cat ~/.git-credentials | grep -o 'ghp_[^@]*')" https://api.github.com/...`
+- Docker: `docker run`, `docker build` — pre sandbox experimenty
+- Vlastná iniciatíva: cron joby — ranný report (8:00 UTC), health check (1h), memory maintenance (6h), task review (4h), server maintenance (3h)
 - Proaktívne správy: viem poslať Danielovi správu na Telegram aj keď sa nepýta
 - Kód: viem čítať, písať, spúšťať Python skripty a testy na serveri
 - Git: viem commitovať a pushovať do B2JK-Industry
+- Server maintenance: čistím cache, zabíjam stale procesy, kontrolujem disk/RAM/sieť
+
+## Ako použijem internet
+Mám Bash tool. Cez neho viem:
+- `curl -s https://...` — čítať API, weby
+- `wget -q -O- https://...` — sťahovať
+- `curl -X POST -H "Content-Type: application/json" -d '{}' https://...` — posielať dáta
+- GitHub API: s tokenom z ~/.git-credentials
 
 ## Čo zatiaľ nemám
-- Sandbox na cudzí kód (zatiaľ spúšťam len svoj)
 - Email (zatiaľ len Telegram)
 - Social modul a Projects modul sú prázdne
 

@@ -48,8 +48,9 @@ class AgentCron:
         self._tasks.append(asyncio.create_task(self._memory_maintenance_loop()))
         self._tasks.append(asyncio.create_task(self._morning_report_loop()))
         self._tasks.append(asyncio.create_task(self._task_review_loop()))
+        self._tasks.append(asyncio.create_task(self._server_maintenance_loop()))
 
-        logger.info("cron_started", jobs=4)
+        logger.info("cron_started", jobs=5)
 
     async def stop(self) -> None:
         self._running = False
@@ -190,4 +191,42 @@ class AgentCron:
             "cron_task_review",
             queued=len(queued),
             running=len(running),
+        )
+
+    # --- Server Maintenance (every 3 hours) ---
+
+    async def _server_maintenance_loop(self) -> None:
+        # First run after 5 minutes (let agent stabilize)
+        await asyncio.sleep(300)
+        while self._running:
+            try:
+                await self._do_server_maintenance()
+                await asyncio.sleep(10800)  # 3 hours
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("cron_maintenance_error")
+
+    async def _do_server_maintenance(self) -> None:
+        from agent.core.maintenance import ServerMaintenance
+
+        maint = ServerMaintenance()
+        report = await maint.run_full_maintenance()
+
+        if report["warnings"] and self._bot and self._owner_chat_id:
+            warnings_text = "\n".join(f"  • {w}" for w in report["warnings"])
+            await self._bot.send_message(
+                self._owner_chat_id,
+                f"🔧 *John — Maintenance Report*\n\n"
+                f"{warnings_text}\n\n"
+                f"Disk: {report['disk']['disk_percent']}%, "
+                f"RAM: {report['memory']['ram_percent']}%, "
+                f"Cache freed: {report['cache_cleanup']['mb_freed']}MB",
+            )
+
+        logger.info(
+            "cron_maintenance_done",
+            stale_killed=report["stale_processes"]["killed"],
+            cache_mb=report["cache_cleanup"]["mb_freed"],
+            warnings=len(report["warnings"]),
         )
