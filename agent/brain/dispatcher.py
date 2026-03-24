@@ -244,7 +244,7 @@ class InternalDispatcher:
         return None
 
     def _search_knowledge(self, text: str) -> str | None:
-        """Hľadaj v knowledge base."""
+        """Hľadaj v knowledge base. Prioritize category by query type."""
         try:
             from pathlib import Path
             from agent.brain.knowledge import KnowledgeBase
@@ -252,12 +252,23 @@ class InternalDispatcher:
             kb = KnowledgeBase(f"{base}/agent/brain/knowledge")
 
             keywords = self._normalize_keywords(text)
+
+            # Detect query type → search relevant category first
+            person_words = ["kto", "daniel", "človek", "osoba", "majiteľ", "owner"]
+            is_person_query = any(w in text.lower() for w in person_words)
+
             for kw in keywords[:3]:
+                # Search priority category first
+                if is_person_query:
+                    results = kb.search(kw, category="people")
+                    if results:
+                        return f"Z knowledge base ({results[0]['category']}/{results[0]['name']}):\n{results[0]['preview'][:300]}"
+
+                # Then search all
                 results = kb.search(kw)
                 if results:
                     best = results[0]
-                    preview = best["preview"][:300]
-                    return f"Z knowledge base ({best['category']}/{best['name']}):\n{preview}"
+                    return f"Z knowledge base ({best['category']}/{best['name']}):\n{best['preview'][:300]}"
         except Exception:
             pass
         return None
