@@ -393,7 +393,9 @@ class TelegramHandler:
             f"{orjson.dumps(context_json, option=orjson.OPT_INDENT_2).decode()}\n\n"
             f"--- SPRÁVA OD DANIELA ---\n"
             f"{text}\n\n"
-            f"Odpovedaj stručne, po slovensky, ako John. Použi reálne dáta z JSON kontextu vyššie."
+            f"Odpovedaj po slovensky, ako John. Použi reálne dáta z JSON kontextu vyššie.\n"
+            f"Ak dostaneš viacero úloh, sprav všetky a na konci zhrň výsledky do jednej odpovede.\n"
+            f"Vždy odpovedz — nikdy nevráť prázdnu odpoveď."
         )
 
         try:
@@ -414,7 +416,7 @@ class TelegramHandler:
                     "--print",
                     "--output-format", "json",
                     "--model", "claude-opus-4-6",
-                    "--max-turns", "5",
+                    "--max-turns", "10",
                     "--dangerously-skip-permissions",
                 ],
                 input=prompt,
