@@ -112,7 +112,6 @@ class TelegramHandler:
             "/usage": self._cmd_usage,
             "/review": self._cmd_review,
             "/wallet": self._cmd_wallet,
-            "/hladaj": self._cmd_search,
             "/help": self._cmd_help,
         }
 
@@ -146,7 +145,6 @@ class TelegramHandler:
             "/consolidate — spusti konsolidáciu pamäte\n"
             "/review [súbor] — code review Python súboru\n"
             "/web [url] — stiahni a prečítaj webovú stránku\n"
-            "/hladaj [query] — hľadaj na webe (DuckDuckGo)\n"
             "/sandbox [python kód] — spusti kód v Docker sandboxe\n"
             "/wallet — stav peňaženiek (ETH, BTC)\n"
             "/usage — spotreba tokenov a náklady\n"
@@ -434,42 +432,6 @@ class TelegramHandler:
                 f"```\n{errors[:2000] or output[:2000]}\n```"
             )
 
-    async def _cmd_search(self, args: str) -> str:
-        """Search the web via DuckDuckGo."""
-        query = args.strip()
-        if not query:
-            return "Použi: /hladaj [čo hľadáš]\nNapr: /hladaj moltbook ai agents"
-
-        from agent.core.web import WebAccess
-        web = WebAccess()
-        try:
-            result = await web.search_web(query, max_results=5)
-            if "error" in result:
-                return f"Chyba: {result['error']}"
-
-            if not result.get("results"):
-                return f"Nič som nenašiel pre: {query}"
-
-            lines = [f"*Výsledky pre:* {query}\n"]
-            for i, r in enumerate(result["results"], 1):
-                lines.append(f"{i}. [{r['title']}]({r['url']})")
-                if r.get("snippet"):
-                    lines.append(f"   _{r['snippet'][:150]}_\n")
-
-            # Store in memory
-            from agent.memory.store import MemoryEntry, MemoryType
-            await self._agent.memory.store(MemoryEntry(
-                content=f"Hľadal som '{query}': {len(result['results'])} výsledkov",
-                memory_type=MemoryType.EPISODIC,
-                tags=["web", "search", query.split()[0]],
-                source="web_search",
-                importance=0.4,
-            ))
-
-            return "\n".join(lines)
-        finally:
-            await web.close()
-
     # --- Free text — Claude thinks, agent acts ---
 
     async def _handle_text(self, text: str) -> str:
@@ -734,6 +696,68 @@ class TelegramHandler:
                     importance=0.3,
                 )
             )
+
+            # === POST-ROUTING: Confidence-based escalation ===
+            # Ak Haiku odpovedal nekvalitne → eskaluj na Sonnet
+            # Toto je pattern z RouteLLM research — hodnotíme OUTPUT, nie INPUT
+            if task_type not in ("simple", "greeting", "programming"):
+                try:
+                    from agent.core.response_quality import assess_quality
+                    quality = assess_quality(text, reply, model.model_id)
+
+                    if quality.should_escalate:
+                        logger.info(
+                            "post_routing_escalation",
+                            from_model=model.model_id,
+                            to_model="claude-sonnet-4-6",
+                            score=quality.score,
+                            reason=quality.reason,
+                        )
+                        # Re-run s Sonnet
+                        from agent.core.models import SONNET
+                        escalated_model = SONNET
+                        cli_args_esc = [
+                            claude_bin,
+                            "--print",
+                            "--output-format", "json",
+                            "--model", escalated_model.model_id,
+                            "--max-turns", str(escalated_model.max_turns),
+                        ]
+                        result_esc = await asyncio.to_thread(
+                            subprocess.run,
+                            cli_args_esc,
+                            input=prompt,
+                            capture_output=True,
+                            text=True,
+                            timeout=escalated_model.timeout,
+                            env=env,
+                            cwd=os.path.expanduser("~/agent-life-space"),
+                        )
+                        if result_esc.returncode == 0:
+                            try:
+                                esc_data = orjson.loads(result_esc.stdout)
+                                esc_reply = esc_data.get("result", "").strip()
+                                if esc_reply:
+                                    reply = esc_reply
+                                    model = escalated_model
+                                    esc_cost = esc_data.get("total_cost_usd", 0)
+                                    esc_tokens = esc_data.get("usage", {})
+                                    cost += esc_cost
+                                    input_tok += (
+                                        esc_tokens.get("input_tokens", 0)
+                                        + esc_tokens.get("cache_creation_input_tokens", 0)
+                                        + esc_tokens.get("cache_read_input_tokens", 0)
+                                    )
+                                    output_tok += esc_tokens.get("output_tokens", 0)
+                                    self._total_cost_usd += esc_cost
+                                    self._total_input_tokens += input_tok
+                                    self._total_output_tokens += output_tok
+                                    logger.info("post_routing_escalation_success",
+                                                model=escalated_model.model_id)
+                            except Exception:
+                                pass  # Escalation failed, keep original reply
+                except Exception as e:
+                    logger.error("post_routing_error", error=str(e))
 
             # Append usage info to reply (show model used)
             model_short = model.model_id.split("-")[1]  # "sonnet", "opus", "haiku"
