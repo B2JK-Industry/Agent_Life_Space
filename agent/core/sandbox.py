@@ -92,19 +92,18 @@ class DockerSandbox:
     ) -> SandboxResult:
         """
         Run Python code in isolated container.
-        Optionally install pip packages first.
+        Code is passed via stdin to avoid shell escaping issues.
         """
         image = "python:3.12-slim"
         timeout = min(timeout or self._timeout, _MAX_TIMEOUT)
 
         if packages:
-            # Install packages then run code
             pip_install = " && ".join(f"pip install -q {p}" for p in packages)
-            cmd = f"bash -c '{pip_install} && python3 -c {_shell_escape(code)}'"
+            cmd = ["bash", "-c", f"{pip_install} && python3"]
         else:
-            cmd = f"python3 -c {_shell_escape(code)}"
+            cmd = ["python3"]
 
-        return await self._docker_run(image, cmd, timeout)
+        return await self._docker_run(image, cmd, timeout, stdin_data=code)
 
     async def run_code(
         self,
@@ -115,14 +114,15 @@ class DockerSandbox:
         """
         Run code in specified language.
         Supports: python, node, bash, ruby.
+        Code passed via stdin to avoid escaping issues.
         """
         timeout = min(timeout or self._timeout, _MAX_TIMEOUT)
 
-        lang_config = {
-            "python": ("python:3.12-slim", f"python3 -c {_shell_escape(code)}"),
-            "node": ("node:20-slim", f"node -e {_shell_escape(code)}"),
-            "bash": ("alpine:latest", f"sh -c {_shell_escape(code)}"),
-            "ruby": ("ruby:3.2-slim", f"ruby -e {_shell_escape(code)}"),
+        lang_config: dict[str, tuple[str, list[str]]] = {
+            "python": ("python:3.12-slim", ["python3"]),
+            "node": ("node:20-slim", ["node"]),
+            "bash": ("alpine:latest", ["sh"]),
+            "ruby": ("ruby:3.2-slim", ["ruby"]),
         }
 
         config = lang_config.get(language.lower())
@@ -134,7 +134,7 @@ class DockerSandbox:
             )
 
         image, cmd = config
-        return await self._docker_run(image, cmd, timeout)
+        return await self._docker_run(image, cmd, timeout, stdin_data=code)
 
     async def run_command(
         self,
@@ -144,20 +144,22 @@ class DockerSandbox:
     ) -> SandboxResult:
         """Run arbitrary command in specified Docker image."""
         timeout = min(timeout or self._timeout, _MAX_TIMEOUT)
-        cmd = " ".join(command)
-        return await self._docker_run(image, cmd, timeout)
+        return await self._docker_run(image, command, timeout)
 
     async def _docker_run(
         self,
         image: str,
-        command: str,
+        command: list[str],
         timeout: int,
+        stdin_data: str | None = None,
     ) -> SandboxResult:
         """Core Docker run with all safety constraints."""
         network_flag = "bridge" if self._network else "none"
+        interactive_flag = "-i " if stdin_data else ""
 
-        docker_cmd = (
-            f"sg docker -c 'docker run --rm "
+        cmd_str = " ".join(command)
+        docker_args = (
+            f"docker run --rm {interactive_flag}"
             f"--memory={self._memory} "
             f"--cpus={self._cpus} "
             f"--network={network_flag} "
@@ -165,8 +167,9 @@ class DockerSandbox:
             f"--tmpfs /tmp:rw,size=64m "
             f"--pids-limit=50 "
             f"--security-opt=no-new-privileges "
-            f"{image} {command}'"
+            f"{image} {cmd_str}"
         )
+        docker_cmd = f"sg docker -c '{docker_args}'"
 
         logger.info(
             "sandbox_run",
@@ -179,13 +182,15 @@ class DockerSandbox:
         try:
             proc = await asyncio.create_subprocess_shell(
                 docker_cmd,
+                stdin=asyncio.subprocess.PIPE if stdin_data else None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
 
             try:
+                stdin_bytes = stdin_data.encode() if stdin_data else None
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout,
+                    proc.communicate(input=stdin_bytes), timeout=timeout,
                 )
             except asyncio.TimeoutError:
                 proc.kill()
@@ -244,7 +249,3 @@ class DockerSandbox:
             return {"available": False, "error": str(e)}
 
 
-def _shell_escape(code: str) -> str:
-    """Escape code for shell command."""
-    escaped = code.replace("'", "'\\''")
-    return f"'{escaped}'"
