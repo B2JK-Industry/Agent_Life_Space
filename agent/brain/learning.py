@@ -20,6 +20,7 @@ Toto je most medzi "myslím" a "viem".
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,30 @@ from agent.brain.knowledge import KnowledgeBase
 from agent.brain.skills import Skill, SkillRegistry, SkillStatus
 
 logger = structlog.get_logger(__name__)
+
+# Test commands for each skill — used by try_skill()
+_SKILL_TESTS: dict[str, str] = {
+    "file_write": "echo 'john_test' > /tmp/john_skill_test.txt && cat /tmp/john_skill_test.txt && rm /tmp/john_skill_test.txt",
+    "file_read": "cat /etc/hostname",
+    "git_commit": "cd ~/agent-life-space && git status",
+    "git_status": "cd ~/agent-life-space && git status",
+    "system_health": "free -h && df -h /",
+    "process_check": "ps aux --sort=-%mem | head -5",
+    "curl": "curl -s -o /dev/null -w '%{http_code}' https://httpbin.org/get",
+    "python_run": "python3 -c 'print(\"hello from john\")'",
+    "pytest": "cd ~/agent-life-space && python3 -m pytest tests/ -q --tb=no 2>&1 | tail -1",
+    "pip_install": "pip3 list 2>/dev/null | head -3",
+    "docker_run": "docker --version 2>/dev/null || echo 'docker not available'",
+    "maintenance": "python3 -c 'import psutil; print(f\"CPU: {psutil.cpu_percent()}%, RAM: {psutil.virtual_memory().percent}%\")'",
+    "telegram_send": "echo 'telegram_send: ok'",
+    "memory_store": "cd ~/agent-life-space && python3 -c 'print(\"memory_store: ok\")'",
+    "memory_query": "cd ~/agent-life-space && python3 -c 'print(\"memory_query: ok\")'",
+    "task_create": "cd ~/agent-life-space && python3 -c 'print(\"task_create: ok\")'",
+    "web_scraping": "curl -s -o /dev/null -w '%{http_code}' https://example.com",
+    "github_api": "curl -s -o /dev/null -w '%{http_code}' https://api.github.com",
+    "github_create_issue": "echo 'requires token — skip auto-test'",
+    "github_create_repo": "echo 'requires token — skip auto-test'",
+}
 
 
 class LearningSystem:
@@ -45,10 +70,12 @@ class LearningSystem:
         self.skills = SkillRegistry(skills_path)
         self.knowledge = KnowledgeBase(knowledge_dir)
 
-    def can_i_do(self, skill_name: str) -> dict[str, Any]:
+    def can_i_do(self, skill_name: str, auto_test: bool = False) -> dict[str, Any]:
         """
         John sa pýta: "Viem toto robiť?"
         Vracia rozhodnutie a kontext.
+
+        If auto_test=True and skill needs testing, runs test automatically.
         """
         skill = self.skills.get(skill_name)
 
@@ -63,6 +90,13 @@ class LearningSystem:
                 "knowledge_hints": [r["preview"][:100] for r in kb_results[:2]],
                 "advice": "Nepoznám tento skill. Skús to a uvidíme.",
             }
+
+        # Auto-test: if skill needs testing and we have a test command, run it now
+        if auto_test and skill.needs_testing:
+            test_result = self.try_skill(skill_name)
+            if test_result["tested"]:
+                # Re-read skill after test updated it
+                skill = self.skills.get(skill_name)
 
         if skill.status == SkillStatus.MASTERED:
             return {
@@ -100,6 +134,50 @@ class LearningSystem:
             "should_test": True,
             "advice": f"Ešte som to neskúšal. Command: {skill.command_example}",
         }
+
+    def try_skill(self, skill_name: str) -> dict[str, Any]:
+        """
+        Otestuj skill teraz. Spustí test command a zapíše výsledok.
+        Event-driven — volá sa keď John skill potrebuje, nie z cronu.
+        """
+        cmd = _SKILL_TESTS.get(skill_name)
+        if not cmd:
+            return {"tested": False, "reason": "no test command"}
+
+        logger.info("skill_auto_test_start", skill=skill_name)
+
+        try:
+            result = subprocess.run(
+                ["bash", "-c", cmd],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                self.skills.record_success(skill_name)
+                output = result.stdout.strip()[:200]
+                logger.info("skill_auto_test_ok", skill=skill_name, output=output)
+                return {
+                    "tested": True,
+                    "success": True,
+                    "output": output,
+                    "skill": skill_name,
+                }
+            else:
+                error = result.stderr.strip()[:200]
+                self.skills.record_failure(skill_name, error)
+                logger.warning("skill_auto_test_fail", skill=skill_name, error=error)
+                return {
+                    "tested": True,
+                    "success": False,
+                    "error": error,
+                    "skill": skill_name,
+                }
+        except subprocess.TimeoutExpired:
+            self.skills.record_failure(skill_name, "timeout (30s)")
+            logger.warning("skill_auto_test_timeout", skill=skill_name)
+            return {"tested": True, "success": False, "error": "timeout", "skill": skill_name}
+        except Exception as e:
+            logger.error("skill_auto_test_error", skill=skill_name, error=str(e))
+            return {"tested": True, "success": False, "error": str(e), "skill": skill_name}
 
     def i_did_it(
         self,

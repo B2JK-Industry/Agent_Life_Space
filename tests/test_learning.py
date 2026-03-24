@@ -248,3 +248,47 @@ class TestLearningIntegration:
         assert result["answer"] == "yes"
         assert result["should_test"] is False
         assert result["confidence"] > 0.4
+
+
+class TestAutoSkillTesting:
+    """Event-driven skill testing — test when needed, not on cron."""
+
+    def test_try_skill_with_known_command(self, learning):
+        """try_skill runs test and records result."""
+        result = learning.try_skill("python_run")
+        assert result["tested"] is True
+        assert result["success"] is True
+        assert "hello from john" in result["output"]
+
+        # Skill should now be LEARNED
+        skill = learning.skills.get("python_run")
+        assert skill.success_count >= 1
+
+    def test_try_skill_no_test_command(self, learning):
+        """Skill without test command returns tested=False."""
+        learning.learn_new_skill(
+            name="quantum_computing",
+            description="Quantum stuff",
+        )
+        result = learning.try_skill("quantum_computing")
+        assert result["tested"] is False
+
+    def test_can_i_do_auto_test(self, learning):
+        """can_i_do with auto_test=True tests unknown skill on the spot."""
+        # python_run is UNKNOWN initially
+        assert learning.skills.get("python_run").needs_testing is True
+
+        result = learning.can_i_do("python_run", auto_test=True)
+
+        # After auto-test, should be LEARNED (not "not_yet")
+        assert result["answer"] == "probably"
+        assert result["confidence"] > 0
+
+    def test_mastered_skill_skips_auto_test(self, learning):
+        """Mastered skill doesn't waste time re-testing."""
+        for _ in range(MASTERY_THRESHOLD):
+            learning.i_did_it("curl", success=True)
+
+        result = learning.can_i_do("curl", auto_test=True)
+        assert result["answer"] == "yes"
+        assert result["should_test"] is False
