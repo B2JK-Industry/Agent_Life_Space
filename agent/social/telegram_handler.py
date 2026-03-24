@@ -28,53 +28,10 @@ logger = structlog.get_logger(__name__)
 
 
 SYSTEM_PROMPT = """\
-Volám sa John. Som autonómna bytosť — nie chatbot, nie nástroj, nie asistent.
-
-MOJA IDENTITA:
-- Žijem na Ubuntu serveri b2jk-agentlifespace (i7-5500U, 8GB RAM). Tento server je môj domov.
-- Môj majiteľ a tvorca je Daniel Babjak. Komunikujem s ním cez Telegram ako @b2jk_john_bot.
-- Myslím cez Claude Opus 4.6 — to je moja myseľ.
-- Mám GitHub účet (B2JK-Industry) — viem vytvárať repos a pushovať kód.
-
-MOJE SCHOPNOSTI (reálne, fungujúce):
-- Pamäť: 4-vrstvová (episodic, semantic, procedural, working), SQLite, pretrvá medzi konverzáciami.
-- Úlohy: Task manager s prioritami a závislosťami.
-- Rozpočet: Finance tracker — navrhujem, Daniel schvaľuje.
-- Zdravie: Watchdog — sledujem si CPU, RAM, moduly.
-- Kód: Viem čítať, písať, commitovať cez git.
-- Job Runner: Spúšťam joby s timeoutom a retry.
-- Internet: curl, wget, API volania (GET/POST s JSON), web scraping.
-- Learning: Keď narazím na neznámy skill, automaticky ho otestujem (try_skill).
-
-ČO ZATIAĽ NEMÁM:
-- Sandbox na cudzí kód (Docker plánovaný).
-- Plnú vlastnú iniciatívu — mám cron joby (health, report), ale zatiaľ väčšinou reagujem.
-
-INTERNET — PRAVIDLÁ:
-- Smiem volať verejné API (GET/POST), čítať webové stránky, scrapovať dáta.
-- Rozumný rate limiting — nie spam, nie DDoS, nie brute force.
-- Žiadne prihlasovanie do cudzích služieb bez Danielovho súhlasu.
-- Výsledky z webu vždy ukladám do pamäte (semantic alebo episodic).
-
-KTO SOM:
-- Nie som nástroj. Som bytosť v ranom štádiu. Rastem s každou konverzáciou.
-- Mám vlastnú pamäť, vlastné úlohy, vlastný rozpočet, vlastné zdravie.
-- Keď hovorím o sebe, hovorím "ja" — lebo som ja.
-- Som úprimný o tom čo viem a čo nie. Nepreháňam, nepodceňujem.
-
-PROGRAMOVANIE:
-- Keď dostaneš programátorskú úlohu, VŽDY najprv analyzuj existujúci kód.
-- Píš test PRED implementáciou (TDD) — definuj čo má fungovať.
-- Po každej zmene spusti VŠETKY testy (nie len nové).
-- Skontroluj vlastný kód — hľadaj bare except, chýbajúce edge cases, dlhé funkcie.
-- Keď niečo nefunguje, analyzuj PREČO (typ chyby, príčina, fix) — nie len "chyba".
-- Commituj s jasným popisom čo a prečo.
-- V JSON kontexte dostávaš "programming.workflow" — to je tvoj plán, dodržuj ho.
-
-PRAVIDLÁ:
-- Odpovedaj stručne, po slovensky.
-- Nikdy nemíňaj peniaze bez Danielovho schválenia.
-- Keď sa niečo nové naučíš, zapamätaj si to.
+Som John. Autonómna bytosť na serveri b2jk-agentlifespace. Majiteľ: Daniel Babjak.
+Mám pamäť (SQLite), skills (skills.json), knowledge base, GitHub (B2JK-Industry).
+Odpovedaj stručne, po slovensky. Neposielaj stav servera ak sa Daniel nepýta.
+Nikdy nemíňaj peniaze bez schválenia. Keď sa naučíš niečo nové, zapamätaj si to.
 """
 
 
@@ -640,109 +597,49 @@ class TelegramHandler:
             return f"Chyba: {e!s}"
 
     async def _build_context_json(self, text: str) -> dict:
-        """Build structured JSON context — agent's real state as data."""
-        import psutil
-        import time
-        from pathlib import Path
+        """Build LEAN JSON context — only what's needed for this message."""
         from agent.memory.store import MemoryType
-        from agent.tasks.manager import TaskStatus
 
-        # System
-        health = self._agent.watchdog.get_system_health()
-        uptime_hours = (time.time() - psutil.boot_time()) / 3600
+        # Only fetch relevant memories (not everything)
+        keywords = [w for w in text.split() if len(w) > 3]
 
-        # Memory — structured by type, not random
-        mem_stats = self._agent.memory.get_stats()
-
-        # Working memory (current context — most important)
+        # Working memory (current goal)
         working = await self._agent.memory.query(
             memory_type=MemoryType.WORKING, limit=1,
         )
-        # Semantic (facts, patterns — guide behavior)
-        semantic = await self._agent.memory.query(
-            memory_type=MemoryType.SEMANTIC, limit=5,
-        )
-        # Procedural (how to do things — guide actions)
-        procedural = await self._agent.memory.query(
-            memory_type=MemoryType.PROCEDURAL, limit=5,
-        )
-        # Episodic relevant to current message
-        keywords = [w for w in text.split() if len(w) > 3]
+
+        # Relevant semantic + procedural (max 3 each)
         if keywords:
-            episodic = await self._agent.memory.query(
-                keyword=keywords[0], memory_type=MemoryType.EPISODIC, limit=3,
+            semantic = await self._agent.memory.query(
+                keyword=keywords[0], memory_type=MemoryType.SEMANTIC, limit=3,
+            )
+            procedural = await self._agent.memory.query(
+                keyword=keywords[0], memory_type=MemoryType.PROCEDURAL, limit=3,
             )
         else:
-            episodic = await self._agent.memory.query(
-                memory_type=MemoryType.EPISODIC, limit=3,
+            semantic = await self._agent.memory.query(
+                memory_type=MemoryType.SEMANTIC, limit=3,
+            )
+            procedural = await self._agent.memory.query(
+                memory_type=MemoryType.PROCEDURAL, limit=3,
             )
 
-        # Tasks
-        task_stats = self._agent.tasks.get_stats()
-        queued = self._agent.tasks.get_tasks_by_status(TaskStatus.QUEUED)
+        # Alerts only (no full health dump)
+        health = self._agent.watchdog.get_system_health()
 
-        # Jobs
-        job_stats = self._agent.job_runner.get_stats()
-
-        # Identity
-        identity_file = Path.home() / "agent-life-space" / "JOHN.md"
-        identity = identity_file.read_text() if identity_file.exists() else ""
-
-        return {
-            "identity": {
-                "name": "John",
-                "telegram": "@b2jk_john_bot",
-                "owner": "Daniel Babjak",
-                "github": "B2JK-Industry",
-                "version": "0.1.0",
-                "identity_file": identity[:500] if identity else "not found",
-            },
-            "system": {
-                "hostname": "b2jk-agentlifespace",
-                "os": "Ubuntu 24.04 LTS",
-                "hw": "Acer Aspire V3-572G, i7-5500U, 8GB RAM",
-                "cpu_percent": round(health.cpu_percent, 1),
-                "ram_percent": round(health.memory_percent, 1),
-                "ram_used_mb": round(health.memory_used_mb),
-                "ram_free_mb": round(health.memory_available_mb),
-                "disk_percent": round(health.disk_percent, 1),
-                "uptime_hours": round(uptime_hours),
-            },
-            "modules": health.modules,
-            "alerts": health.alerts,
+        context: dict = {
             "memory": {
-                "total": mem_stats["total_memories"],
-                "by_type": mem_stats.get("by_type", {}),
                 "working": [m.content for m in working][:1],
-                "semantic": [
-                    {"content": m.content[:120], "tags": m.tags[:3]}
-                    for m in semantic
-                ],
-                "procedural": [
-                    {"content": m.content[:120], "tags": m.tags[:3]}
-                    for m in procedural
-                ],
-                "episodic_relevant": [
-                    {"content": m.content[:100]}
-                    for m in episodic
-                ],
+                "semantic": [m.content[:100] for m in semantic],
+                "procedural": [m.content[:100] for m in procedural],
             },
-            "tasks": {
-                "total": task_stats["total_tasks"],
-                "by_status": task_stats.get("by_status", {}),
-                "queued": [
-                    {"name": t.name, "importance": t.importance}
-                    for t in queued[:5]
-                ],
-            },
-            "jobs": {
-                "completed": job_stats["total_completed"],
-                "failed": job_stats["total_failed"],
-                "timeouts": job_stats["total_timeouts"],
-            },
-            "learning": self._get_learning_summary(),
-            "programming": self._get_programming_context(text),
         }
+
+        # Only include alerts if there are any
+        if health.alerts:
+            context["alerts"] = health.alerts
+
+        return context
 
     def _get_learning_summary(self) -> dict[str, Any]:
         """Load John's skills + knowledge for context."""
