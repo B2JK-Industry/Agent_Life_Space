@@ -194,11 +194,28 @@ class InternalDispatcher:
 
     # --- Vyhľadávanie v existujúcich dátach ---
 
+    @staticmethod
+    def _normalize_keywords(text: str) -> list[str]:
+        """Extract and normalize keywords — strip Slovak suffixes."""
+        stop_words = {"vieš", "robíš", "máš", "jeho", "moje", "tvoj", "nejaký", "niečo", "tento"}
+        raw = [w for w in text.split() if len(w) > 3 and w not in stop_words]
+
+        # Slovak suffix stripping (basic — covers common cases)
+        suffixes = ["ovi", "ová", "ovho", "om", "ách", "ami", "iam", "och", "ov", "ej", "ím", "ou"]
+        normalized = set()
+        for word in raw:
+            normalized.add(word)
+            for suffix in suffixes:
+                if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+                    normalized.add(word[:-len(suffix)])
+                    break
+        return list(normalized)
+
     async def _search_memory(self, text: str) -> str | None:
         """Hľadaj v semantic a procedural pamäti."""
         from agent.memory.store import MemoryType
 
-        keywords = [w for w in text.split() if len(w) > 4]
+        keywords = self._normalize_keywords(text)
         if not keywords:
             return None
 
@@ -231,8 +248,8 @@ class InternalDispatcher:
             base = str(Path.home() / "agent-life-space")
             kb = KnowledgeBase(f"{base}/agent/brain/knowledge")
 
-            keywords = [w for w in text.split() if len(w) > 4]
-            for kw in keywords[:2]:
+            keywords = self._normalize_keywords(text)
+            for kw in keywords[:3]:
                 results = kb.search(kw)
                 if results:
                     best = results[0]
