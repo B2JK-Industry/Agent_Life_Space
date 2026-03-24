@@ -525,19 +525,38 @@ class TelegramHandler:
         import psutil
         import time
         from pathlib import Path
+        from agent.memory.store import MemoryType
         from agent.tasks.manager import TaskStatus
 
         # System
         health = self._agent.watchdog.get_system_health()
         uptime_hours = (time.time() - psutil.boot_time()) / 3600
 
-        # Memory
+        # Memory — structured by type, not random
         mem_stats = self._agent.memory.get_stats()
+
+        # Working memory (current context — most important)
+        working = await self._agent.memory.query(
+            memory_type=MemoryType.WORKING, limit=1,
+        )
+        # Semantic (facts, patterns — guide behavior)
+        semantic = await self._agent.memory.query(
+            memory_type=MemoryType.SEMANTIC, limit=5,
+        )
+        # Procedural (how to do things — guide actions)
+        procedural = await self._agent.memory.query(
+            memory_type=MemoryType.PROCEDURAL, limit=5,
+        )
+        # Episodic relevant to current message
         keywords = [w for w in text.split() if len(w) > 3]
         if keywords:
-            memories = await self._agent.memory.query(keyword=keywords[0], limit=5)
+            episodic = await self._agent.memory.query(
+                keyword=keywords[0], memory_type=MemoryType.EPISODIC, limit=3,
+            )
         else:
-            memories = await self._agent.memory.query(limit=5)
+            episodic = await self._agent.memory.query(
+                memory_type=MemoryType.EPISODIC, limit=3,
+            )
 
         # Tasks
         task_stats = self._agent.tasks.get_stats()
@@ -575,9 +594,18 @@ class TelegramHandler:
             "memory": {
                 "total": mem_stats["total_memories"],
                 "by_type": mem_stats.get("by_type", {}),
-                "relevant": [
-                    {"type": m.memory_type.value, "content": m.content[:120]}
-                    for m in memories
+                "working": [m.content for m in working][:1],
+                "semantic": [
+                    {"content": m.content[:120], "tags": m.tags[:3]}
+                    for m in semantic
+                ],
+                "procedural": [
+                    {"content": m.content[:120], "tags": m.tags[:3]}
+                    for m in procedural
+                ],
+                "episodic_relevant": [
+                    {"content": m.content[:100]}
+                    for m in episodic
                 ],
             },
             "tasks": {

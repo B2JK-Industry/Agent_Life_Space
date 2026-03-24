@@ -50,7 +50,8 @@ class AgentCron:
         self._tasks.append(asyncio.create_task(self._task_review_loop()))
         self._tasks.append(asyncio.create_task(self._server_maintenance_loop()))
 
-        logger.info("cron_started", jobs=5)
+        self._tasks.append(asyncio.create_task(self._consolidation_loop()))
+        logger.info("cron_started", jobs=6)
 
     async def stop(self) -> None:
         self._running = False
@@ -229,4 +230,32 @@ class AgentCron:
             stale_killed=report["stale_processes"]["killed"],
             cache_mb=report["cache_cleanup"]["mb_freed"],
             warnings=len(report["warnings"]),
+        )
+
+    # --- Memory Consolidation (every 2 hours) ---
+
+    async def _consolidation_loop(self) -> None:
+        # First run after 10 minutes
+        await asyncio.sleep(600)
+        while self._running:
+            try:
+                await self._do_consolidation()
+                await asyncio.sleep(7200)  # 2 hours
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("cron_consolidation_error")
+
+    async def _do_consolidation(self) -> None:
+        from agent.memory.consolidation import MemoryConsolidation
+
+        consolidator = MemoryConsolidation(self._agent.memory)
+        report = await consolidator.consolidate()
+
+        logger.info(
+            "cron_consolidation_done",
+            reviewed=report["episodic_reviewed"],
+            patterns=report["patterns_found"],
+            new_entries=report["new_semantic_procedural"],
+            deduplicated=report["deduplicated"],
         )
