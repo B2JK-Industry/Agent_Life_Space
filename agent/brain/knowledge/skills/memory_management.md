@@ -9,9 +9,12 @@ _Kategória: skills | Tags: memory, sqlite, store | Aktualizované: 2026-03-24_
 
 ## Implementácia
 - SQLite databáza: `agent/memory/memories.db`
-- Modul: `agent/memory/store.py`
-- API: `store()`, `query()`, `get_recent()`
+- `agent/memory/store.py` — hlavné úložisko, API: `store()`, `query()`, `get_recent()`
+- `agent/memory/consolidation.py` — konsolidácia a zhrnutie spomienok
+- `agent/memory/rag.py` — RAG retrieval pre kontextové vyhľadávanie
+- `agent/memory/semantic_cache.py` — sémantický cache pre opakované otázky
 
 ## Aktuálny stav
-- 96 spomienok (všetky episodic)
+- 466 spomienok (väčšinou episodic)
+- Konsolidácia, RAG a sémantický cache implementované
 - Treba budovať semantic a procedural pamäť

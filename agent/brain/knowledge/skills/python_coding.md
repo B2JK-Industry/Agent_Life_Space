@@ -14,12 +14,15 @@ _Kategória: skills | Tags: python, coding, venv | Aktualizované: 2026-03-24_
 - Asyncio — agent beží async
 
 ## Štruktúra projektu
-- `agent/core/` — jadro (router, agent, watchdog, job_runner)
-- `agent/brain/` — rozhodovanie, skills, knowledge
-- `agent/memory/` — SQLite pamäť
+- `agent/core/` — jadro (router, agent, agent_loop, watchdog, job_runner, llm_router, llm_client, cron, maintenance, sandbox, response_quality, web)
+- `agent/brain/` — rozhodovanie, dispatcher, semantic_router, skills, knowledge, learning, programmer
+- `agent/memory/` — SQLite pamäť, konsolidácia, RAG, sémantický cache
 - `agent/tasks/` — task manager
 - `agent/finance/` — rozpočet
 - `agent/social/` — Telegram bot + handler
 - `agent/logs/` — logging
 - `agent/vault/` — secrets
+- `agent/docs/` — dokumentácia a výskum
+- `agent/projects/` — projektový modul
+- `agent/work/` — pracovný priestor
 - `tests/` — testy

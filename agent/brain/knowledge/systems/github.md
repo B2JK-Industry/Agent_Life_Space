@@ -6,7 +6,11 @@ _Kategória: systems | Tags: github, git, repos | Aktualizované: 2026-03-24_
 - Token: uložený v vault (GITHUB_TOKEN)
 
 ## Repozitáre
-- **agent-life-space** — hlavný projekt, môj kód
+- **Agent_Life_Space** — hlavný projekt, môj kód
+- **john-test** — testovací repo
+- **anp-sovereign-node** — ANP sovereign node
+- **b2jk_test** — testovací repo
+- **CSNT** — ďalší projekt
 
 ## API
 - Base URL: https://api.github.com
