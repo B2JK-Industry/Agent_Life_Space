@@ -145,23 +145,24 @@ class TestBuildRecommendation:
 
 
 class TestProcessOutcome:
-    def test_success_updates_skills(self, learning_system: LearningSystem):
+    def test_success_detected_from_reply_text(self, learning_system: LearningSystem):
+        """Success sa detekuje z textu reply, nie z argumentu."""
         reply = "Spustil som pytest a 10 testov prešlo. Všetko OK."
         result = learning_system.process_outcome(
             task_description="otestuj kód",
             reply=reply,
-            success=True,
         )
+        assert result["success"] is True
         assert "pytest:success" in result["updates"]
-        assert "pytest" in result["detected_skills"]
 
-    def test_failure_records_error(self, learning_system: LearningSystem):
+    def test_failure_detected_from_reply_text(self, learning_system: LearningSystem):
+        """Failure sa detekuje z textu — 'Error' v reply."""
         reply = "Spustil som pytest ale Error: ModuleNotFoundError: No module named 'foo'"
         result = learning_system.process_outcome(
             task_description="otestuj foo modul",
             reply=reply,
-            success=False,
         )
+        assert result["success"] is False
         assert "pytest:failure" in result["updates"]
 
     def test_failure_saves_knowledge(self, learning_system: LearningSystem):
@@ -169,7 +170,6 @@ class TestProcessOutcome:
         result = learning_system.process_outcome(
             task_description="spusti docker kontajner",
             reply=reply,
-            success=False,
         )
         assert result["knowledge_saved"] is True
 
@@ -178,22 +178,119 @@ class TestProcessOutcome:
         result = learning_system.process_outcome(
             task_description="čo je zmysel života",
             reply=reply,
-            success=True,
         )
         assert result["detected_skills"] == []
         assert result["updates"] == []
 
     def test_multiple_skills_in_one_reply(self, learning_system: LearningSystem):
-        reply = "Prečítal som súbor cez file_read, spustil pytest a commitol cez git commit."
+        reply = "Prečítal som súbor, spustil pytest a commitol cez git commit. Hotovo."
         result = learning_system.process_outcome(
             task_description="otestuj a commitni",
             reply=reply,
-            success=True,
         )
         assert len(result["detected_skills"]) >= 2
+        assert result["success"] is True
+
+    def test_model_failure_recorded(self, learning_system: LearningSystem):
+        """Ak task zlyhá, model sa zaznamená pre budúcu eskaláciu."""
+        reply = "Docker run zlyhal. Error: timeout po 60s"
+        learning_system.process_outcome(
+            task_description="spusti kontajner",
+            reply=reply,
+            model_used="claude-haiku-4-5-20251001",
+        )
+        assert learning_system._get_last_failed_model("docker_run") == "claude-haiku-4-5-20251001"
+
+    def test_e2e_learning_changes_behavior(self, learning_system: LearningSystem):
+        """
+        KĽÚČOVÝ TEST: Po failure sa zmení model selection.
+
+        Flow:
+        1. Pytest zlyhá s Haiku
+        2. Nabudúce get adapt_model → eskaluje na Sonnet
+        """
+        # Step 1: Failure s Haiku
+        reply = "Spustil som pytest ale Error: SyntaxError v test_main.py"
+        learning_system.process_outcome(
+            task_description="spusti pytest",
+            reply=reply,
+            model_used="claude-haiku-4-5-20251001",
+        )
+
+        # Step 2: Nabudúce → model escalation
+        adaptation = learning_system.adapt_model("programming", "pytest")
+        assert adaptation["model_override"] == "claude-sonnet-4-6"
+        assert "eskalujem" in adaptation["reason"]
 
 
 # --- get_advice_for_task ---
+
+
+class TestDetectSuccess:
+    def test_clear_success(self, learning_system: LearningSystem):
+        assert learning_system._detect_success("Všetko OK, hotovo.") is True
+
+    def test_clear_failure(self, learning_system: LearningSystem):
+        assert learning_system._detect_success("Error: file not found") is False
+
+    def test_mixed_signals_failure_wins(self, learning_system: LearningSystem):
+        """Failure signal preváži success signal."""
+        assert learning_system._detect_success("Urobil som to ale Error: timeout") is False
+
+    def test_no_signals(self, learning_system: LearningSystem):
+        """Žiadne signály → nie je to success."""
+        assert learning_system._detect_success("Nejaký neutrálny text.") is False
+
+
+class TestAdaptModel:
+    def test_no_override_by_default(self, learning_system: LearningSystem):
+        result = learning_system.adapt_model("chat", "ahoj")
+        assert result["model_override"] is None
+
+    def test_escalation_after_failure(self, learning_system: LearningSystem):
+        # Record Haiku failure
+        learning_system.skills.record_failure("pytest", "syntax error")
+        learning_system._record_model_failure("pytest", "claude-haiku-4-5-20251001", "err")
+
+        result = learning_system.adapt_model("programming", "pytest")
+        assert result["model_override"] == "claude-sonnet-4-6"
+
+    def test_double_escalation(self, learning_system: LearningSystem):
+        """Haiku fail → Sonnet. Sonnet fail → Opus."""
+        learning_system.skills.record_failure("pytest", "err")
+        learning_system._record_model_failure("pytest", "claude-sonnet-4-6", "err")
+
+        result = learning_system.adapt_model("programming", "pytest")
+        assert result["model_override"] == "claude-opus-4-6"
+
+    def test_no_escalation_past_opus(self, learning_system: LearningSystem):
+        """Opus je max — žiadna ďalšia eskalácia."""
+        learning_system.skills.record_failure("pytest", "err")
+        learning_system._record_model_failure("pytest", "claude-opus-4-6", "err")
+
+        result = learning_system.adapt_model("programming", "pytest")
+        assert result["model_override"] is None
+
+
+class TestAugmentPrompt:
+    def test_no_augmentation_without_errors(self, learning_system: LearningSystem):
+        prompt = "Spusti pytest"
+        result = learning_system.augment_prompt("pytest", prompt)
+        assert result == prompt  # Bez zmeny
+
+    def test_augmentation_with_past_error(self, learning_system: LearningSystem):
+        # Ulož error do KB
+        learning_system.knowledge.store(
+            category="learned",
+            name="error_pytest",
+            content="## Chyba\nÚloha: pytest\nChyba: SyntaxError v conftest.py",
+            tags=["error", "pytest"],
+        )
+        prompt = "Spusti pytest"
+        result = learning_system.augment_prompt("pytest", prompt)
+        assert "DÔLEŽITÉ" in result
+        assert "chyby" in result.lower()
+        assert len(result) > len(prompt)
 
 
 class TestGetAdviceForTask:

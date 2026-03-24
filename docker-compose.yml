@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  agent:
+    build: .
+    container_name: agent-life-space
+    restart: always
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_USER_ID=${TELEGRAM_USER_ID}
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      - AGENT_VAULT_KEY=${AGENT_VAULT_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+    volumes:
+      - agent-data:/app/agent/memory
+      - agent-tasks:/app/agent/tasks
+      - agent-finance:/app/agent/finance
+      - agent-vault:/app/agent/vault
+      - agent-logs:/app/agent/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+    mem_limit: 4g
+    cpus: 2.0
+
+volumes:
+  agent-data:
+  agent-tasks:
+  agent-finance:
+  agent-vault:
+  agent-logs:

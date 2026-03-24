@@ -68,6 +68,15 @@ docker --version || echo "CHYBA: Docker je povinný pre sandbox!"
 python -m agent
 ```
 
+### Alternatíva: Docker Compose (one-liner)
+
+```bash
+git clone https://github.com/B2JK-Industry/Agent_Life_Space.git
+cd Agent_Life_Space
+cp .env.example .env  # uprav tokeny
+docker compose up -d
+```
+
 ---
 
 ## Architektúra
@@ -190,7 +199,30 @@ Vytvor `CLAUDE.md` s pravidlami pre agenta a `JOHN.md` (alebo tvoj názov) s ide
 3. Agent automaticky začne polling
 
 ### Krok 3: Skills
-Uprav `agent/brain/skills.py` — pridaj skills relevantné pre tvojho agenta. Predvolených je 20.
+Uprav `agent/brain/skills.py` — pridaj skills relevantné pre tvojho agenta. Predvolených 20:
+
+| Skill | Kategória | Popis |
+|-------|-----------|-------|
+| `curl` | internet | HTTP requesty |
+| `web_scraping` | internet | Čítanie webových stránok |
+| `github_api` | internet | GitHub API volania |
+| `github_create_issue` | github | Vytvoriť GitHub issue |
+| `github_create_repo` | github | Vytvoriť GitHub repo |
+| `git_commit` | git | Git commit a push |
+| `git_status` | git | Git status check |
+| `python_run` | code | Spustenie Python skriptu |
+| `pytest` | code | Spustenie testov |
+| `pip_install` | code | Inštalácia balíkov |
+| `docker_run` | docker | Docker kontajner |
+| `file_read` | filesystem | Čítanie súborov |
+| `file_write` | filesystem | Zápis do súborov |
+| `system_health` | system | CPU/RAM/disk kontrola |
+| `process_check` | system | Kontrola procesov |
+| `maintenance` | system | Server maintenance |
+| `memory_store` | agent | Uloženie do pamäte |
+| `memory_query` | agent | Hľadanie v pamäti |
+| `task_create` | agent | Vytvorenie úlohy |
+| `telegram_send` | communication | Telegram správy |
 
 ### Krok 4: Knowledge Base
 Pridaj .md súbory do `agent/brain/knowledge/`:

@@ -785,3 +785,28 @@ asyncio.run(test())
 10. **Spusti Scenár 6** — crash recovery
 
 Ak akýkoľvek scenár zlyhá → STOP. Oprav problém, spusti znova od začiatku.
+
+---
+
+## Rollback Plán
+
+Ak deploy zlyhá po scenári 5+ (service beží ale niečo nefunguje):
+
+```bash
+# 1. Zisti posledný fungujúci commit
+git log --oneline -10
+
+# 2. Rollback na posledný fungujúci commit
+git checkout <last-working-commit-hash>
+
+# 3. Reštartuj service
+systemctl --user restart agent-life-space
+
+# 4. Over že funguje
+sleep 10
+systemctl --user is-active agent-life-space
+
+# 5. Pošli /status cez Telegram — over odpoveď
+```
+
+**Dôležité:** Rollback cez `git checkout` je bezpečný — nestraťíš žiadne dáta (pamäť, úlohy, vault sú v SQLite/files mimo git).

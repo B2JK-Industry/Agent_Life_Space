@@ -291,26 +291,33 @@ class LearningSystem:
             "total_found": len(matching_skills) + len(kb_results),
         }
 
-    # === FEEDBACK LOOP ===
+    # === LEARNING SYSTEM ===
+    # Toto nie je len logger. Výstup OVPLYVŇUJE:
+    #   1. Model selection (escalation ak skill zlyhal)
+    #   2. Prompt (past errors sa pridajú do kontextu)
+    #   3. Routing (risky skills → silnejší model)
 
     def process_outcome(
         self,
         task_description: str,
         reply: str,
-        success: bool,
+        model_used: str = "",
     ) -> dict[str, Any]:
         """
-        Feedback loop po každom LLM volaní.
+        Spracuj výsledok po LLM volaní.
+
+        Success/failure sa DETEKUJE z reply textu, nie z argumentu.
+        Toto je kľúčový rozdiel od loggera — agent sa učí z reality.
 
         Flow:
-            1. Detekuj aké skills sa použili (z reply textu)
-            2. Aktualizuj skill status (success/failure)
-            3. Extrahuj nové poznatky (error messages, workaroundy)
-            4. Zapíš do knowledge base ak je to nové
-
-        Toto sa volá po KAŽDOM Claude response.
+            1. Analyzuj reply → urči success/failure z textu
+            2. Detekuj aké skills sa použili
+            3. Aktualizuj skill status
+            4. Ulož error do KB ak zlyhal (pre budúce prompt augmentation)
+            5. Zaznamenaj model → ak zlyhal, nabudúce eskalácia
         """
         detected_skills = self._detect_skills_in_text(reply)
+        success = self._detect_success(reply)
         updates = []
 
         for skill_name in detected_skills:
@@ -322,12 +329,15 @@ class LearningSystem:
                 self.skills.record_failure(skill_name, error_snippet)
                 updates.append(f"{skill_name}:failure")
 
-        # Extract and store new knowledge
+                # Zaznamenaj model pri failure → nabudúce eskalácia
+                if model_used:
+                    self._record_model_failure(skill_name, model_used, error_snippet)
+
+        # Extract and store new knowledge for future prompt augmentation
         knowledge_saved = False
         if not success:
             error_msg = self._extract_error(reply)
             if error_msg and len(error_msg) > 20:
-                # Zapíš chybu do knowledge base pre budúce referencie
                 self.knowledge.store(
                     category="learned",
                     name=f"error_{detected_skills[0] if detected_skills else 'unknown'}",
@@ -336,32 +346,97 @@ class LearningSystem:
                         f"Úloha: {task_description[:200]}\n"
                         f"Chyba: {error_msg}\n"
                         f"Skills: {', '.join(detected_skills)}\n"
+                        f"Model: {model_used}\n"
                     ),
                     tags=["error", "learned"] + detected_skills,
                 )
                 knowledge_saved = True
 
         if updates:
-            logger.info("learning_feedback", updates=updates, knowledge_saved=knowledge_saved)
+            logger.info("learning_feedback", updates=updates,
+                        success=success, knowledge_saved=knowledge_saved)
 
         return {
             "detected_skills": detected_skills,
             "updates": updates,
+            "success": success,
             "knowledge_saved": knowledge_saved,
         }
+
+    def adapt_model(self, task_type: str, text: str) -> dict[str, Any]:
+        """
+        BEHAVIORAL CHANGE #1: Model escalation.
+
+        Ak skill relevantný pre túto úlohu zlyhal s menším modelom,
+        eskaluj na silnejší. Toto MENÍ cascade routing.
+
+        Vracia:
+            model_override: str | None — ak None, použi default
+            reason: str — prečo eskalácia
+        """
+        relevant = self.find_relevant(text)
+
+        # Check for recent failures
+        for skill in relevant["matching_skills"]:
+            if skill["status"] == "failed":
+                failed_model = self._get_last_failed_model(skill["name"])
+                if failed_model:
+                    escalation = self._escalate_model(failed_model)
+                    if escalation:
+                        logger.info(
+                            "learning_model_escalation",
+                            skill=skill["name"],
+                            from_model=failed_model,
+                            to_model=escalation,
+                        )
+                        return {
+                            "model_override": escalation,
+                            "reason": f"Skill '{skill['name']}' zlyhal s {failed_model}, eskalujem na {escalation}",
+                        }
+
+        return {"model_override": None, "reason": ""}
+
+    def augment_prompt(self, text: str, base_prompt: str) -> str:
+        """
+        BEHAVIORAL CHANGE #2: Prompt augmentation.
+
+        Ak sú past errors relevantné pre túto úlohu,
+        pridaj ich do promptu. Agent sa VYHNE rovnakej chybe.
+
+        Toto MENÍ obsah promptu ktorý ide do LLM.
+        """
+        past_errors = self.knowledge.search("error")
+        # Filter to relevant errors only
+        words = [w for w in text.lower().split() if len(w) > 3]
+        relevant_errors = []
+        for e in past_errors:
+            preview = e.get("preview", "").lower()
+            if any(word in preview for word in words):
+                relevant_errors.append(e["preview"][:150])
+
+        if not relevant_errors:
+            return base_prompt
+
+        error_context = "\n".join(f"- {err}" for err in relevant_errors[:3])
+        augmented = (
+            f"{base_prompt}\n\n"
+            f"DÔLEŽITÉ — v minulosti sa vyskytli tieto chyby pri podobnej úlohe:\n"
+            f"{error_context}\n"
+            f"Vyhni sa rovnakým chybám."
+        )
+        logger.info("learning_prompt_augmented", errors_added=len(relevant_errors))
+        return augmented
 
     def get_advice_for_task(self, task_description: str) -> dict[str, Any]:
         """
         Pred úlohou: čo viem, čo by som mal vedieť?
 
-        Flow:
-            1. Nájdi relevantné skills
-            2. Skontroluj knowledge base
-            3. Vráť radu: ktoré skills použiť, na čo si dať pozor
+        Toto nie je len read — výstup ovplyvňuje:
+        - adapt_model() → model selection
+        - augment_prompt() → prompt content
         """
         relevant = self.find_relevant(task_description)
 
-        # Check for past errors on similar tasks
         past_errors = self.knowledge.search("error")
         relevant_errors = [
             e for e in past_errors
@@ -370,7 +445,6 @@ class LearningSystem:
                    if len(word) > 3)
         ]
 
-        # Build advice
         confident_skills = [
             s for s in relevant["matching_skills"]
             if s["confidence"] > 0.7
@@ -385,10 +459,56 @@ class LearningSystem:
             "risky_skills": risky_skills,
             "past_errors": [e["preview"][:100] for e in relevant_errors[:3]],
             "knowledge_available": len(relevant["knowledge_entries"]) > 0,
+            "has_failures": len(risky_skills) > 0,
             "recommendation": self._build_recommendation(
                 confident_skills, risky_skills, relevant_errors
             ),
         }
+
+    # --- Model failure tracking (in-memory, resets on restart) ---
+    _model_failures: dict[str, str] = {}  # skill_name → last failed model_id
+
+    def _record_model_failure(self, skill_name: str, model_id: str, error: str) -> None:
+        """Zaznamenaj ktorý model zlyhal pre skill."""
+        self._model_failures[skill_name] = model_id
+        logger.info("learning_model_failure_recorded", skill=skill_name, model=model_id)
+
+    def _get_last_failed_model(self, skill_name: str) -> str:
+        """Vráť posledný model čo zlyhal pre skill."""
+        return self._model_failures.get(skill_name, "")
+
+    @staticmethod
+    def _escalate_model(failed_model: str) -> str | None:
+        """Ak model zlyhal, vráť silnejší. None ak už nie je kam eskalovať."""
+        escalation_chain = {
+            "claude-haiku-4-5-20251001": "claude-sonnet-4-6",
+            "claude-sonnet-4-6": "claude-opus-4-6",
+        }
+        return escalation_chain.get(failed_model)
+
+    def _detect_success(self, reply: str) -> bool:
+        """
+        Detekuj success/failure z TEXTU reply, nie z argumentu.
+
+        Toto je kľúčové — agent sa učí z toho čo sa STALO,
+        nie z toho čo mu volajúci POVEDAL.
+        """
+        reply_lower = reply.lower()
+        success_signals = [
+            "ok", "funguje", "hotovo", "úspešne", "prešlo", "success",
+            "done", "passed", "works", "✅", "otestoval", "urobil",
+            "commitol", "vytvoril", "zapísal",
+        ]
+        failure_signals = [
+            "chyba", "error", "failed", "nefunguje", "timeout", "❌",
+            "traceback", "exception", "zlyhalo", "permission denied",
+            "not found", "nenájdené",
+        ]
+        success_score = sum(1 for s in success_signals if s in reply_lower)
+        failure_score = sum(1 for f in failure_signals if f in reply_lower)
+
+        # Failure signály majú väčšiu váhu — jedna chyba preváži
+        return success_score > 0 and failure_score == 0
 
     def _detect_skills_in_text(self, text: str) -> list[str]:
         """Detekuj použité skills z textu odpovede."""

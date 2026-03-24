@@ -508,6 +508,31 @@ class TelegramHandler:
         task_type = classify_task(text)
         model = get_model(task_type)
 
+        # === STEP 4.5: Learning adaptation — MENÍ model a prompt ===
+        try:
+            from agent.brain.learning import LearningSystem
+            learner = LearningSystem()
+
+            # BEHAVIORAL CHANGE #1: Model escalation
+            adaptation = learner.adapt_model(task_type, text)
+            if adaptation["model_override"]:
+                from agent.core.models import SONNET, OPUS
+                override_map = {
+                    "claude-sonnet-4-6": SONNET,
+                    "claude-opus-4-6": OPUS,
+                }
+                override = override_map.get(adaptation["model_override"])
+                if override:
+                    logger.info(
+                        "learning_override_model",
+                        original=model.model_id,
+                        override=override.model_id,
+                        reason=adaptation["reason"],
+                    )
+                    model = override
+        except Exception as e:
+            logger.error("learning_adapt_error", error=str(e))
+
         # === STEP 5: Build prompt based on task type ===
         if task_type == "programming":
             prompt = (
@@ -539,6 +564,13 @@ class TelegramHandler:
                     f"Odpovedaj po slovensky."
                 )
 
+        # === STEP 5.5: Learning prompt augmentation ===
+        try:
+            # BEHAVIORAL CHANGE #2: Past errors pridané do promptu
+            prompt = learner.augment_prompt(text, prompt)
+        except Exception:
+            pass  # learner nemusí byť dostupný
+
         try:
             import subprocess
             import os
@@ -550,16 +582,21 @@ class TelegramHandler:
 
             claude_bin = os.path.expanduser("~/.local/bin/claude")
 
+            # --dangerously-skip-permissions LEN pre programovacie úlohy
+            # kde Claude potrebuje čítať/písať súbory. Pre chat/greeting nie.
+            cli_args = [
+                claude_bin,
+                "--print",
+                "--output-format", "json",
+                "--model", model.model_id,
+                "--max-turns", str(model.max_turns),
+            ]
+            if task_type == "programming":
+                cli_args.append("--dangerously-skip-permissions")
+
             result = await asyncio.to_thread(
                 subprocess.run,
-                [
-                    claude_bin,
-                    "--print",
-                    "--output-format", "json",
-                    "--model", model.model_id,
-                    "--max-turns", str(model.max_turns),
-                    "--dangerously-skip-permissions",
-                ],
+                cli_args,
                 input=prompt,
                 capture_output=True,
                 text=True,
@@ -643,22 +680,13 @@ class TelegramHandler:
             )
             reply += usage_line
 
-            # Learning feedback loop — aktualizuj skills + knowledge
+            # Learning feedback loop — detekuje success/failure z reply textu
             try:
-                from agent.brain.learning import LearningSystem
-                learner = LearningSystem()
-                # Detect success/failure markers
-                reply_lower = reply.lower()
-                success_markers = ["ok", "funguje", "hotovo", "úspešne", "✅", "success"]
-                failure_markers = ["chyba", "error", "failed", "nefunguje", "❌"]
-                has_success = any(m in reply_lower for m in success_markers)
-                has_failure = any(m in reply_lower for m in failure_markers)
-                if has_success or has_failure:
-                    learner.process_outcome(
-                        task_description=text,
-                        reply=reply,
-                        success=has_success and not has_failure,
-                    )
+                learner.process_outcome(
+                    task_description=text,
+                    reply=reply,
+                    model_used=model.model_id,
+                )
             except Exception as e:
                 logger.error("learning_feedback_error", error=str(e))
 

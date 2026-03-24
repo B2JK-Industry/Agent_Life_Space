@@ -223,14 +223,16 @@ class AgentLoop:
             return "Nepodarilo sa spracovať odpoveď."
 
     def get_status(self) -> dict[str, Any]:
+        total = self._processed_count + self._error_count
         return {
             "queue_size": len(self._queue),
             "processing": self._processing,
-            "total_processed": self._processed_count,
+            "total_success": self._processed_count,
             "total_errors": self._error_count,
+            "total_attempted": total,
             "consecutive_errors": self._consecutive_errors,
             "running": self._running,
             "error_rate": round(
-                self._error_count / max(self._processed_count + self._error_count, 1), 2
+                self._error_count / max(total, 1), 2
             ),
         }

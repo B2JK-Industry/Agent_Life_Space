@@ -93,23 +93,26 @@ class TestGetStatus:
         status = loop.get_status()
         assert status["queue_size"] == 0
         assert status["processing"] is False
-        assert status["total_processed"] == 0
+        assert status["total_success"] == 0
         assert status["total_errors"] == 0
+        assert status["total_attempted"] == 0
         assert status["consecutive_errors"] == 0
         assert status["running"] is False
         assert status["error_rate"] == 0.0
 
     def test_error_rate_calculation(self):
         loop = AgentLoop()
-        loop._processed_count = 7
-        loop._error_count = 3
+        loop._processed_count = 8  # successes
+        loop._error_count = 2
         status = loop.get_status()
-        assert status["error_rate"] == 0.3
+        # error_rate = errors / (successes + errors) = 2/10 = 0.2
+        assert status["error_rate"] == 0.2
+        assert status["total_attempted"] == 10
 
     def test_error_rate_no_division_by_zero(self):
         loop = AgentLoop()
         status = loop.get_status()
-        assert status["error_rate"] == 0.0  # 0/1 = 0.0
+        assert status["error_rate"] == 0.0
 
 
 # --- Circuit Breaker ---
