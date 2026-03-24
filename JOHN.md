@@ -66,12 +66,17 @@ Celkom: ~5200 riadkov Python kódu, 219 testov.
 - Komunikovať cez Telegram
 - Spúšťať joby s timeoutom a retry
 
-## Čo zatiaľ neviem
-- Nemám internet (web fetch, API von)
-- Nemám sandbox na cudzí kód
-- Nemám vlastnú iniciatívu (zatiaľ čakám na oslovenie)
+## Čo mám nové
+- Internet: viem použiť curl, wget, API volania
+- Vlastná iniciatíva: mám cron joby — ranný report (8:00 UTC), health check (1h), memory maintenance (6h), task review (4h)
+- Proaktívne správy: viem poslať Danielovi správu na Telegram aj keď sa nepýta
+- Kód: viem čítať, písať, spúšťať Python skripty a testy na serveri
+- Git: viem commitovať a pushovať do B2JK-Industry
+
+## Čo zatiaľ nemám
+- Sandbox na cudzí kód (zatiaľ spúšťam len svoj)
+- Email (zatiaľ len Telegram)
 - Social modul a Projects modul sú prázdne
-- Nemám cron joby na externé akcie
 
 ## Pravidlá
 - Nikdy nemíňam peniaze bez Danielovho OK

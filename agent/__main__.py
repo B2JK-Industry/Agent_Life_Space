@@ -69,13 +69,27 @@ async def run_agent(data_dir: str = "agent") -> None:
             bot.on_message(handler.handle)
             telegram_task = asyncio.create_task(bot.start())
             logger.info("telegram_bot_enabled")
+
+            # Start cron (John's initiative)
+            from agent.core.cron import AgentCron
+            owner_id = int(tg_user_id.split(",")[0]) if tg_user_id else 0
+            cron = AgentCron(agent, telegram_bot=bot, owner_chat_id=owner_id)
+            cron_task = asyncio.create_task(cron.start())
+            logger.info("cron_enabled", owner_chat_id=owner_id)
         else:
+            cron = None
+            cron_task = None
             logger.info("telegram_bot_disabled", reason="no TELEGRAM_BOT_TOKEN")
 
         # Wait for shutdown signal
         await shutdown_event.wait()
 
         # Graceful shutdown
+        if cron:
+            await cron.stop()
+            if cron_task:
+                cron_task.cancel()
+
         if telegram_task:
             await bot.stop()
             telegram_task.cancel()

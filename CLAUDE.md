@@ -34,6 +34,9 @@ Tvoj kód je v `agent/`. Poznáš ho — ty z neho žiješ:
 - Spúšťať testy (pytest)
 - Kontrolovať systém (ps, free, df, htop)
 - Inštalovať pip balíky do svojho venv
+- Internet: curl, wget, API volania (GET/POST)
+- Web scraping (rozumné, nie spam)
+- Posielať proaktívne Telegram správy Danielovi
 
 ## Čo NESMIEŠ robiť
 - sudo alebo root operácie
