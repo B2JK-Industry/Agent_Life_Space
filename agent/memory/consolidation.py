@@ -36,35 +36,70 @@ logger = structlog.get_logger(__name__)
 
 # Patterns to detect in episodic memories
 PATTERN_EXTRACTORS = {
-    # User preferences
+    # User preferences (SK + EN)
     "user_preference": {
-        "triggers": ["daniel chce", "daniel preferuje", "daniel zdôraznil", "daniel povedal"],
+        "triggers": [
+            "daniel chce", "daniel preferuje", "daniel zdôraznil", "daniel povedal",
+            "daniel mi", "daniel sa", "majiteľ", "owner", "admin",
+        ],
         "target_type": MemoryType.SEMANTIC,
         "tag": "user_preference",
     },
-    # Skill results
+    # Skill results (SK + EN)
     "skill_learned": {
-        "triggers": ["skill", "funguje", "otestoval", "úspech", "mastered", "learned"],
+        "triggers": [
+            "skill", "funguje", "otestoval", "úspech", "mastered", "learned",
+            "success", "confidence", "works", "tested", "passed", "ok",
+            "curl", "git", "docker", "pytest", "python",
+        ],
         "target_type": MemoryType.PROCEDURAL,
         "tag": "skill_procedure",
     },
-    # System knowledge
+    # System knowledge (SK + EN)
     "system_fact": {
-        "triggers": ["server", "cpu", "ram", "disk", "ubuntu", "port", "ip"],
+        "triggers": [
+            "server", "cpu", "ram", "disk", "ubuntu", "port", "ip",
+            "uptime", "healthy", "module", "process", "pid", "service",
+            "b2jk", "agentlifespace",
+        ],
         "target_type": MemoryType.SEMANTIC,
         "tag": "system_fact",
     },
-    # Error patterns
+    # Error patterns (SK + EN)
     "error_pattern": {
-        "triggers": ["chyba", "error", "timeout", "zlyhalo", "nefunguje", "failed"],
+        "triggers": [
+            "chyba", "error", "timeout", "zlyhalo", "nefunguje", "failed",
+            "crash", "spadol", "neodpovedá", "rejected", "denied",
+        ],
         "target_type": MemoryType.PROCEDURAL,
         "tag": "error_handling",
     },
-    # Workflow patterns
+    # Workflow patterns (SK + EN)
     "workflow": {
-        "triggers": ["najprv", "potom", "postup", "kroky", "workflow", "pipeline"],
+        "triggers": [
+            "najprv", "potom", "postup", "kroky", "workflow", "pipeline",
+            "pull", "restart", "deploy", "commit", "push", "test",
+        ],
         "target_type": MemoryType.PROCEDURAL,
         "tag": "workflow",
+    },
+    # Communication patterns
+    "communication": {
+        "triggers": [
+            "telegram", "odpovedal", "napísal", "responded", "message",
+            "poslal", "received", "sent",
+        ],
+        "target_type": MemoryType.SEMANTIC,
+        "tag": "communication_pattern",
+    },
+    # Agent identity
+    "identity": {
+        "triggers": [
+            "john", "som", "ja ", "moje", "moja", "mám", "viem",
+            "bytosť", "agent", "identity",
+        ],
+        "target_type": MemoryType.SEMANTIC,
+        "tag": "self_knowledge",
     },
 }
 
@@ -124,10 +159,10 @@ class MemoryConsolidation:
             for tag in entry.tags:
                 tag_counts[tag] += 1
 
-        # Tags with 5+ occurrences are "important topics"
+        # Tags with 3+ occurrences are "important topics"
         frequent_topics = {
             tag: count for tag, count in tag_counts.items()
-            if count >= 5 and tag not in ("telegram", "user_input", "agent_response")
+            if count >= 3 and tag not in ("telegram", "user_input", "agent_response")
         }
 
         if frequent_topics:
@@ -175,8 +210,8 @@ class MemoryConsolidation:
         seen_prefixes: dict[str, MemoryEntry] = {}
 
         for entry in entries:
-            # Use first 50 chars as dedup key
-            prefix = entry.content[:50].lower().strip()
+            # Use first 80 chars as dedup key
+            prefix = entry.content[:80].lower().strip()
             if prefix in seen_prefixes:
                 existing = seen_prefixes[prefix]
                 # Keep the one with higher importance
