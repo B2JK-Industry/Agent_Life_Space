@@ -56,6 +56,8 @@ class TelegramBot:
         self._last_update_id = 0
         self._handlers: dict[str, Any] = {}
         self._message_callback: Any = None
+        self._bot_username: str = ""
+        self._bot_id: int = 0
 
     async def start(self) -> None:
         """Start polling for messages."""
@@ -65,13 +67,15 @@ class TelegramBot:
         self._session = aiohttp.ClientSession()
         self._running = True
 
-        # Verify bot token
+        # Verify bot token and store identity
         me = await self._api_call("getMe")
         if me:
+            self._bot_username = me.get("username", "")
+            self._bot_id = me.get("id", 0)
             logger.info(
                 "telegram_bot_started",
-                username=me.get("username"),
-                bot_id=me.get("id"),
+                username=self._bot_username,
+                bot_id=self._bot_id,
             )
         else:
             logger.error("telegram_bot_token_invalid")
@@ -143,11 +147,27 @@ class TelegramBot:
                 await self._handle_message(message)
 
     async def _handle_message(self, message: dict[str, Any]) -> None:
-        """Process an incoming message."""
+        """Process an incoming message (private or group)."""
         chat_id = message["chat"]["id"]
+        chat_type = message["chat"].get("type", "private")
         user_id = message.get("from", {}).get("id", 0)
         text = message.get("text", "")
         username = message.get("from", {}).get("username", "unknown")
+
+        # In groups, only respond if mentioned or replied to
+        if chat_type in ("group", "supergroup"):
+            bot_mentioned = f"@{self._bot_username}" in text if self._bot_username else False
+            is_reply_to_bot = (
+                message.get("reply_to_message", {}).get("from", {}).get("id") == self._bot_id
+            )
+            if not bot_mentioned and not is_reply_to_bot:
+                return  # Ignore non-directed group messages
+            # Strip the @mention from text
+            if self._bot_username:
+                text = text.replace(f"@{self._bot_username}", "").strip()
+
+        if not text:
+            return
 
         # Security: check if user is authorized
         if self._allowed_users and user_id not in self._allowed_users:
@@ -155,6 +175,7 @@ class TelegramBot:
                 "telegram_unauthorized",
                 user_id=user_id,
                 username=username,
+                chat_type=chat_type,
             )
             await self.send_message(
                 chat_id, "Unauthorized. This bot only responds to its owner."
