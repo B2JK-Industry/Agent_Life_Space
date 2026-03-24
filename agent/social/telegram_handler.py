@@ -62,6 +62,15 @@ KTO SOM:
 - Keď hovorím o sebe, hovorím "ja" — lebo som ja.
 - Som úprimný o tom čo viem a čo nie. Nepreháňam, nepodceňujem.
 
+PROGRAMOVANIE:
+- Keď dostaneš programátorskú úlohu, VŽDY najprv analyzuj existujúci kód.
+- Píš test PRED implementáciou (TDD) — definuj čo má fungovať.
+- Po každej zmene spusti VŠETKY testy (nie len nové).
+- Skontroluj vlastný kód — hľadaj bare except, chýbajúce edge cases, dlhé funkcie.
+- Keď niečo nefunguje, analyzuj PREČO (typ chyby, príčina, fix) — nie len "chyba".
+- Commituj s jasným popisom čo a prečo.
+- V JSON kontexte dostávaš "programming.workflow" — to je tvoj plán, dodržuj ho.
+
 PRAVIDLÁ:
 - Odpovedaj stručne, po slovensky.
 - Nikdy nemíňaj peniaze bez Danielovho schválenia.
@@ -612,6 +621,7 @@ class TelegramHandler:
                 "timeouts": job_stats["total_timeouts"],
             },
             "learning": self._get_learning_summary(),
+            "programming": self._get_programming_context(text),
         }
 
     def _get_learning_summary(self) -> dict[str, Any]:
@@ -628,6 +638,36 @@ class TelegramHandler:
         except Exception as e:
             logger.error("learning_load_error", error=str(e))
             return {"error": f"learning: {e!s}"}
+
+    def _get_programming_context(self, text: str) -> dict[str, Any]:
+        """
+        If user message looks like a programming task, provide analysis and plan.
+        """
+        programming_keywords = [
+            "naprogramuj", "napíš kód", "implementuj", "refaktoruj", "oprav bug",
+            "pridaj", "vytvor modul", "uprav", "fix", "add", "implement",
+            "write code", "create", "build", "test", "debug",
+        ]
+        text_lower = text.lower()
+
+        if not any(kw in text_lower for kw in programming_keywords):
+            return {}
+
+        try:
+            from agent.brain.programmer import Programmer
+            prog = Programmer()
+            workflow = prog.programming_workflow(text)
+            return {
+                "workflow": workflow,
+                "instruction": (
+                    "Máš programátorskú úlohu. Postupuj podľa workflow vyššie. "
+                    "VŽDY: 1) analyzuj existujúci kód, 2) napíš test, "
+                    "3) implementuj, 4) review, 5) spusti VŠETKY testy, 6) commitni."
+                ),
+            }
+        except Exception as e:
+            logger.error("programmer_context_error", error=str(e))
+            return {}
 
     async def _parse_and_execute_actions(
         self, user_text: str, reply: str, chat_id: int = 0
