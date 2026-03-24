@@ -248,6 +248,7 @@ class TelegramHandler:
             "/budget": self._cmd_budget,
             "/newtask": self._cmd_new_task,
             "/queue": self._cmd_queue,
+            "/consolidate": self._cmd_consolidate,
             "/help": self._cmd_help,
         }
 
@@ -278,6 +279,8 @@ class TelegramHandler:
             "/memory [keyword] — prehľadaj pamäť\n"
             "/budget — finančný stav\n"
             "/newtask [názov] — vytvor novú úlohu\n"
+            "/consolidate — spusti konsolidáciu pamäte\n"
+            "/queue — stav pracovnej fronty\n"
             "/help — tento help\n\n"
             "Alebo napíš čokoľvek — premýšľam a konám."
         )
@@ -377,6 +380,33 @@ class TelegramHandler:
             f"Celkom spracované: {status['total_processed']}"
         )
 
+    async def _cmd_consolidate(self, args: str) -> str:
+        """Run memory consolidation directly — no LLM needed."""
+        from agent.memory.consolidation import MemoryConsolidation
+
+        consolidator = MemoryConsolidation(self._agent.memory)
+
+        # Apply decay first
+        deleted_decay = await self._agent.memory.apply_decay(decay_rate=0.005)
+        mem_stats_before = self._agent.memory.get_stats()
+
+        # Run consolidation
+        report = await consolidator.consolidate()
+
+        mem_stats_after = self._agent.memory.get_stats()
+
+        return (
+            f"*Konsolidácia pamäte*\n\n"
+            f"*Pred:* {mem_stats_before['total_memories']} spomienok\n"
+            f"*Po:* {mem_stats_after['total_memories']} spomienok\n\n"
+            f"Episodic preskúmaných: {report['episodic_reviewed']}\n"
+            f"Vzory nájdené: {report['patterns_found']}\n"
+            f"Nové semantic/procedural: {report['new_semantic_procedural']}\n"
+            f"Deduplikované: {report['deduplicated']}\n"
+            f"Decay vymazaných: {deleted_decay}\n\n"
+            f"*By type:* {mem_stats_after.get('by_type', {})}"
+        )
+
     # --- Free text — Claude thinks, agent acts ---
 
     async def _handle_text(self, text: str) -> str:
@@ -433,7 +463,9 @@ class TelegramHandler:
             f"{text}\n\n"
             f"Odpovedaj po slovensky, ako John. Použi reálne dáta z JSON kontextu vyššie.\n"
             f"Ak dostaneš viacero úloh, sprav všetky a na konci zhrň výsledky do jednej odpovede.\n"
-            f"Vždy odpovedz — nikdy nevráť prázdnu odpoveď."
+            f"DÔLEŽITÉ: Na konci VŽDY napíš textovú odpoveď pre Daniela — zhrň čo si urobil alebo zistil.\n"
+            f"Nikdy neskonči len s výstupom z nástroja — vždy pridaj ľudskú odpoveď.\n"
+            f"Ak niečo spúšťaš (Python, Bash), na konci povedz výsledok."
         )
 
         try:
@@ -486,7 +518,15 @@ class TelegramHandler:
 
             reply = response_data.get("result", "").strip()
             if not reply:
-                reply = "Premýšľal som, ale neprišiel som k odpovedi. Skús to inak."
+                # Try to extract from subresults or session messages
+                subresults = response_data.get("subresults", [])
+                if subresults:
+                    # Get last text subresult
+                    texts = [s.get("result", "") for s in subresults if s.get("result")]
+                    if texts:
+                        reply = texts[-1].strip()
+            if not reply:
+                reply = "Spustil som úlohu, ale nedostal som výsledok. Skús /status alebo zopakuj otázku."
 
             cost = response_data.get("total_cost_usd", 0)
             tokens = response_data.get("usage", {})
