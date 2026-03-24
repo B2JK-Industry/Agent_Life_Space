@@ -360,17 +360,19 @@ class TelegramHandler:
 
     async def _handle_text(self, text: str) -> str:
         """
-        Agent thinks with Claude (via claude CLI + Max subscription)
-        and acts through its own modules.
+        JSON in → Claude thinks → JSON out → format for Telegram.
 
-        Two-phase approach:
-        1. Gather agent context (memories, tasks, health)
-        2. Send to Claude with context, get response
-        3. Parse any actions from response, execute through modules
+        Flow:
+        1. Build structured JSON context (agent state, memories, tasks)
+        2. Send as structured prompt to Claude
+        3. Parse response
+        4. Store in memory, execute actions
+        5. Format for Telegram
         """
         from agent.memory.store import MemoryEntry, MemoryType
+        import orjson
 
-        # Store user message in episodic memory
+        # Store user message
         await self._agent.memory.store(
             MemoryEntry(
                 content=f"Daniel mi napísal: {text}",
@@ -381,11 +383,18 @@ class TelegramHandler:
             )
         )
 
-        # Gather agent context
-        context = await self._build_context(text)
+        # Build structured JSON context
+        context_json = await self._build_context_json(text)
 
-        # Build the full prompt with context
-        full_prompt = f"{context}\n\nDaniel mi píše: {text}"
+        # Build prompt: identity + JSON context + user message
+        prompt = (
+            f"{SYSTEM_PROMPT}\n\n"
+            f"--- MÔJÉ AKTUÁLNE DÁTA (JSON) ---\n"
+            f"{orjson.dumps(context_json, option=orjson.OPT_INDENT_2).decode()}\n\n"
+            f"--- SPRÁVA OD DANIELA ---\n"
+            f"{text}\n\n"
+            f"Odpovedaj stručne, po slovensky, ako John. Použi reálne dáta z JSON kontextu vyššie."
+        )
 
         try:
             import subprocess
@@ -407,7 +416,7 @@ class TelegramHandler:
                     "--model", "claude-opus-4-6",
                     "--max-turns", "1",
                 ],
-                input=full_prompt,
+                input=prompt,
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -422,115 +431,128 @@ class TelegramHandler:
                     stderr=result.stderr[:500],
                     stdout=result.stdout[:500],
                 )
-                return f"Chyba pri premýšľaní: {result.stderr[:200] or result.stdout[:200]}"
+                return f"Chyba: {result.stderr[:200] or result.stdout[:200]}"
 
-            # Parse JSON response
-            import orjson
+            # Parse Claude's JSON response
             try:
                 response_data = orjson.loads(result.stdout)
             except Exception:
-                logger.error("claude_cli_parse_error", stdout=result.stdout[:500])
-                return f"Chyba pri parsovaní odpovede."
+                logger.error("claude_parse_error", stdout=result.stdout[:500])
+                return "Nepodarilo sa spracovať odpoveď."
+
             if response_data.get("is_error"):
-                error_msg = response_data.get("result", "Unknown error")
-                logger.error("claude_response_error", error=error_msg)
-                return f"Claude error: {error_msg}"
+                return f"Chyba: {response_data.get('result', '?')}"
 
             reply = response_data.get("result", "").strip()
-            if not reply or reply == "...":
+            if not reply:
                 reply = "Premýšľal som, ale neprišiel som k odpovedi. Skús to inak."
+
             cost = response_data.get("total_cost_usd", 0)
+            tokens = response_data.get("usage", {})
 
             logger.info(
-                "agent_response",
-                cost_usd=cost,
+                "john_response",
+                cost_usd=round(cost, 4),
                 output_length=len(reply),
+                input_tokens=tokens.get("input_tokens", 0),
+                output_tokens=tokens.get("output_tokens", 0),
             )
 
-            # Store agent response in memory
+            # Store response in memory (short summary only)
             await self._agent.memory.store(
                 MemoryEntry(
-                    content=f"Odpovedal som Danielovi na '{text[:50]}': {reply[:200]}",
+                    content=f"Odpovedal som na '{text[:40]}': {reply[:150]}",
                     memory_type=MemoryType.EPISODIC,
                     tags=["telegram", "agent_response"],
-                    source="claude",
+                    source="john",
                     importance=0.3,
                 )
             )
 
-            # Parse and execute any actions in the response
             await self._parse_and_execute_actions(text, reply)
-
             return reply
 
         except subprocess.TimeoutExpired:
-            logger.error("claude_cli_timeout")
-            return "Premýšľanie trvalo príliš dlho (timeout 120s). Skús kratšiu otázku."
+            logger.error("john_timeout")
+            return "Premýšľanie trvalo príliš dlho. Skús kratšiu otázku."
         except Exception as e:
-            logger.error("agent_think_error", error=str(e))
+            logger.error("john_error", error=str(e))
             return f"Chyba: {e!s}"
 
-    async def _build_context(self, text: str) -> str:
-        """Gather agent's real internal state as context. Not generic — actual data."""
+    async def _build_context_json(self, text: str) -> dict:
+        """Build structured JSON context — agent's real state as data."""
         import psutil
-
-        parts = [SYSTEM_PROMPT]
-
-        # Read identity file if exists
-        from pathlib import Path
-        identity_file = Path.home() / "agent-life-space" / "JOHN.md"
-        if identity_file.exists():
-            parts.append(identity_file.read_text())
-
-        # --- LIVE SYSTEM DATA ---
-        health = self._agent.watchdog.get_system_health()
-        mem_stats = self._agent.memory.get_stats()
-        task_stats = self._agent.tasks.get_stats()
-        job_stats = self._agent.job_runner.get_stats()
-
-        # Uptime
-        boot_time = psutil.boot_time()
         import time
-        uptime_hours = (time.time() - boot_time) / 3600
+        from pathlib import Path
+        from agent.tasks.manager import TaskStatus
 
-        parts.append(f"""
---- LIVE STAV (reálne dáta, nie template) ---
-Server: b2jk-agentlifespace, Ubuntu 24.04, i7-5500U, 8GB RAM
-CPU: {health.cpu_percent:.1f}%, RAM: {health.memory_percent:.1f}% ({health.memory_used_mb:.0f}MB / {health.memory_available_mb:.0f}MB free)
-Disk: {health.disk_percent:.1f}%, Uptime: {uptime_hours:.0f} hodín
-Moduly: {', '.join(f'{n}={s}' for n, s in health.modules.items())}
-Spomienky: {mem_stats['total_memories']} (typy: {mem_stats.get('by_type', {})})
-Úlohy: {task_stats['total_tasks']} (stavy: {task_stats.get('by_status', {})})
-Joby: {job_stats['total_completed']} dokončených, {job_stats['total_failed']} zlyhaných
-GitHub: B2JK-Industry (token aktívny)
-Telegram: @b2jk_john_bot (tento chat)
-LLM: Claude Opus 4.6 cez Max predplatné""")
+        # System
+        health = self._agent.watchdog.get_system_health()
+        uptime_hours = (time.time() - psutil.boot_time()) / 3600
 
-        # Alerts
-        if health.alerts:
-            parts.append(f"ALERTY: {', '.join(health.alerts)}")
-
-        # --- RELEVANT MEMORIES (max 5, short) ---
+        # Memory
+        mem_stats = self._agent.memory.get_stats()
         keywords = [w for w in text.split() if len(w) > 3]
         if keywords:
-            memories = await self._agent.memory.query(keyword=keywords[0], limit=3)
+            memories = await self._agent.memory.query(keyword=keywords[0], limit=5)
         else:
-            memories = await self._agent.memory.query(limit=3)
+            memories = await self._agent.memory.query(limit=5)
 
-        if memories:
-            parts.append("\n--- RELEVANTNÉ SPOMIENKY ---")
-            for m in memories:
-                parts.append(f"[{m.memory_type.value}] {m.content[:150]}")
-
-        # --- ACTIVE TASKS (max 3) ---
-        from agent.tasks.manager import TaskStatus
+        # Tasks
+        task_stats = self._agent.tasks.get_stats()
         queued = self._agent.tasks.get_tasks_by_status(TaskStatus.QUEUED)
-        if queued:
-            parts.append("\n--- AKTÍVNE ÚLOHY ---")
-            for t in queued[:3]:
-                parts.append(f"- {t.name}")
 
-        return "\n".join(parts)
+        # Jobs
+        job_stats = self._agent.job_runner.get_stats()
+
+        # Identity
+        identity_file = Path.home() / "agent-life-space" / "JOHN.md"
+        identity = identity_file.read_text() if identity_file.exists() else ""
+
+        return {
+            "identity": {
+                "name": "John",
+                "telegram": "@b2jk_john_bot",
+                "owner": "Daniel Babjak",
+                "github": "B2JK-Industry",
+                "version": "0.1.0",
+                "identity_file": identity[:500] if identity else "not found",
+            },
+            "system": {
+                "hostname": "b2jk-agentlifespace",
+                "os": "Ubuntu 24.04 LTS",
+                "hw": "Acer Aspire V3-572G, i7-5500U, 8GB RAM",
+                "cpu_percent": round(health.cpu_percent, 1),
+                "ram_percent": round(health.memory_percent, 1),
+                "ram_used_mb": round(health.memory_used_mb),
+                "ram_free_mb": round(health.memory_available_mb),
+                "disk_percent": round(health.disk_percent, 1),
+                "uptime_hours": round(uptime_hours),
+            },
+            "modules": health.modules,
+            "alerts": health.alerts,
+            "memory": {
+                "total": mem_stats["total_memories"],
+                "by_type": mem_stats.get("by_type", {}),
+                "relevant": [
+                    {"type": m.memory_type.value, "content": m.content[:120]}
+                    for m in memories
+                ],
+            },
+            "tasks": {
+                "total": task_stats["total_tasks"],
+                "by_status": task_stats.get("by_status", {}),
+                "queued": [
+                    {"name": t.name, "importance": t.importance}
+                    for t in queued[:5]
+                ],
+            },
+            "jobs": {
+                "completed": job_stats["total_completed"],
+                "failed": job_stats["total_failed"],
+                "timeouts": job_stats["total_timeouts"],
+            },
+        }
 
     async def _parse_and_execute_actions(self, user_text: str, reply: str) -> None:
         """
