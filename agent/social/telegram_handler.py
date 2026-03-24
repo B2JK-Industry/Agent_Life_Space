@@ -555,7 +555,19 @@ class TelegramHandler:
                 "failed": job_stats["total_failed"],
                 "timeouts": job_stats["total_timeouts"],
             },
+            "skills": self._get_skills_summary(),
         }
+
+    def _get_skills_summary(self) -> dict[str, Any]:
+        """Load John's skill registry for context."""
+        try:
+            from agent.brain.skills import SkillRegistry
+            registry = SkillRegistry(
+                str(Path.home() / "agent-life-space" / "agent" / "brain" / "skills.json")
+            )
+            return registry.summary()
+        except Exception:
+            return {"error": "skills not loaded"}
 
     async def _parse_and_execute_actions(self, user_text: str, reply: str) -> None:
         """
