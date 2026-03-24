@@ -196,9 +196,12 @@ class InternalDispatcher:
 
     @staticmethod
     def _normalize_keywords(text: str) -> list[str]:
-        """Extract and normalize keywords — strip Slovak suffixes."""
+        """Extract and normalize keywords — strip Slovak suffixes and punctuation."""
+        import re
         stop_words = {"vieš", "robíš", "máš", "jeho", "moje", "tvoj", "nejaký", "niečo", "tento"}
-        raw = [w for w in text.split() if len(w) > 3 and w not in stop_words]
+        # Strip punctuation from each word
+        words = [re.sub(r"[?.!,;:\"'()]+", "", w) for w in text.split()]
+        raw = [w for w in words if len(w) > 3 and w not in stop_words]
 
         # Slovak suffix stripping (basic — covers common cases)
         suffixes = ["ovi", "ová", "ovho", "om", "ách", "ami", "iam", "och", "ov", "ej", "ím", "ou"]
