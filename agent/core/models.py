@@ -78,23 +78,64 @@ _SIMPLE_KEYWORDS = frozenset([
 
 
 def classify_task(text: str) -> str:
-    """Classify user message → task type for model selection."""
+    """
+    Classify user message → task type for model selection.
+
+    Multi-signal scoring — nie len keyword match.
+    Signály: keywords, complexity, URL, action verbs, dĺžka.
+    """
     text_lower = text.lower().strip()
-
-    # Programming?
-    if any(kw in text_lower for kw in _PROGRAMMING_KEYWORDS):
-        return "programming"
-
-    # Simple greeting or short response? (exact match for short inputs)
     words = text_lower.split()
+
+    # === SIMPLE: krátke jednoduché správy ===
     if len(words) <= 3 and any(kw in text_lower for kw in _SIMPLE_KEYWORDS):
         return "simple"
 
-    # Short factual question?
-    if len(text_lower) < 40 and text_lower.endswith("?"):
+    # === PROGRAMMING: explicitné programovacie kľúčové slová ===
+    if any(kw in text_lower for kw in _PROGRAMMING_KEYWORDS):
+        return "programming"
+
+    # === COMPLEX: signály že úloha vyžaduje hlbšie premýšľanie ===
+    complexity_score = 0
+
+    # URL v texte → agent musí niečo prečítať/spracovať
+    if "http://" in text_lower or "https://" in text_lower or "github.com" in text_lower:
+        complexity_score += 2
+
+    # Action verbs — agent má UROBIŤ niečo, nie len odpovedať
+    _ACTION_VERBS = [
+        "registruj", "zaregistruj", "prihlás", "vytvor účet",
+        "nájdi", "vyhľadaj", "porovnaj", "analyzuj",
+        "stiahni", "nainštaluj", "nastav", "nakonfiguruj",
+        "preskúmaj", "prečítaj", "zisti", "over",
+        "spusti", "otestuj", "skontroluj",
+    ]
+    if any(v in text_lower for v in _ACTION_VERBS):
+        complexity_score += 2
+
+    # Multi-step request (viacero viet alebo čiarky)
+    if text.count(".") >= 2 or text.count(",") >= 2:
+        complexity_score += 1
+
+    # Dlhší text = pravdepodobne komplexnejšia úloha
+    if len(words) > 15:
+        complexity_score += 1
+
+    # Otázka o schopnostiach ("vieš...?", "dokážeš...?")
+    _CAPABILITY_VERBS = ["vieš", "dokážeš", "môžeš", "zvládneš", "umíš"]
+    if any(v in text_lower for v in _CAPABILITY_VERBS):
+        complexity_score += 1
+
+    if complexity_score >= 3:
+        return "programming"  # Opus — komplexné úlohy
+    if complexity_score >= 1:
+        return "analysis"  # Sonnet — stredná komplexita
+
+    # === FACTUAL: krátka jednoduchá otázka ===
+    if len(text_lower) < 30 and text_lower.endswith("?") and complexity_score == 0:
         return "factual"
 
-    # Default: Sonnet for general conversation
+    # Default: Sonnet
     return "chat"
 
 

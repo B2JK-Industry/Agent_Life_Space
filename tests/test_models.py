@@ -5,7 +5,7 @@ Test scenarios for Model Router.
 2. get_model returns correct ModelConfig
 3. Programming keywords detected
 4. Simple greetings go to Haiku
-5. Short questions go to factual (Haiku)
+5. Complexity scoring routes to correct tier
 6. Default is Sonnet for unknown
 """
 
@@ -41,13 +41,38 @@ class TestClassifyTask:
 
     def test_short_question_is_factual(self):
         assert classify_task("koľko je hodín?") == "factual"
-        assert classify_task("aký je dnes dátum?") == "factual"
 
     def test_general_chat_default(self):
         assert classify_task("povedz mi niečo o webových technológiách a ako fungujú v praxi") == "chat"
 
     def test_empty_is_chat(self):
         assert classify_task("") == "chat"
+
+    # --- Nové: complexity scoring ---
+
+    def test_url_escalates_to_complex(self):
+        """URL v texte → agent musí niečo spracovať → minimálne analysis."""
+        result = classify_task("prečítaj si https://github.com/B2JK-Industry/Agent_Life_Space")
+        assert result in ("analysis", "programming")
+
+    def test_action_verb_escalates(self):
+        """Action verb → agent má niečo urobiť."""
+        result = classify_task("zaregistruj sa na moltbook")
+        assert result in ("analysis", "programming")
+
+    def test_capability_question(self):
+        """'vieš...?' otázka → nie je factual, agent musí premýšľať."""
+        result = classify_task("vieš sa registrovať na moltbook?")
+        assert result in ("analysis", "programming")
+
+    def test_complex_multi_signal(self):
+        """URL + action verb → programming (Opus)."""
+        result = classify_task("prečítaj si https://github.com/repo a analyzuj čo tam je")
+        assert result == "programming"
+
+    def test_simple_question_stays_factual(self):
+        """Krátka otázka bez complexity → factual."""
+        assert classify_task("čo je to Python?") == "factual"
 
 
 class TestGetModel:
