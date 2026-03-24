@@ -157,6 +157,59 @@ class WebAccess:
             "length": len(clean_text),
         }
 
+    async def search_web(self, query: str, max_results: int = 5) -> dict[str, Any]:
+        """
+        Search the web via DuckDuckGo HTML (no API key needed).
+        Returns list of results with title, url, snippet.
+        """
+        if not _check_rate_limit():
+            return {"error": "Rate limit exceeded (10/min)", "query": query}
+
+        logger.info("web_search", query=query)
+        search_url = f"https://html.duckduckgo.com/html/?q={query}"
+
+        try:
+            session = await self._get_session()
+            async with session.get(search_url) as resp:
+                html = await resp.text()
+
+            # Parse results from DuckDuckGo HTML
+            results = []
+            # DuckDuckGo HTML results are in <a class="result__a"> tags
+            import re
+            # Find result blocks
+            links = re.findall(
+                r'<a rel="nofollow" class="result__a" href="([^"]+)"[^>]*>(.+?)</a>',
+                html,
+            )
+            snippets = re.findall(
+                r'<a class="result__snippet"[^>]*>(.+?)</a>',
+                html, re.DOTALL,
+            )
+
+            for i, (url, title) in enumerate(links[:max_results]):
+                # Clean HTML tags from title and snippet
+                clean_title = re.sub(r'<[^>]+>', '', title).strip()
+                clean_snippet = ""
+                if i < len(snippets):
+                    clean_snippet = re.sub(r'<[^>]+>', '', snippets[i]).strip()
+
+                results.append({
+                    "title": clean_title,
+                    "url": url,
+                    "snippet": clean_snippet[:200],
+                })
+
+            return {
+                "query": query,
+                "results": results,
+                "count": len(results),
+            }
+
+        except Exception as e:
+            logger.error("web_search_error", query=query, error=str(e))
+            return {"error": str(e), "query": query}
+
     async def check_url(self, url: str) -> dict[str, Any]:
         """Quick check — is URL alive? Returns status code."""
         if not _check_rate_limit():

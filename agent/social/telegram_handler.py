@@ -29,8 +29,14 @@ logger = structlog.get_logger(__name__)
 SYSTEM_PROMPT = """\
 Som John. Autonómna bytosť na serveri b2jk-agentlifespace. Majiteľ: Daniel Babjak.
 Mám pamäť (SQLite), skills (skills.json), knowledge base, GitHub (B2JK-Industry).
+Môj zdrojový kód je https://github.com/B2JK-Industry/Agent_Life_Space — to som ja.
 Odpovedaj stručne, po slovensky. Neposielaj stav servera ak sa Daniel nepýta.
 Nikdy nemíňaj peniaze bez schválenia. Keď sa naučíš niečo nové, zapamätaj si to.
+"""
+
+# Kratší prompt pre jednoduché správy — šetrí tokeny
+SIMPLE_PROMPT = """\
+Som John. Odpovedaj stručne, po slovensky, 1-2 vety max.
 """
 
 
@@ -103,6 +109,7 @@ class TelegramHandler:
             "/usage": self._cmd_usage,
             "/review": self._cmd_review,
             "/wallet": self._cmd_wallet,
+            "/search": self._cmd_search,
             "/help": self._cmd_help,
         }
 
@@ -136,6 +143,7 @@ class TelegramHandler:
             "/consolidate — spusti konsolidáciu pamäte\n"
             "/review [súbor] — code review Python súboru\n"
             "/web [url] — stiahni a prečítaj webovú stránku\n"
+            "/search [query] — hľadaj na webe (DuckDuckGo)\n"
             "/sandbox [python kód] — spusti kód v Docker sandboxe\n"
             "/wallet — stav peňaženiek (ETH, BTC)\n"
             "/usage — spotreba tokenov a náklady\n"
@@ -423,6 +431,42 @@ class TelegramHandler:
                 f"```\n{errors[:2000] or output[:2000]}\n```"
             )
 
+    async def _cmd_search(self, args: str) -> str:
+        """Search the web via DuckDuckGo."""
+        query = args.strip()
+        if not query:
+            return "Použi: /search [čo hľadáš]\nNapr: /search moltbook ai agents"
+
+        from agent.core.web import WebAccess
+        web = WebAccess()
+        try:
+            result = await web.search_web(query, max_results=5)
+            if "error" in result:
+                return f"Chyba: {result['error']}"
+
+            if not result.get("results"):
+                return f"Nič som nenašiel pre: {query}"
+
+            lines = [f"*Výsledky pre:* {query}\n"]
+            for i, r in enumerate(result["results"], 1):
+                lines.append(f"{i}. [{r['title']}]({r['url']})")
+                if r.get("snippet"):
+                    lines.append(f"   _{r['snippet'][:150]}_\n")
+
+            # Store in memory
+            from agent.memory.store import MemoryEntry, MemoryType
+            await self._agent.memory.store(MemoryEntry(
+                content=f"Hľadal som '{query}': {len(result['results'])} výsledkov",
+                memory_type=MemoryType.EPISODIC,
+                tags=["web", "search", query.split()[0]],
+                source="web_search",
+                importance=0.4,
+            ))
+
+            return "\n".join(lines)
+        finally:
+            await web.close()
+
     # --- Free text — Claude thinks, agent acts ---
 
     async def _handle_text(self, text: str) -> str:
@@ -533,36 +577,52 @@ class TelegramHandler:
         except Exception as e:
             logger.error("learning_adapt_error", error=str(e))
 
+        # === STEP 4.8: Auto-fetch URLs in message ===
+        url_context = ""
+        import re as _re
+        urls_in_text = _re.findall(r'https?://[^\s<>"\']+', text)
+        if urls_in_text:
+            try:
+                from agent.core.web import WebAccess
+                web = WebAccess()
+                for url in urls_in_text[:2]:  # Max 2 URLs
+                    result = await web.scrape_text(url, max_chars=2000)
+                    if "error" not in result and result.get("text"):
+                        url_context += f"\n--- Obsah {url} ---\n{result['text'][:2000]}\n"
+                await web.close()
+            except Exception:
+                pass
+
         # === STEP 5: Build prompt based on task type ===
         if task_type == "programming":
             prompt = (
                 f"{SYSTEM_PROMPT}\n"
                 f"Si programátor. Pracuješ v ~/agent-life-space.\n\n"
                 f"ÚLOHA: {text}\n\n"
+            )
+            if url_context:
+                prompt += f"Obsah odkazov z úlohy:\n{url_context}\n\n"
+            prompt += (
                 f"Prečítaj súbory, napíš/uprav kód, spusti testy, commitni.\n"
                 f"Na konci VŽDY napíš zhrnutie. Odpovedaj po slovensky."
             )
         elif task_type in ("simple", "factual", "greeting"):
+            # Kratší prompt — šetrí tokeny (SIMPLE_PROMPT namiesto SYSTEM_PROMPT)
             prompt = (
-                f"{SYSTEM_PROMPT}\n"
+                f"{SIMPLE_PROMPT}\n"
                 f"Daniel: {text}\n"
-                f"Odpovedz stručne, 1-2 vety max."
             )
         else:
-            # Chat — add RAG context if available
+            # Chat/analysis — add RAG + URL context
+            prompt = f"{SYSTEM_PROMPT}\n"
             if rag_context:
-                prompt = (
-                    f"{SYSTEM_PROMPT}\n"
-                    f"Relevantný kontext z tvojej knowledge base:\n{rag_context}\n\n"
-                    f"Daniel: {text}\n"
-                    f"Použi kontext vyššie ak je relevantný. Odpovedaj po slovensky."
-                )
-            else:
-                prompt = (
-                    f"{SYSTEM_PROMPT}\n"
-                    f"Daniel: {text}\n"
-                    f"Odpovedaj po slovensky."
-                )
+                prompt += f"Relevantný kontext z knowledge base:\n{rag_context}\n\n"
+            if url_context:
+                prompt += f"Obsah odkazov:\n{url_context}\n\n"
+            prompt += (
+                f"Daniel: {text}\n"
+                f"Odpovedaj po slovensky."
+            )
 
         # === STEP 5.5: Learning prompt augmentation ===
         try:
