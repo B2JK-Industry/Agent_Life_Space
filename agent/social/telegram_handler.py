@@ -442,44 +442,44 @@ class TelegramHandler:
         # === STEP 1: Try internal dispatch FIRST (no LLM) ===
         from agent.brain.dispatcher import InternalDispatcher
         dispatcher = InternalDispatcher(self._agent)
-        internal_result = await dispatcher.try_handle(text, handler_ref=self)
+        internal_result = await dispatcher.try_handle(text)
         if internal_result:
-            # Answered without LLM! Zero tokens.
             return internal_result
 
-        # === STEP 2: Needs LLM — detect type and route ===
-        programming_keywords = [
-            "naprogramuj", "implementuj", "napíš kód", "pridaj", "oprav bug",
-            "vytvor modul", "refaktoruj", "fix", "uprav kód", "pridaj príkaz",
-            "napíš test", "debug",
-        ]
-        is_programming = any(kw in text.lower() for kw in programming_keywords)
+        # === STEP 2: Classify task → select model ===
+        from agent.core.models import classify_task, get_model
+        task_type = classify_task(text)
+        model = get_model(task_type)
 
-        if is_programming:
+        # === STEP 3: Build prompt based on task type ===
+        # Stable prefix (cacheable by Anthropic) + dynamic suffix
+        if task_type == "programming":
             prompt = (
-                f"Si John, autonómny agent. Pracuješ v ~/agent-life-space.\n"
-                f"Daniel ti dal programátorskú úlohu cez Telegram.\n\n"
+                # --- STABLE PREFIX (cached across calls) ---
+                f"{SYSTEM_PROMPT}\n"
+                f"Si programátor. Pracuješ v ~/agent-life-space.\n\n"
+                # --- DYNAMIC (changes per request) ---
                 f"ÚLOHA: {text}\n\n"
-                f"POSTUP:\n"
-                f"1. Prečítaj relevantné súbory\n"
-                f"2. Napíš/uprav kód\n"
-                f"3. Spusti testy (python3 -m pytest tests/ -q)\n"
-                f"4. Ak testy prechádzajú, commitni a pushni (git add, commit, push)\n"
-                f"5. Na konci VŽDY napíš zhrnutie čo si urobil pre Daniela\n\n"
-                f"Odpovedaj po slovensky. MUSÍŠ skončiť textovou odpoveďou."
+                f"Prečítaj súbory, napíš/uprav kód, spusti testy, commitni.\n"
+                f"Na konci VŽDY napíš zhrnutie. Odpovedaj po slovensky."
+            )
+        elif task_type in ("simple", "factual", "greeting"):
+            prompt = (
+                f"{SYSTEM_PROMPT}\n"
+                f"Daniel: {text}\n"
+                f"Odpovedz stručne, 1-2 vety max."
             )
         else:
-            # Regular conversation — full JSON context
+            # Chat — lean context, only relevant memories
             context_json = await self._build_context_json(text)
+            context_str = orjson.dumps(context_json).decode() if context_json.get("memory", {}).get("semantic") else ""
             prompt = (
-                f"{SYSTEM_PROMPT}\n\n"
-                f"--- MÔJÉ AKTUÁLNE DÁTA (JSON) ---\n"
-                f"{orjson.dumps(context_json, option=orjson.OPT_INDENT_2).decode()}\n\n"
-                f"--- SPRÁVA OD DANIELA ---\n"
-                f"{text}\n\n"
-                f"Odpovedaj po slovensky, ako John. Použi reálne dáta z JSON kontextu vyššie.\n"
-                f"DÔLEŽITÉ: Na konci VŽDY napíš textovú odpoveď pre Daniela.\n"
-                f"Ak niečo spúšťaš (Python, Bash), na konci povedz výsledok."
+                # --- STABLE PREFIX ---
+                f"{SYSTEM_PROMPT}\n"
+                # --- DYNAMIC ---
+                f"{context_str}\n" if context_str else ""
+                f"Daniel: {text}\n"
+                f"Odpovedaj po slovensky. Na konci VŽDY napíš textovú odpoveď."
             )
 
         try:
@@ -492,10 +492,6 @@ class TelegramHandler:
                 env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
 
             claude_bin = os.path.expanduser("~/.local/bin/claude")
-
-            from agent.core.models import get_model
-            task_type = "programming" if is_programming else "chat"
-            model = get_model(task_type)
 
             result = await asyncio.to_thread(
                 subprocess.run,
@@ -582,9 +578,10 @@ class TelegramHandler:
                 )
             )
 
-            # Append usage info to reply
+            # Append usage info to reply (show model used)
+            model_short = model.model_id.split("-")[1]  # "sonnet", "opus", "haiku"
             usage_line = (
-                f"\n\n_💰 ${cost:.4f} | "
+                f"\n\n_💰 ${cost:.4f} | {model_short} | "
                 f"⬆{input_tok:,} ⬇{output_tok:,} tokens_"
             )
             reply += usage_line
@@ -645,51 +642,6 @@ class TelegramHandler:
             context["alerts"] = health.alerts
 
         return context
-
-    def _get_learning_summary(self) -> dict[str, Any]:
-        """Load John's skills + knowledge for context."""
-        try:
-            from pathlib import Path
-            from agent.brain.learning import LearningSystem
-            base = str(Path.home() / "agent-life-space")
-            ls = LearningSystem(
-                skills_path=f"{base}/agent/brain/skills.json",
-                knowledge_dir=f"{base}/agent/brain/knowledge",
-            )
-            return ls.what_do_i_know()
-        except Exception as e:
-            logger.error("learning_load_error", error=str(e))
-            return {"error": f"learning: {e!s}"}
-
-    def _get_programming_context(self, text: str) -> dict[str, Any]:
-        """
-        If user message looks like a programming task, provide analysis and plan.
-        """
-        programming_keywords = [
-            "naprogramuj", "napíš kód", "implementuj", "refaktoruj", "oprav bug",
-            "pridaj", "vytvor modul", "uprav", "fix", "add", "implement",
-            "write code", "create", "build", "test", "debug",
-        ]
-        text_lower = text.lower()
-
-        if not any(kw in text_lower for kw in programming_keywords):
-            return {}
-
-        try:
-            from agent.brain.programmer import Programmer
-            prog = Programmer()
-            workflow = prog.programming_workflow(text)
-            return {
-                "workflow": workflow,
-                "instruction": (
-                    "Máš programátorskú úlohu. Postupuj podľa workflow vyššie. "
-                    "VŽDY: 1) analyzuj existujúci kód, 2) napíš test, "
-                    "3) implementuj, 4) review, 5) spusti VŠETKY testy, 6) commitni."
-                ),
-            }
-        except Exception as e:
-            logger.error("programmer_context_error", error=str(e))
-            return {}
 
     async def _auto_update_skills(self, reply: str) -> None:
         """
