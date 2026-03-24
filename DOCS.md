@@ -1,555 +1,314 @@
-# Agent Life Space — Používateľská dokumentácia
+# Agent Life Space — Dokumentácia
 
-Self-hosted autonómny agent bežiaci na vlastnom hardvéri (Acer Aspire V, i7, Ubuntu 24.04).
+Self-hosted autonómny agent "John" na Ubuntu serveri (Acer Aspire V, i7-5500U, 8GB RAM, NVIDIA 840M).
 
 ---
 
 ## Rýchly štart
 
 ```bash
-# 1. Aktivuj prostredie
 source .venv/bin/activate
+python -m agent              # Spusti agenta
+python -m agent --status     # Stav
+python -m agent --health     # Zdravie
+python -m pytest tests/ -q   # Testy (329 testov)
+```
 
-# 2. Zobraz stav agenta
-python -m agent --status
-
-# 3. Zobraz zdravie systému (CPU, RAM, moduly)
-python -m agent --health
-
-# 4. Spusti agenta (Ctrl+C pre ukončenie)
-python -m agent
-
-# 5. Spusti testy
-python -m pytest tests/ -q
+Env premenné (systemd service):
+```
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_USER_ID=...
+CLAUDE_CODE_OAUTH_TOKEN=...
+GITHUB_TOKEN=...
 ```
 
 ---
 
-## Architektúra
+## Architektúra — 7-vrstvový cascade
+
+Každá správa prechádza od najlacnejšej po najdrahšiu vrstvu:
 
 ```
-┌──────────────────────────────────────────┐
-│           Agent Orchestrátor             │
-│                                          │
-│  ┌──────────┐  ┌─────────────────────┐  │
-│  │ Watchdog  │  │ Brain (Decision     │  │
-│  │ heartbeat │  │   Engine)           │  │
-│  │ restart   │  │ algo vs LLM routing │  │
-│  └─────┬────┘  └──────────┬──────────┘  │
-│        │                  │              │
-│  ┌─────┴──────────────────┴───────────┐  │
-│  │         Message Router             │  │
-│  │  priority queue · dead letters     │  │
-│  │  retry · TTL · metrics             │  │
-│  └──┬───┬───┬───┬───┬───┬───┬───┬────┘  │
-│     │   │   │   │   │   │   │   │        │
-│   Brain Mem Task Work Proj Soc Fin Log   │
-│                                          │
-│  ┌──────────┐  ┌─────────┐  ┌────────┐  │
-│  │LLM Router│  │Job Runner│  │ Vault  │  │
-│  │templates │  │timeout   │  │encrypt │  │
-│  │schema    │  │retry     │  │audit   │  │
-│  └──────────┘  └─────────┘  └────────┘  │
-└──────────────────────────────────────────┘
+Daniel (Telegram)
+  │
+  ▼
+1. Slash commands (/status, /health, /tasks...)     → 0 tokenov
+  │
+  ▼
+2. InternalDispatcher (regex patterny)              → 0 tokenov
+  │
+  ▼
+3. Semantic Router (MiniLM embeddingy, SK+EN)       → 0 tokenov
+  │
+  ▼
+4. Semantic Cache (podobná otázka = cached odpoveď) → 0 tokenov
+  │
+  ▼
+5. Self-RAG (knowledge base cez embeddingy)         → 0 tokenov (direct)
+  │                                                   alebo kontext pre LLM
+  ▼
+6. Haiku / Sonnet (jednoduché / konverzácia)        → ~$0.01-0.04
+  │
+  ▼
+7. Opus (programovanie, code, git)                  → ~$0.15-0.50
 ```
 
 ---
 
 ## Moduly
 
-### 1. Core — Message Protocol (`agent/core/messages.py`)
+### Core
 
-Všetka komunikácia medzi modulmi je cez štruktúrované JSON správy.
+| Modul | Súbor | Čo robí |
+|-------|-------|---------|
+| Orchestrátor | `agent/core/agent.py` | Spája všetky moduly, lifecycle |
+| Message Protocol | `agent/core/messages.py` | JSON správy, immutabilné, TTL, priority |
+| Message Router | `agent/core/router.py` | Priority queue, dead letters, retry |
+| Model Router | `agent/core/models.py` | Haiku/Sonnet/Opus routing podľa typu úlohy |
+| Job Runner | `agent/core/job_runner.py` | Timeout, exponential backoff, circuit breaker |
+| Watchdog | `agent/core/watchdog.py` | Heartbeat, modul health (HEALTHY→DEAD), auto-restart |
+| LLM Router | `agent/core/llm_router.py` | Template prompty, JSON schema validácia |
+| Work Loop | `agent/core/agent_loop.py` | Background fronta úloh, Sonnet |
+| Cron | `agent/core/cron.py` | Periodické joby: health (1h), memory (6h), report (8:00), maintenance (3h), consolidation (2h) |
+| Maintenance | `agent/core/maintenance.py` | Disk, RAM, stale procesy, cache, sieť |
+| Web Access | `agent/core/web.py` | HTTP fetch, JSON API, scraping s rate limitom (10/min) |
+| Docker Sandbox | `agent/core/sandbox.py` | Izolované spúšťanie kódu (256MB RAM, no network, read-only) |
 
-**Čo to robí:**
-- Každá správa má unikátne ID, odosielateľa, príjemcu, typ, prioritu a TTL
-- Správy sú immutabilné po vytvorení (Pydantic frozen model)
-- Payload sa validuje — musí byť JSON-serializovateľný
-- Správy s expirovaným TTL sa automaticky zahodia (žiadne zombie správy)
+### Brain
 
-**Typy správ:**
-- `request/response/error/ack` — základná komunikácia
-- `task.create/update/complete/fail` — správa úloh
-- `memory.store/query/result` — pamäťové operácie
-- `llm.request/response/error` — LLM volania
-- `job.*` — job lifecycle
-- `health.*` — watchdog
-- `finance.proposal/approval/rejection` — financie (vždy s approval)
+| Modul | Súbor | Čo robí |
+|-------|-------|---------|
+| Decision Engine | `agent/brain/decision_engine.py` | Algo vs LLM routing, task scoring, finance pre-check |
+| InternalDispatcher | `agent/brain/dispatcher.py` | Regex patterny pre stav/zdravie/úlohy — 0 tokenov |
+| Semantic Router | `agent/brain/semantic_router.py` | MiniLM embeddingy, intent detection, SK+EN |
+| Skills Registry | `agent/brain/skills.py` | 20 skills, lifecycle UNKNOWN→MASTERED, auto-testing |
+| Knowledge Base | `agent/brain/knowledge.py` | .md súbory v kategóriách (skills, systems, people, projects, learned) |
+| Learning System | `agent/brain/learning.py` | Prepája skills + knowledge + memory, try_skill() |
+| Programmer | `agent/brain/programmer.py` | Code review, error analýza, programming workflow |
 
-**Priority (nižšie číslo = vyššia priorita):**
-- `CRITICAL (0)` — systémové zdravie, watchdog
-- `HIGH (1)` — aktívne odpovede
-- `NORMAL (2)` — štandardné operácie
-- `LOW (3)` — background tasky
-- `IDLE (4)` — údržba
+### Memory
 
-**Príklad:**
-```python
-from agent.core.messages import Message, MessageType, ModuleID, Priority
+| Modul | Súbor | Čo robí |
+|-------|-------|---------|
+| Memory Store | `agent/memory/store.py` | 4-vrstvová pamäť (working, episodic, semantic, procedural), SQLite |
+| Consolidation | `agent/memory/consolidation.py` | Episodic → semantic/procedural, dedup, frequency analysis |
+| Semantic Cache | `agent/memory/semantic_cache.py` | Cache LLM odpovedí (cosine > 0.90), TTL 1h |
+| Self-RAG | `agent/memory/rag.py` | Embedding index nad knowledge base, HIGH/MEDIUM/LOW routing |
 
-msg = Message(
-    source=ModuleID.BRAIN,
-    target=ModuleID.MEMORY,
-    msg_type=MessageType.MEMORY_QUERY,
-    priority=Priority.NORMAL,
-    payload={"query": "posledných 5 dokončených taskov"},
-    ttl_seconds=60,
-)
-```
+### Social
 
----
+| Modul | Súbor | Čo robí |
+|-------|-------|---------|
+| Telegram Bot | `agent/social/telegram_bot.py` | Long polling, groups, whitelist, Markdown fallback |
+| Telegram Handler | `agent/social/telegram_handler.py` | Správy → cascade → odpoveď, usage tracking |
 
-### 2. Message Router (`agent/core/router.py`)
+### Other
 
-Centrálny nervový systém — smeruje správy medzi modulmi.
-
-**Čo to robí:**
-- Asynchrónna priority queue — dôležité správy sa spracujú prvé
-- Dead Letter Queue — neodoručiteľné správy sa neukladajú do /dev/null, ale do DLQ
-- Automatický retry s exponential backoff pri zlyhaniach
-- Timeout na každé doručenie — handler musí odpovedať v rámci TTL
-- Metriky: enqueued, delivered, expired, errors
-
-**Kľúčové garancie:**
-- Žiadna správa sa tíško nestratí — buď doručená alebo v DLQ
-- Expirované správy sa nikdy nedoručia
-- Zlyhanie jedného handlera nerozbije router
+| Modul | Súbor | Čo robí |
+|-------|-------|---------|
+| Tasks | `agent/tasks/manager.py` | CREATED→QUEUED→RUNNING→COMPLETED, dependencies, priority |
+| Finance | `agent/finance/tracker.py` | Propose→Approve→Complete, budget limits, audit |
+| Logger | `agent/logs/logger.py` | JSON logy, secret redaction, rotation |
+| Vault | `agent/vault/secrets.py` | Fernet/AES šifrovanie, PBKDF2, audit trail |
 
 ---
 
-### 3. Brain — Decision Engine (`agent/brain/decision_engine.py`)
+## Telegram príkazy
 
-Rozhoduje ČO sa robí a AKO — algoritmicky, bez LLM kde to nie je nutné.
-
-**Pravidlo:** LLM len tam kde je pridaná hodnota. Všade inde algoritmus.
-
-**Algoritmické (deterministické, žiadny LLM):**
-- Task prioritizácia (scoring formula)
-- Task routing (kam správu poslať)
-- Správa rozvrhu
-- Error handling (retry/dead letter rozhodnutia)
-- Memory management
-
-**LLM:**
-- Generovanie obsahu (články, texty)
-
-**Hybrid (algoritmus + LLM):**
-- Evaluácia príležitostí (algoritmus filtruje, LLM analyzuje)
-- Finance (algoritmus validuje limity, LLM hodnotí príležitosť)
-
-**Task scoring formula:**
-```
-priority = importance × 0.4 + urgency × 0.3 + (1 - effort) × 0.2 + deps × 0.1
-combined = priority × 0.6 + urgency × 0.4
-```
-Deadline < 1h → urgency sa automaticky zvýši na 1.0
-
-**Príklad:**
-```python
-from agent.brain.decision_engine import DecisionEngine
-
-engine = DecisionEngine()
-
-# Rozhodne či úloha potrebuje LLM alebo algoritmus
-decision = engine.should_use_llm("Sort these items by priority")
-# → action="use_algorithm", confidence=0.8
-
-decision = engine.should_use_llm("Write a blog post about AI")
-# → action="use_llm", confidence=0.7
-```
+| Príkaz | Čo robí | LLM? |
+|--------|---------|------|
+| `/status` | Stav agenta | Nie |
+| `/health` | CPU, RAM, disk, moduly | Nie |
+| `/tasks` | Zoznam úloh | Nie |
+| `/memory [keyword]` | Hľadanie v pamäti | Nie |
+| `/budget` | Finančný stav | Nie |
+| `/newtask [názov]` | Vytvorenie úlohy | Nie |
+| `/consolidate` | Konsolidácia pamäte | Nie |
+| `/web [url]` | Stiahnutie a čítanie stránky | Nie |
+| `/sandbox [python]` | Spustenie kódu v Docker sandboxe | Nie |
+| `/review [file]` | Code review | Nie |
+| `/usage` | Spotreba tokenov | Nie |
+| `/queue` | Stav pracovnej fronty | Nie |
+| `/help` | Zoznam príkazov | Nie |
+| Voľný text | Konverzácia cez cascade | Áno |
 
 ---
 
-### 4. Memory Store (`agent/memory/store.py`)
+## Model routing
 
-Viacvrstvová pamäť — agent ju aktívne používa pri rozhodovaní.
+| Typ úlohy | Model | Max turns | Timeout |
+|-----------|-------|-----------|---------|
+| Pozdrav (ahoj, ok, ďakujem) | Haiku | 1 | 60s |
+| Krátka faktická otázka | Haiku | 1 | 60s |
+| Konverzácia | Sonnet | 3 | 180s |
+| Analýza, research | Sonnet | 3 | 180s |
+| Work queue úlohy | Sonnet | 3 | 180s |
+| Programovanie | Opus | 15 | 300s |
 
-**4 typy pamäte:**
-
-| Typ | Čo ukladá | Decay |
-|---|---|---|
-| **Working** | Aktuálny kontext, dočasné dáta | Rýchly (5× base) |
-| **Episodic** | Čo sa stalo, skúsenosti | Normálny |
-| **Semantic** | Fakty, znalosti | Normálny |
-| **Procedural** | Naučené postupy | Normálny |
-
-**Relevance scoring (deterministický):**
-```
-score = tag_overlap × importance × confidence × decay × recency × frequency
-```
-- `tag_overlap` — Jaccard similarity medzi query tags a memory tags
-- `recency` — novšie pamäte skórujú vyššie (polčas 24h)
-- `frequency` — často pristupované pamäte sú dôležitejšie
-- `decay` — časom klesá, access reinforcement ju zvyšuje
-
-**Persistence:** SQLite databáza, prežije reštart.
-
-**Príklad:**
-```python
-from agent.memory.store import MemoryStore, MemoryEntry, MemoryType
-
-store = MemoryStore(db_path="agent/memory/memories.db")
-await store.initialize()
-
-# Ulož pamäť
-await store.store(MemoryEntry(
-    content="API rate limit je 100 req/min",
-    memory_type=MemoryType.SEMANTIC,
-    tags=["api", "limits", "rate-limit"],
-    importance=0.8,
-))
-
-# Vyhľadaj
-results = await store.query(tags=["api"], limit=5)
-results = await store.query(keyword="rate limit")
-
-# Decay — spusti pravidelne (napr. denne)
-deleted = await store.apply_decay(decay_rate=0.01)
-```
+Konfigurácia: `agent/core/models.py`
 
 ---
 
-### 5. Task Manager (`agent/tasks/manager.py`)
+## Learning systém
 
-Deterministická správa úloh s dependency tracking.
-
-**Životný cyklus tasku:**
+**Skills** (`agent/brain/skills.json`):
 ```
-CREATED → QUEUED → RUNNING → COMPLETED
-                           → FAILED
-                           → CANCELLED
-         BLOCKED → (dependencies splnené) → QUEUED
+UNKNOWN → TESTING → LEARNED → MASTERED (5+ úspechov)
+                  → FAILED (retry neskôr)
 ```
 
-**Vlastnosti:**
-- **Dependencies** — task čaká na dokončenie iných taskov
-- **Priority scoring** — algoritmický, rovnaký vstup = rovnaký výstup
-- **Persistent** — SQLite, prežije reštart
-- **Tags** — filtrovanie podľa kategórií
+**Knowledge Base** (`agent/brain/knowledge/`):
+- `skills/` — návody k schopnostiam
+- `systems/` — ako fungujú veci (server, GitHub, Telegram)
+- `people/` — Daniel Babjak, kontakty
+- `projects/` — aktívne projekty (hackathony)
+- `learned/` — čo sa naučil z experimentov
 
-**Príklad:**
-```python
-from agent.tasks.manager import TaskManager
-
-mgr = TaskManager(db_path="agent/tasks/tasks.db")
-await mgr.initialize()
-
-# Vytvor task
-task = await mgr.create_task(
-    name="Research competitors",
-    importance=0.8,
-    urgency=0.6,
-    tags=["research"],
-)
-
-# Vytvor závislý task
-task2 = await mgr.create_task(
-    name="Write report",
-    dependencies=[task.id],  # Čaká na "Research competitors"
-)
-# task2.status == BLOCKED
-
-# Dokonči prvý → druhý sa odblokuje
-await mgr.start_task(task.id)
-await mgr.complete_task(task.id, result={"findings": "..."})
-# task2.status sa zmení na QUEUED
-
-# Získaj najdôležitejší task
-next_task = mgr.get_next_task()
-```
+**Auto-update**: Skills sa automaticky aktualizujú z Claude odpovedí (success/failure detection).
 
 ---
 
-### 6. Job Runner (`agent/core/job_runner.py`)
+## Memory systém
 
-Spoľahlivé vykonávanie jobov — žiadne zaseknutie, žiadne tiché zlyhania.
+4 typy pamäte v SQLite:
 
-**Garancie:**
-- **Hard timeout** na každý job (default 60s)
-- **Exponential backoff** retry: `delay = base × 2^attempt` (capped)
-- **Max retries** (default 3) → potom dead letter queue
-- **Concurrent limit** (default 4) — nepretečie CPU/RAM
-- **JSON validácia** — job musí vrátiť dict
+| Typ | Účel | Decay |
+|-----|------|-------|
+| Working | Aktuálny kontext | Rýchly (5×) |
+| Episodic | Čo sa stalo | Normálny |
+| Semantic | Fakty, vzory | Normálny |
+| Procedural | Postupy, recepty | Normálny |
 
-**Príklad:**
-```python
-from agent.core.job_runner import JobRunner, JobConfig
+**Consolidation** (každé 2h): episodic → semantic + procedural
 
-runner = JobRunner(max_concurrent=4)
+**Semantic Cache**: Ak John už odpovedal na podobnú otázku (cosine > 0.90), vráti cache.
 
-# Registruj typ jobu
-async def my_job(url: str) -> dict:
-    # ... urob niečo ...
-    return {"status": "ok", "data": "..."}
-
-runner.register_job_type("scrape", my_job)
-
-# Naplánuj s custom konfiguráciou
-job_id = await runner.schedule(
-    "scrape",
-    kwargs={"url": "https://example.com"},
-    config=JobConfig(
-        timeout_seconds=30,
-        max_retries=2,
-        retry_base_delay=1.0,
-    ),
-)
-```
+**Self-RAG**: Pred LLM hľadá v knowledge base cez embeddingy. HIGH match → priama odpoveď.
 
 ---
 
-### 7. LLM Router (`agent/core/llm_router.py`)
+## Bezpečnosť
 
-Komunikácia s Claude API — šablóny, nie raw prompty.
-
-**Anti-halucinačné opatrenia:**
-1. Všetky prompty sú template-based (preddefinované šablóny)
-2. Každá odpoveď sa validuje cez JSON Schema
-3. Nevalidná odpoveď → retry s chybovou správou (max 2×)
-4. Temperature 0.0 default (deterministický output)
-5. Markdown-wrapped JSON sa automaticky extrahuje
-
-**Zabudované šablóny:**
-- `task_breakdown` — rozdelenie úlohy na kroky
-- `summarize_for_memory` — sumarizácia pre pamäť
-- `evaluate_opportunity` — hodnotenie príležitostí
-- `generate_content` — generovanie obsahu
-
-**Príklad vlastnej šablóny:**
-```python
-from agent.core.llm_router import LLMRouter, PromptTemplate
-
-router = LLMRouter()
-
-router.templates.register(PromptTemplate(
-    template_id="analyze_market",
-    system_prompt="You are a market analyst. Respond ONLY with valid JSON.",
-    user_template="Analyze market for: {product}\nBudget: {budget}",
-    response_schema={
-        "type": "object",
-        "properties": {
-            "viable": {"type": "boolean"},
-            "competitors": {"type": "array", "items": {"type": "string"}},
-        },
-        "required": ["viable", "competitors"],
-    },
-))
-```
+1. Financie — Agent navrhuje, Daniel schvaľuje. Vždy.
+2. Secrets — Šifrované na disku (Fernet/AES), redaktované v logoch.
+3. Žiadne wallet prístupy, žiadne smart contracty.
+4. Sandbox — Docker kontajnery: 256MB RAM, no network, read-only, timeout.
+5. Timeout na všetkom — žiadny proces beží nekonečne.
+6. Dead letter queue — žiadne tiché zlyhanie.
+7. Rate limiting — web access max 10 req/min.
+8. Anti-stochastika — deterministický algoritmus kde nie je nutný LLM.
 
 ---
 
-### 8. Watchdog (`agent/core/watchdog.py`)
+## Testy
 
-Monitoruje všetky moduly a systémové zdravie.
+329 testov v 16 súboroch:
 
-**Stavy modulov:**
-```
-HEALTHY → DEGRADED → UNHEALTHY → DEAD
-   ↑          |
-   └── heartbeat (recovery)
-```
+| Súbor | Testov | Čo testuje |
+|-------|--------|------------|
+| test_messages.py | 23 | Message protocol, immutabilita, TTL |
+| test_router.py | 12 | Routing, dead letters, priority |
+| test_job_runner.py | 12 | Timeout, retry, circuit breaker |
+| test_watchdog.py | 14 | Health states, restart, alerts |
+| test_memory.py | 19 | Store, query, decay, persistence |
+| test_brain.py | 25 | Scoring, classification, cache |
+| test_finance.py | 16 | Approval flow, budget |
+| test_tasks.py | 16 | Lifecycle, dependencies |
+| test_llm_router.py | 19 | Templates, JSON validation |
+| test_vault.py | 16 | Encryption, audit |
+| test_logger.py | 13 | Redaction, rotation |
+| test_integration.py | 14 | Cross-module flows |
+| test_consolidation.py | 13 | Pattern extraction, dedup |
+| test_learning.py | 23 | Skills, KB, auto-testing |
+| test_brain_memory.py | 24 | Brain+memory integration, E2E |
+| test_programmer.py | 23 | Code review, error analysis |
+| test_models.py | 17 | Task classification, model routing |
+| test_semantic_router.py | 7 | Intent definitions, classification |
+| test_telegram_review.py | 8 | /review command |
+| test_utils.py | 2 | Slovak time formatting |
 
-- `HEALTHY` — heartbeat v rámci timeout
-- `DEGRADED` — heartbeat meškajúci (1-2× timeout)
-- `UNHEALTHY` — heartbeat meškajúci (2-3× timeout)
-- `DEAD` — žiadny heartbeat > 3× timeout → auto-restart
-
-**Systémové metriky:** CPU %, RAM %, disk %, per-modul stav
-
-**Príklad:**
-```python
-from agent.core.watchdog import Watchdog
-
-wd = Watchdog(check_interval=10.0, cpu_threshold=90.0)
-wd.register_module("brain", heartbeat_timeout=30.0)
-
-# Modul posiela heartbeat pravidelne
-wd.heartbeat("brain")
-
-# Kontrola zdravia
-health = wd.get_system_health()
-# → cpu_percent, memory_percent, modules: {brain: "healthy"}, alerts: []
-```
-
----
-
-### 9. Vault — Secrets Manager (`agent/vault/secrets.py`)
-
-Šifrované úložisko pre API kľúče a citlivé dáta.
-
-**Bezpečnosť:**
-- AES-128-CBC + HMAC-SHA256 (Fernet) šifrovanie
-- Kľúč derivovaný cez PBKDF2 (480,000 iterácií)
-- Audit trail každého prístupu
-- In-memory cache (clearovateľný)
-- Nesprávny master key → decrypt fail, nie corrupted data
-
-**Setup:**
 ```bash
-# Nastav master key (env variable)
-export AGENT_VAULT_KEY="tvoj-silny-master-key"
-```
-
-**Príklad:**
-```python
-from agent.vault.secrets import SecretsManager
-
-vault = SecretsManager(vault_dir="agent/vault", master_key="...")
-
-# Ulož secret
-vault.set_secret("ANTHROPIC_API_KEY", "sk-ant-...")
-
-# Načítaj
-key = vault.get_secret("ANTHROPIC_API_KEY")
-
-# Zoznam (len názvy, NIE hodnoty)
-names = vault.list_secrets()  # ["ANTHROPIC_API_KEY"]
-
-# Audit
-log = vault.get_audit_log()
+python -m pytest tests/ -q           # Rýchly beh
+python -m pytest tests/ -v           # Detailný
+python -m pytest tests/test_X.py     # Jeden súbor
 ```
 
 ---
 
-### 10. Finance Tracker (`agent/finance/tracker.py`)
-
-Sledovanie rozpočtu a finančných návrhov. **Všetko vyžaduje ľudské schválenie.**
-
-**Workflow:**
-```
-Agent navrhne výdavok → PROPOSED
-    ↓
-Daniel schváli        → APPROVED → COMPLETED
-Daniel zamietne       → REJECTED
-```
-
-**Budget limity (nastaviteľné):**
-- Denný: $50 default
-- Mesačný: $500 default
-
-**Príklad:**
-```python
-from agent.finance.tracker import FinanceTracker
-
-ft = FinanceTracker(daily_budget_usd=50.0, monthly_budget_usd=500.0)
-await ft.initialize()
-
-# Agent navrhne výdavok
-tx = await ft.propose_expense(
-    amount_usd=12.99,
-    description="Kúpiť doménu example.com",
-    category="infrastructure",
-    rationale="Doména pre projekt",
-)
-# tx.status == PROPOSED
-
-# Daniel schváli
-await ft.approve(tx.id)
-await ft.complete(tx.id)
-
-# Záznam príjmu
-await ft.record_income(50.0, "Freelance platba", source="client_a")
-
-# Stav rozpočtu
-stats = ft.get_stats()
-# → total_income, total_expenses, net, pending_proposals, budget
-```
-
----
-
-### 11. Logger (`agent/logs/logger.py`)
-
-Štruktúrované JSON logy so secret redaction.
-
-**Bezpečnosť:** Akýkoľvek key obsahujúci `api_key`, `password`, `token`, `secret`, `credential`, `auth`, `bearer` sa automaticky nahradí `***REDACTED***`.
-
-**Príklad:**
-```python
-from agent.logs.logger import AgentLogger
-
-log = AgentLogger(log_dir="agent/logs")
-
-log.info("task_completed", source="brain", task_id="abc123")
-log.error("job_failed", source="runner", error="timeout")
-log.audit("secret_accessed", source="vault", target="ANTHROPIC_API_KEY")
-
-# Vyhľadávanie
-results = log.search("task_completed", limit=10)
-recent = log.read_recent(count=20)
-```
-
----
-
-## Štruktúra súborov
+## Štrukúra súborov
 
 ```
 Agent_Life_Space/
-├── pyproject.toml           # Python projekt konfigurácia
-├── DOCS.md                  # Táto dokumentácia
-├── .gitignore               # Git exclusions
+├── CLAUDE.md                  # Pravidlá pre agenta
+├── JOHN.md                    # Identita agenta
+├── DOCS.md                    # Táto dokumentácia
+├── pyproject.toml             # Python konfigurácia
 ├── agent/
-│   ├── __init__.py          # v0.1.0
-│   ├── __main__.py          # CLI entry point
+│   ├── __main__.py            # Entry point, Telegram, cron
 │   ├── core/
-│   │   ├── messages.py      # JSON message protocol (310 riadkov)
-│   │   ├── router.py        # Message bus (200 riadkov)
-│   │   ├── llm_router.py    # LLM s template + schema (320 riadkov)
-│   │   ├── job_runner.py    # Spoľahlivý job executor (250 riadkov)
-│   │   ├── watchdog.py      # Process monitoring (230 riadkov)
-│   │   └── agent.py         # Orchestrátor (300 riadkov)
+│   │   ├── agent.py           # Orchestrátor
+│   │   ├── agent_loop.py      # Background work queue
+│   │   ├── cron.py            # Periodické joby
+│   │   ├── job_runner.py      # Job execution
+│   │   ├── llm_router.py      # LLM templates + schema
+│   │   ├── maintenance.py     # Server maintenance
+│   │   ├── messages.py        # JSON message protocol
+│   │   ├── models.py          # Model routing (Haiku/Sonnet/Opus)
+│   │   ├── router.py          # Message bus
+│   │   ├── sandbox.py         # Docker sandbox
+│   │   ├── utils.py           # Utility funkcie
+│   │   ├── watchdog.py        # Health monitoring
+│   │   └── web.py             # HTTP/scraping
 │   ├── brain/
-│   │   └── decision_engine.py  # Algo vs LLM (290 riadkov)
+│   │   ├── decision_engine.py # Algo vs LLM
+│   │   ├── dispatcher.py      # Internal dispatch (0 tokenov)
+│   │   ├── knowledge.py       # Knowledge base (.md)
+│   │   ├── learning.py        # Skills + KB + memory
+│   │   ├── programmer.py      # Code review, workflow
+│   │   ├── semantic_router.py # MiniLM intent detection
+│   │   └── skills.py          # Skill registry
 │   ├── memory/
-│   │   └── store.py         # 4-vrstvová pamäť (310 riadkov)
+│   │   ├── consolidation.py   # Episodic → semantic/procedural
+│   │   ├── rag.py             # Self-RAG embedding search
+│   │   ├── semantic_cache.py  # LLM response cache
+│   │   └── store.py           # 4-type SQLite memory
 │   ├── tasks/
-│   │   └── manager.py       # Task lifecycle (280 riadkov)
+│   │   └── manager.py         # Task lifecycle
 │   ├── finance/
-│   │   └── tracker.py       # Budget + approval (260 riadkov)
+│   │   └── tracker.py         # Budget + approval
+│   ├── social/
+│   │   ├── telegram_bot.py    # Telegram polling
+│   │   └── telegram_handler.py # Message handling + cascade
 │   ├── logs/
-│   │   └── logger.py        # Structured logging (170 riadkov)
-│   ├── vault/
-│   │   └── secrets.py       # Encrypted secrets (190 riadkov)
-│   ├── docs/
-│   │   └── research_agent_frameworks.md
-│   ├── social/              # (scaffold — na doplnenie)
-│   ├── work/                # (scaffold — na doplnenie)
-│   └── projects/            # (scaffold — na doplnenie)
-└── tests/
-    ├── test_messages.py     # 23 testov
-    ├── test_router.py       # 12 testov
-    ├── test_llm_router.py   # 19 testov
-    ├── test_job_runner.py   # 12 testov
-    ├── test_brain.py        # 25 testov
-    ├── test_memory.py       # 19 testov
-    ├── test_tasks.py        # 16 testov
-    ├── test_watchdog.py     # 14 testov
-    ├── test_vault.py        # 16 testov
-    ├── test_finance.py      # 16 testov
-    ├── test_logger.py       # 13 testov
-    └── test_integration.py  # 14 testov
+│   │   └── logger.py          # JSON logging
+│   └── vault/
+│       └── secrets.py         # Encrypted secrets
+└── tests/                     # 329 testov
 ```
 
 ---
 
-## Bezpečnostné princípy
+## Čo je dokončené
 
-1. **Financie** — Agent navrhuje, Daniel schvaľuje. Vždy. Bez výnimky.
-2. **Secrets** — Šifrované na disku, redaktované v logoch, audit trail.
-3. **Žiadne wallet prístupy** — Agent nemá priamy prístup k peniazom.
-4. **Žiadne smart contracty** — Agent neinteraguje s blockchainom.
-5. **Anti-stochastika** — Kde nie je nutný LLM, beží deterministický algoritmus.
-6. **Timeout na všetkom** — Žiadny proces beží nekonečne.
-7. **Dead letter queue** — Žiadne tiché zlyhanie, všetko sa zaloguje.
+- [x] 7-vrstvový cascade (0 tokenov → Haiku → Sonnet → Opus)
+- [x] Semantic router s MiniLM (slovenčina + angličtina)
+- [x] Semantic cache pre LLM odpovede
+- [x] Self-RAG nad knowledge base
+- [x] 20 skills s auto-testing
+- [x] 15+ knowledge base entries
+- [x] Memory consolidation (episodic → semantic/procedural)
+- [x] Docker sandbox
+- [x] Web scraping + API access
+- [x] Telegram komunikácia (bot + groups)
+- [x] Code review + programmer workflow
+- [x] Server maintenance (cron)
+- [x] 329 testov
 
----
+## Čo je plánované
 
-## Ďalšie kroky
-
-- [ ] Deploy na server (ssh b2jk)
-- [ ] Social modul (API komunikácia, web scraping)
-- [ ] Projects modul (riadenie earning projektov)
-- [ ] Sandbox pre systémové príkazy
-- [ ] Circuit breaker pattern
-- [ ] Multi-model routing (lacný model na jednoduché, Opus na ťažké)
-- [ ] Web dashboard pre monitoring
-- [ ] Prvý earning use case
+- [ ] Plné využitie NVIDIA 840M GPU (OCR, image processing)
+- [ ] RAG s FTS5 full-text search
+- [ ] Proaktivita (vlastná iniciatíva, nie len reakcia)
+- [ ] Data collection pipeline (RSS, monitoring)
+- [ ] Earning: hackathony, freelance
+- [ ] Plugin systém pre nové schopnosti

@@ -99,6 +99,7 @@ async def run_agent(data_dir: str = "agent") -> None:
             logger.info("cron_enabled", owner_chat_id=owner_id)
         else:
             work_loop = None
+            work_loop_task = None
             cron = None
             cron_task = None
             logger.info("telegram_bot_disabled", reason="no TELEGRAM_BOT_TOKEN")
@@ -109,6 +110,8 @@ async def run_agent(data_dir: str = "agent") -> None:
         # Graceful shutdown
         if work_loop:
             await work_loop.stop()
+            if work_loop_task:
+                work_loop_task.cancel()
 
         if cron:
             await cron.stop()

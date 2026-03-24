@@ -16,7 +16,6 @@ Flow:
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any
 
 import structlog
@@ -382,7 +381,7 @@ class TelegramHandler:
         result = await sandbox.run_python(code)
 
         if result.timed_out:
-            return f"Timeout — kód bežal dlhšie ako {self._timeout}s."
+            return "Timeout — kód bežal príliš dlho."
 
         output = result.stdout.strip() if result.stdout else ""
         errors = result.stderr.strip() if result.stderr else ""
