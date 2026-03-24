@@ -144,7 +144,8 @@ class TelegramBot:
             self._last_update_id = update["update_id"]
             message = update.get("message")
             if message:
-                await self._handle_message(message)
+                # Process in background — don't block polling
+                asyncio.create_task(self._handle_message(message))
 
     async def _handle_message(self, message: dict[str, Any]) -> None:
         """Process an incoming message (private or group)."""

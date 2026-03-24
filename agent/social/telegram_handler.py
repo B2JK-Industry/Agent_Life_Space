@@ -197,8 +197,9 @@ class TelegramHandler:
     Routes Telegram messages through agent's brain (Claude + tools).
     """
 
-    def __init__(self, agent: AgentOrchestrator) -> None:
+    def __init__(self, agent: AgentOrchestrator, bot: Any = None) -> None:
         self._agent = agent
+        self._bot = bot  # Reference to TelegramBot for sending typing indicators
 
     async def handle(self, text: str, user_id: int, chat_id: int) -> str:
         text = text.strip()
@@ -207,6 +208,10 @@ class TelegramHandler:
 
         if text.startswith("/"):
             return await self._handle_command(text)
+
+        # Send typing indicator so Daniel sees John is thinking
+        if self._bot:
+            await self._bot._api_call("sendChatAction", chat_id=chat_id, action="typing")
 
         return await self._handle_text(text)
 
@@ -421,7 +426,9 @@ class TelegramHandler:
                 logger.error("claude_response_error", error=error_msg)
                 return f"Claude error: {error_msg}"
 
-            reply = response_data.get("result", "...")
+            reply = response_data.get("result", "").strip()
+            if not reply or reply == "...":
+                reply = "Premýšľal som, ale neprišiel som k odpovedi. Skús to inak."
             cost = response_data.get("total_cost_usd", 0)
 
             logger.info(

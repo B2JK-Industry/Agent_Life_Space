@@ -65,7 +65,7 @@ async def run_agent(data_dir: str = "agent") -> None:
             # Support comma-separated user IDs: "123,456,789"
             allowed_ids = [int(x.strip()) for x in tg_user_id.split(",") if x.strip()] if tg_user_id else []
             bot = TelegramBot(token=tg_token, allowed_user_ids=allowed_ids)
-            handler = TelegramHandler(agent)
+            handler = TelegramHandler(agent, bot=bot)
             bot.on_message(handler.handle)
             telegram_task = asyncio.create_task(bot.start())
             logger.info("telegram_bot_enabled")
