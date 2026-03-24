@@ -166,20 +166,23 @@ class AgentLoop:
             f"Odpovedaj po slovensky."
         )
 
+        from agent.core.models import get_model
+        model = get_model("work_queue")
+
         result = await asyncio.to_thread(
             subprocess.run,
             [
                 claude_bin,
                 "--print",
                 "--output-format", "json",
-                "--model", "claude-sonnet-4-6",
-                "--max-turns", "10",
+                "--model", model.model_id,
+                "--max-turns", str(model.max_turns),
                 "--dangerously-skip-permissions",
             ],
             input=prompt,
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=model.timeout,
             env=env,
             cwd=os.path.expanduser("~/agent-life-space"),
         )
