@@ -126,6 +126,7 @@ class TelegramHandler:
             "/queue": self._cmd_queue,
             "/consolidate": self._cmd_consolidate,
             "/web": self._cmd_web,
+            "/sandbox": self._cmd_sandbox,
             "/help": self._cmd_help,
         }
 
@@ -158,6 +159,7 @@ class TelegramHandler:
             "/newtask [názov] — vytvor novú úlohu\n"
             "/consolidate — spusti konsolidáciu pamäte\n"
             "/web [url] — stiahni a prečítaj webovú stránku\n"
+            "/sandbox [python kód] — spusti kód v Docker sandboxe\n"
             "/queue — stav pracovnej fronty\n"
             "/help — tento help\n\n"
             "Alebo napíš čokoľvek — premýšľam a konám."
@@ -318,6 +320,42 @@ class TelegramHandler:
             return f"*{url}* (status {status})\n\n{text[:3000]}"
         finally:
             await web.close()
+
+    async def _cmd_sandbox(self, args: str) -> str:
+        """Run Python code in Docker sandbox."""
+        code = args.strip()
+        if not code:
+            return (
+                "Použi: /sandbox [python kód]\n"
+                "Napr: /sandbox print('hello world')\n\n"
+                "Kód beží v izolovanom Docker kontajneri:\n"
+                "• Max 256MB RAM, 1 CPU\n"
+                "• Žiadny internet\n"
+                "• Read-only filesystem\n"
+                "• Timeout 60s"
+            )
+
+        from agent.core.sandbox import DockerSandbox
+        sandbox = DockerSandbox()
+
+        result = await sandbox.run_python(code)
+
+        if result.timed_out:
+            return f"Timeout — kód bežal dlhšie ako {self._timeout}s."
+
+        output = result.stdout.strip() if result.stdout else ""
+        errors = result.stderr.strip() if result.stderr else ""
+
+        if result.success:
+            response = f"*Sandbox výstup:*\n```\n{output[:3000]}\n```"
+            if errors:
+                response += f"\n\n*Stderr:*\n```\n{errors[:500]}\n```"
+            return response
+        else:
+            return (
+                f"*Chyba (exit {result.exit_code}):*\n"
+                f"```\n{errors[:2000] or output[:2000]}\n```"
+            )
 
     # --- Free text — Claude thinks, agent acts ---
 
