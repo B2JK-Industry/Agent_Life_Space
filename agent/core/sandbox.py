@@ -176,9 +176,14 @@ class DockerSandbox:
         network_flag = "bridge" if self._network else "none"
         interactive_flag = "-i " if stdin_data else ""
 
+        # Unique container name pre timeout kill
+        import uuid
+        container_name = f"sandbox-{uuid.uuid4().hex[:12]}"
+
         cmd_str = " ".join(command)
         docker_args = (
             f"docker run --rm {interactive_flag}"
+            f"--name={container_name} "
             f"--memory={self._memory} "
             f"--cpus={self._cpus} "
             f"--network={network_flag} "
@@ -196,6 +201,7 @@ class DockerSandbox:
             memory=self._memory,
             network=network_flag,
             timeout=timeout,
+            container=container_name,
         )
 
         try:
@@ -211,10 +217,26 @@ class DockerSandbox:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     proc.communicate(input=stdin_bytes), timeout=timeout,
                 )
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
-                logger.warning("sandbox_timeout", image=image, timeout=timeout)
+            except (asyncio.TimeoutError, TimeoutError):
+                # Kill the Docker container directly (proc.kill() kills only sg wrapper)
+                kill_cmd = f"sg docker -c 'docker kill {container_name}'"
+                kill_proc = await asyncio.create_subprocess_shell(
+                    kill_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(kill_proc.communicate(), timeout=5)
+                # Now kill the wrapper process too
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=3)
+                except (asyncio.TimeoutError, TimeoutError):
+                    pass
+                logger.warning("sandbox_timeout", image=image, timeout=timeout,
+                               container=container_name)
                 return SandboxResult(
                     success=False,
                     stderr=f"Timeout after {timeout}s",
