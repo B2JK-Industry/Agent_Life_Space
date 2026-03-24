@@ -39,6 +39,10 @@ class InternalDispatcher:
         """
         text_lower = text.lower().strip()
 
+        # Ak text obsahuje URL → preskočiť dispatcher, nechať LLM spracovať
+        if "http://" in text_lower or "https://" in text_lower or "www." in text_lower:
+            return None
+
         # Exact/near-exact pattern matching only
         handlers = [
             (self._is_status_query, self._handle_status),
