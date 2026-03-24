@@ -334,73 +334,182 @@ class TelegramHandler:
         task = await self._agent.tasks.create_task(name=args.strip(), importance=0.5, urgency=0.5)
         return f"Úloha vytvorená: *{task.name}* (id: `{task.id}`)"
 
-    # --- Free text — Claude with tools ---
+    # --- Free text — Claude thinks, agent acts ---
 
     async def _handle_text(self, text: str) -> str:
         """
-        Agent thinks with Claude Opus and acts through its own modules.
-        Claude has tools = agent capabilities.
+        Agent thinks with Claude (via claude CLI + Max subscription)
+        and acts through its own modules.
+
+        Two-phase approach:
+        1. Gather agent context (memories, tasks, health)
+        2. Send to Claude with context, get response
+        3. Parse any actions from response, execute through modules
         """
+        from agent.memory.store import MemoryEntry, MemoryType
+
+        # Store user message in episodic memory
+        await self._agent.memory.store(
+            MemoryEntry(
+                content=f"Daniel mi napísal: {text}",
+                memory_type=MemoryType.EPISODIC,
+                tags=["telegram", "user_input", "daniel"],
+                source="telegram",
+                importance=0.6,
+            )
+        )
+
+        # Gather agent context
+        context = await self._build_context(text)
+
+        # Build the full prompt with context
+        full_prompt = f"{context}\n\nDaniel mi píše: {text}"
+
         try:
-            import anthropic
+            import subprocess
+            import os
 
-            client = anthropic.Anthropic()
+            env = os.environ.copy()
+            oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+            if oauth_token:
+                env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
 
-            messages = [{"role": "user", "content": text}]
+            claude_bin = os.path.expanduser("~/.local/bin/claude")
 
-            # Agentic loop — Claude can call tools multiple times
-            for _iteration in range(10):  # Max 10 tool-use rounds
-                response = await asyncio.to_thread(
-                    client.messages.create,
-                    model="claude-opus-4-6",
-                    max_tokens=1024,
-                    temperature=0.3,
-                    system=SYSTEM_PROMPT,
-                    tools=AGENT_TOOLS,
-                    messages=messages,
+            result = await asyncio.to_thread(
+                subprocess.run,
+                [
+                    claude_bin,
+                    "--print",
+                    "--output-format", "json",
+                    "--model", "claude-opus-4-6",
+                    "--max-turns", "1",
+                    "-p", full_prompt,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env,
+                cwd=os.path.expanduser("~/agent-life-space"),
+            )
+
+            if result.returncode != 0:
+                logger.error(
+                    "claude_cli_error",
+                    returncode=result.returncode,
+                    stderr=result.stderr[:500],
+                    stdout=result.stdout[:500],
                 )
+                return f"Chyba pri premýšľaní: {result.stderr[:200] or result.stdout[:200]}"
 
-                # Collect text blocks and tool calls
-                text_parts = []
-                tool_calls = []
+            # Parse JSON response
+            import orjson
+            try:
+                response_data = orjson.loads(result.stdout)
+            except Exception:
+                logger.error("claude_cli_parse_error", stdout=result.stdout[:500])
+                return f"Chyba pri parsovaní odpovede."
+            if response_data.get("is_error"):
+                error_msg = response_data.get("result", "Unknown error")
+                logger.error("claude_response_error", error=error_msg)
+                return f"Claude error: {error_msg}"
 
-                for block in response.content:
-                    if block.type == "text":
-                        text_parts.append(block.text)
-                    elif block.type == "tool_use":
-                        tool_calls.append(block)
+            reply = response_data.get("result", "...")
+            cost = response_data.get("total_cost_usd", 0)
 
-                # If no tool calls, we're done — return text
-                if response.stop_reason == "end_turn" or not tool_calls:
-                    final_text = "\n".join(text_parts) if text_parts else "..."
-                    logger.info(
-                        "agent_response",
-                        tokens=response.usage.input_tokens + response.usage.output_tokens,
-                        tool_calls_total=len(messages) // 2,
-                    )
-                    return final_text
+            logger.info(
+                "agent_response",
+                cost_usd=cost,
+                output_length=len(reply),
+            )
 
-                # Execute tool calls
-                messages.append({"role": "assistant", "content": response.content})
+            # Store agent response in memory
+            await self._agent.memory.store(
+                MemoryEntry(
+                    content=f"Odpovedal som Danielovi na '{text[:50]}': {reply[:200]}",
+                    memory_type=MemoryType.EPISODIC,
+                    tags=["telegram", "agent_response"],
+                    source="claude",
+                    importance=0.3,
+                )
+            )
 
-                tool_results = []
-                for tool_call in tool_calls:
-                    result = await self._execute_tool(
-                        tool_call.name, tool_call.input
-                    )
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_call.id,
-                        "content": json.dumps(result, ensure_ascii=False),
-                    })
+            # Parse and execute any actions in the response
+            await self._parse_and_execute_actions(text, reply)
 
-                messages.append({"role": "user", "content": tool_results})
+            return reply
 
-            return "Dosiahol som limit premýšľania (10 krokov). Skús zjednodušiť požiadavku."
-
+        except subprocess.TimeoutExpired:
+            logger.error("claude_cli_timeout")
+            return "Premýšľanie trvalo príliš dlho (timeout 60s)."
         except Exception as e:
             logger.error("agent_think_error", error=str(e))
-            return f"Chyba pri premýšľaní: {e!s}"
+            return f"Chyba: {e!s}"
+
+    async def _build_context(self, text: str) -> str:
+        """Gather agent's internal state as context for thinking."""
+        parts = [SYSTEM_PROMPT]
+
+        # Query relevant memories
+        keywords = [w for w in text.split() if len(w) > 3]
+        if keywords:
+            memories = await self._agent.memory.query(
+                keyword=keywords[0], limit=5
+            )
+            if memories:
+                parts.append("\n--- MOJE SPOMIENKY ---")
+                for m in memories:
+                    parts.append(f"[{m.memory_type.value}] {m.content}")
+
+        # Current tasks
+        from agent.tasks.manager import TaskStatus
+        queued = self._agent.tasks.get_tasks_by_status(TaskStatus.QUEUED)
+        if queued:
+            parts.append("\n--- MOJE ÚLOHY ---")
+            for t in queued[:5]:
+                parts.append(f"- {t.name} (dôležitosť: {t.importance})")
+
+        # System health summary
+        health = self._agent.watchdog.get_system_health()
+        parts.append(
+            f"\n--- MÔJ STAV ---\n"
+            f"CPU: {health.cpu_percent:.0f}%, RAM: {health.memory_percent:.0f}%, "
+            f"Disk: {health.disk_percent:.0f}%"
+        )
+        unhealthy = [n for n, s in health.modules.items() if s != "healthy"]
+        if unhealthy:
+            parts.append(f"Nezdravé moduly: {', '.join(unhealthy)}")
+
+        # Memory stats
+        mem_stats = self._agent.memory.get_stats()
+        parts.append(f"Spomienok: {mem_stats['total_memories']}")
+
+        return "\n".join(parts)
+
+    async def _parse_and_execute_actions(self, user_text: str, reply: str) -> None:
+        """
+        If the agent's reply implies actions, execute them through modules.
+        This is the bridge between thinking and acting.
+        """
+        reply_lower = reply.lower()
+
+        # Auto-create task if agent talks about doing something
+        action_phrases = ["urobím", "pripravím", "zistím", "naplánujem", "vytvorím", "preskúmam"]
+        if any(phrase in reply_lower for phrase in action_phrases):
+            # Extract a task name from the first sentence
+            first_sentence = reply.split(".")[0].split("!")[0].strip()
+            if len(first_sentence) > 10:
+                try:
+                    await self._agent.tasks.create_task(
+                        name=first_sentence[:100],
+                        description=f"Auto-created from conversation: {user_text}",
+                        importance=0.5,
+                        urgency=0.4,
+                        tags=["auto", "telegram"],
+                    )
+                    logger.info("auto_task_created", name=first_sentence[:50])
+                except Exception:
+                    pass
 
     async def _execute_tool(self, name: str, params: dict[str, Any]) -> dict[str, Any]:
         """Execute an agent tool — maps to real module functions."""
