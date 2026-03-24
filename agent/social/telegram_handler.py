@@ -382,17 +382,34 @@ class TelegramHandler:
     async def _handle_text(self, text: str) -> str:
         """
         JSON in → Claude thinks → JSON out → format for Telegram.
-
-        Flow:
-        1. Build structured JSON context (agent state, memories, tasks)
-        2. Send as structured prompt to Claude
-        3. Parse response
-        4. Store in memory, execute actions
-        5. Format for Telegram
+        Multi-task detection happens BEFORE Claude — goes straight to queue.
         """
+        import re
         from agent.memory.store import MemoryEntry, MemoryType
         import orjson
 
+        # Detect multi-task input BEFORE calling Claude
+        # Patterns: "1. x, 2. y" or "x, y, z" separated by commas with action words
+        lines = [l.strip() for l in text.split("\n") if l.strip()]
+        numbered = [re.sub(r"^\d+[\.\)]\s*", "", l) for l in lines if re.match(r"^\d+[\.\)]", l)]
+
+        if not numbered:
+            # Try comma-separated: "otestuj X, Y, Z"
+            action_prefixes = ["otestuj", "spusti", "urob", "skontroluj", "vytvor"]
+            for prefix in action_prefixes:
+                if text.lower().startswith(prefix) and "," in text:
+                    rest = text[len(prefix):].strip().lstrip(":")
+                    items = [f"{prefix} {item.strip()}" for item in rest.split(",") if item.strip()]
+                    if len(items) >= 2:
+                        numbered = items
+                        break
+
+        if len(numbered) >= 2 and self._work_loop:
+            cid = self._owner_chat_id
+            added = self._work_loop.add_work(numbered, chat_id=cid)
+            return f"Mám {added} úloh. Spracúvam postupne, výsledky posielam priebežne."
+
+        # Single task — go through Claude
         # Store user message
         await self._agent.memory.store(
             MemoryEntry(
