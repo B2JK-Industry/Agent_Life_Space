@@ -25,8 +25,9 @@ from agent.core.agent import AgentOrchestrator
 
 logger = structlog.get_logger(__name__)
 
-# Tools the agent can use — these map to real module functions
-AGENT_TOOLS = [
+# NOTE: Tool-use cez Anthropic API bolo nahradené Claude CLI s --max-turns.
+# John používa Claude Code nástroje (Bash, Read, Write) priamo na serveri.
+_AGENT_TOOLS_DEPRECATED = [
     {
         "name": "store_memory",
         "description": (
@@ -595,6 +596,10 @@ class TelegramHandler:
                     logger.info("auto_task_created", name=first_sentence[:50])
                 except Exception:
                     pass
+
+    # --- Deprecated tool handlers (from API tool-use approach) ---
+    # NOTE: John now uses Claude Code native tools (Bash, Read, Write)
+    # These remain for potential future direct API integration.
 
     async def _execute_tool(self, name: str, params: dict[str, Any]) -> dict[str, Any]:
         """Execute an agent tool — maps to real module functions."""

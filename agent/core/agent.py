@@ -40,6 +40,7 @@ from agent.core.messages import Message, MessageType, ModuleID, Priority
 from agent.core.router import MessageRouter
 from agent.core.watchdog import Watchdog
 from agent.memory.store import MemoryEntry, MemoryStore, MemoryType
+from agent.finance.tracker import FinanceTracker
 from agent.tasks.manager import TaskManager, TaskStatus
 
 logger = structlog.get_logger(__name__)
@@ -68,10 +69,10 @@ class AgentOrchestrator:
         self._initialized = False
 
         # Core infrastructure
-        self.router = MessageRouter()
+        self.router = MessageRouter()  # FUTURE: inter-module messaging
         self.watchdog = Watchdog(check_interval=watchdog_interval)
         self.job_runner = JobRunner(max_concurrent=4)
-        self.llm_router = LLMRouter()
+        self.llm_router = LLMRouter()  # FUTURE: direct API calls (now using Claude CLI)
 
         # Agent modules
         self.brain = DecisionEngine()
@@ -80,6 +81,9 @@ class AgentOrchestrator:
         )
         self.tasks = TaskManager(
             db_path=str(self._data_dir / "tasks" / "tasks.db")
+        )
+        self.finance = FinanceTracker(
+            db_path=str(self._data_dir / "finance" / "finance.db")
         )
 
         # Background tasks
@@ -95,12 +99,13 @@ class AgentOrchestrator:
         # Ensure data directories exist
         (self._data_dir / "memory").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "tasks").mkdir(parents=True, exist_ok=True)
+        (self._data_dir / "finance").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "logs").mkdir(parents=True, exist_ok=True)
-        (self._data_dir / "work").mkdir(parents=True, exist_ok=True)
 
         # Initialize persistent stores
         await self.memory.initialize()
         await self.tasks.initialize()
+        await self.finance.initialize()
 
         # Register message handlers
         self.router.register_handler(ModuleID.BRAIN, self._handle_brain_message)
@@ -190,6 +195,7 @@ class AgentOrchestrator:
         # Close persistent stores
         await self.memory.close()
         await self.tasks.close()
+        await self.finance.close()
 
         # Store shutdown memory (in a new connection since we closed)
         logger.info("agent_stopped")
@@ -386,6 +392,7 @@ class AgentOrchestrator:
             "memory": self.memory.get_stats(),
             "tasks": self.tasks.get_stats(),
             "brain": self.brain.get_stats(),
+            "finance": self.finance.get_stats(),
             "jobs": self.job_runner.get_stats(),
             "watchdog": self.watchdog.get_stats(),
             "router": self.router.get_metrics(),
