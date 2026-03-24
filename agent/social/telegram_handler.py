@@ -439,7 +439,15 @@ class TelegramHandler:
             )
         )
 
-        # Detect programming task — use lean prompt, let Claude Code work
+        # === STEP 1: Try internal dispatch FIRST (no LLM) ===
+        from agent.brain.dispatcher import InternalDispatcher
+        dispatcher = InternalDispatcher(self._agent)
+        internal_result = await dispatcher.try_handle(text, handler_ref=self)
+        if internal_result:
+            # Answered without LLM! Zero tokens.
+            return internal_result
+
+        # === STEP 2: Needs LLM — detect type and route ===
         programming_keywords = [
             "naprogramuj", "implementuj", "napíš kód", "pridaj", "oprav bug",
             "vytvor modul", "refaktoruj", "fix", "uprav kód", "pridaj príkaz",
