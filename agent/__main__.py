@@ -65,14 +65,19 @@ async def run_agent(data_dir: str = "agent") -> None:
             # Support comma-separated user IDs: "123,456,789"
             allowed_ids = [int(x.strip()) for x in tg_user_id.split(",") if x.strip()] if tg_user_id else []
             bot = TelegramBot(token=tg_token, allowed_user_ids=allowed_ids)
-            handler = TelegramHandler(agent, bot=bot)
+            # Start agent work loop
+            from agent.core.agent_loop import AgentLoop
+            owner_id = int(tg_user_id.split(",")[0]) if tg_user_id else 0
+            work_loop = AgentLoop(telegram_bot=bot)
+            work_loop_task = asyncio.create_task(work_loop.start())
+
+            handler = TelegramHandler(agent, bot=bot, work_loop=work_loop, owner_chat_id=owner_id)
             bot.on_message(handler.handle)
             telegram_task = asyncio.create_task(bot.start())
             logger.info("telegram_bot_enabled")
 
             # Start cron (John's initiative)
             from agent.core.cron import AgentCron
-            owner_id = int(tg_user_id.split(",")[0]) if tg_user_id else 0
             cron = AgentCron(agent, telegram_bot=bot, owner_chat_id=owner_id)
             cron_task = asyncio.create_task(cron.start())
             logger.info("cron_enabled", owner_chat_id=owner_id)
@@ -85,6 +90,9 @@ async def run_agent(data_dir: str = "agent") -> None:
         await shutdown_event.wait()
 
         # Graceful shutdown
+        if work_loop:
+            await work_loop.stop()
+
         if cron:
             await cron.stop()
             if cron_task:

@@ -198,9 +198,17 @@ class TelegramHandler:
     Routes Telegram messages through agent's brain (Claude + tools).
     """
 
-    def __init__(self, agent: AgentOrchestrator, bot: Any = None) -> None:
+    def __init__(
+        self,
+        agent: AgentOrchestrator,
+        bot: Any = None,
+        work_loop: Any = None,
+        owner_chat_id: int = 0,
+    ) -> None:
         self._agent = agent
-        self._bot = bot  # Reference to TelegramBot for sending typing indicators
+        self._bot = bot
+        self._work_loop = work_loop
+        self._owner_chat_id = owner_chat_id
 
     async def handle(self, text: str, user_id: int, chat_id: int) -> str:
         text = text.strip()
@@ -239,6 +247,7 @@ class TelegramHandler:
             "/memory": self._cmd_memory,
             "/budget": self._cmd_budget,
             "/newtask": self._cmd_new_task,
+            "/queue": self._cmd_queue,
             "/help": self._cmd_help,
         }
 
@@ -357,6 +366,17 @@ class TelegramHandler:
         task = await self._agent.tasks.create_task(name=args.strip(), importance=0.5, urgency=0.5)
         return f"Úloha vytvorená: *{task.name}* (id: `{task.id}`)"
 
+    async def _cmd_queue(self, args: str) -> str:
+        if not self._work_loop:
+            return "Work loop nie je aktívny."
+        status = self._work_loop.get_status()
+        return (
+            f"*Pracovná fronta*\n"
+            f"V rade: {status['queue_size']}\n"
+            f"Spracúva sa: {'áno' if status['processing'] else 'nie'}\n"
+            f"Celkom spracované: {status['total_processed']}"
+        )
+
     # --- Free text — Claude thinks, agent acts ---
 
     async def _handle_text(self, text: str) -> str:
@@ -473,7 +493,7 @@ class TelegramHandler:
                 )
             )
 
-            await self._parse_and_execute_actions(text, reply)
+            await self._parse_and_execute_actions(text, reply, chat_id=self._owner_chat_id)
             return reply
 
         except subprocess.TimeoutExpired:
@@ -573,17 +593,34 @@ class TelegramHandler:
             logger.error("learning_load_error", error=str(e))
             return {"error": f"learning: {e!s}"}
 
-    async def _parse_and_execute_actions(self, user_text: str, reply: str) -> None:
+    async def _parse_and_execute_actions(
+        self, user_text: str, reply: str, chat_id: int = 0
+    ) -> None:
         """
-        If the agent's reply implies actions, execute them through modules.
-        This is the bridge between thinking and acting.
+        If reply contains multiple tasks, queue them in work loop.
+        If reply implies a single action, create a task.
         """
         reply_lower = reply.lower()
 
-        # Auto-create task if agent talks about doing something
+        # Detect numbered list of tasks (e.g. "1. do X\n2. do Y\n3. do Z")
+        import re
+        numbered_items = re.findall(r"^\d+[\.\)]\s+(.+)$", reply, re.MULTILINE)
+
+        if len(numbered_items) >= 2 and self._work_loop:
+            # Multiple tasks — queue them
+            cid = chat_id or self._owner_chat_id
+            added = self._work_loop.add_work(numbered_items, chat_id=cid)
+            if added > 0 and self._bot and cid:
+                await self._bot.send_message(
+                    cid,
+                    f"📋 Zaradil som {added} úloh do fronty. Spracúvam postupne.",
+                )
+            logger.info("work_queued_from_reply", items=added)
+            return
+
+        # Single action — create task
         action_phrases = ["urobím", "pripravím", "zistím", "naplánujem", "vytvorím", "preskúmam"]
         if any(phrase in reply_lower for phrase in action_phrases):
-            # Extract a task name from the first sentence
             first_sentence = reply.split(".")[0].split("!")[0].strip()
             if len(first_sentence) > 10:
                 try:
