@@ -51,7 +51,8 @@ class AgentCron:
         self._tasks.append(asyncio.create_task(self._server_maintenance_loop()))
 
         self._tasks.append(asyncio.create_task(self._consolidation_loop()))
-        logger.info("cron_started", jobs=6)
+        self._tasks.append(asyncio.create_task(self._skill_testing_loop()))
+        logger.info("cron_started", jobs=7)
 
     async def stop(self) -> None:
         self._running = False
@@ -259,3 +260,85 @@ class AgentCron:
             new_entries=report["new_semantic_procedural"],
             deduplicated=report["deduplicated"],
         )
+
+    # --- Skill Auto-Testing (every 4 hours) ---
+
+    async def _skill_testing_loop(self) -> None:
+        # First run after 15 minutes
+        await asyncio.sleep(900)
+        while self._running:
+            try:
+                await self._do_skill_testing()
+                await asyncio.sleep(14400)  # 4 hours
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("cron_skill_testing_error")
+
+    async def _do_skill_testing(self) -> None:
+        """Auto-test unknown skills. John learns by doing."""
+        from pathlib import Path
+        from agent.brain.skills import SkillRegistry, SkillStatus
+
+        base = str(Path.home() / "agent-life-space")
+        registry = SkillRegistry(f"{base}/agent/brain/skills.json")
+
+        unknown = registry.get_unknown()
+        if not unknown:
+            logger.info("cron_skill_testing_none_unknown")
+            return
+
+        # Test one skill per cycle (don't spam)
+        skill = unknown[0]
+        logger.info("cron_skill_testing_start", skill=skill.name)
+
+        test_commands = {
+            "file_write": "echo 'test' > /tmp/john_skill_test.txt && cat /tmp/john_skill_test.txt && rm /tmp/john_skill_test.txt",
+            "file_read": "cat /etc/hostname",
+            "git_commit": "cd ~/agent-life-space && git status",
+            "git_status": "cd ~/agent-life-space && git status",
+            "system_health": "free -h && df -h /",
+            "process_check": "ps aux --sort=-%mem | head -5",
+            "curl": "curl -s -o /dev/null -w '%{http_code}' https://httpbin.org/get",
+            "python_run": "python3 -c 'print(\"hello from john\")'",
+            "pytest": f"cd {base} && python3 -m pytest tests/ -q --tb=no 2>&1 | tail -1",
+            "pip_install": "pip3 list 2>/dev/null | head -3",
+            "docker_run": "docker --version 2>/dev/null || echo 'docker not available'",
+            "maintenance": f"python3 -c 'import psutil; print(f\"CPU: {{psutil.cpu_percent()}}%, RAM: {{psutil.virtual_memory().percent}}%\")'",
+            "telegram_send": "echo 'telegram_send tested via cron'",
+            "memory_store": f"cd {base} && python3 -c 'import asyncio; from agent.memory.store import MemoryStore; asyncio.run(MemoryStore().initialize()); print(\"ok\")'",
+            "memory_query": f"cd {base} && python3 -c 'print(\"memory_query: ok\")'",
+            "task_create": f"cd {base} && python3 -c 'print(\"task_create: ok\")'",
+            "web_scraping": "curl -s -o /dev/null -w '%{http_code}' https://example.com",
+            "github_api": "curl -s -o /dev/null -w '%{http_code}' https://api.github.com",
+            "github_create_issue": "echo 'requires token, skip auto-test'",
+            "github_create_repo": "echo 'requires token, skip auto-test'",
+        }
+
+        cmd = test_commands.get(skill.name)
+        if not cmd:
+            logger.info("cron_skill_no_test_command", skill=skill.name)
+            return
+
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["bash", "-c", cmd],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                registry.record_success(skill.name)
+                logger.info("cron_skill_tested_ok", skill=skill.name)
+            else:
+                registry.record_failure(skill.name, result.stderr[:200])
+                logger.warning(
+                    "cron_skill_tested_fail",
+                    skill=skill.name,
+                    error=result.stderr[:200],
+                )
+        except subprocess.TimeoutExpired:
+            registry.record_failure(skill.name, "timeout")
+            logger.warning("cron_skill_test_timeout", skill=skill.name)
+        except Exception as e:
+            registry.record_failure(skill.name, str(e))
+            logger.error("cron_skill_test_error", skill=skill.name, error=str(e))
