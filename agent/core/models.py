@@ -3,7 +3,12 @@ Agent Life Space — Model Router
 
 Ktorý model na čo. Jedno miesto, ľahko rozšíriteľné.
 
-Cascade: dispatcher (0 tokens) → Haiku (lacný) → Sonnet (reasoning) → Opus (kód)
+Cascade: dispatcher (lokálne) → Haiku (lacný) → Sonnet (reasoning) → Opus (kód)
+
+Cost odhad per request (s Max sub = $0, bez sub):
+    Haiku:  ~$0.001 per odpoveď
+    Sonnet: ~$0.01  per odpoveď
+    Opus:   ~$0.05-0.20 per programovacia úloha
 """
 
 from __future__ import annotations

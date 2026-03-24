@@ -71,52 +71,48 @@ def main() -> None:
         print(f"[NEW] BTC wallet created")
         print(f"      Address: {btc_address}")
 
-    # Step 4: Verify
+    # Step 4: Store additional tokens in vault (if provided via env)
+    _store_if_env(vault, "GITHUB_TOKEN")
+    _store_if_env(vault, "TELEGRAM_BOT_TOKEN")
+
+    # Step 5: Verify
     print("\n--- Vault Contents (names only) ---")
     for name in vault.list_secrets():
         print(f"  • {name}")
 
     print("\n--- Systemd env variable needed ---")
     print(f"  AGENT_VAULT_KEY={master_key}")
+    print("  (plus TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, CLAUDE_CODE_OAUTH_TOKEN)")
     print("  Add to: ~/.config/systemd/user/agent-life-space.service")
     print("  Then: systemctl --user daemon-reload && systemctl --user restart agent-life-space")
 
-    # Step 5: Lock down vault directory
+    # Step 6: Lock down vault directory
     os.chmod(str(vault_dir), 0o700)
     print(f"\n[OK] Vault directory locked: {vault_dir} (chmod 700)")
 
 
+def _store_if_env(vault: "SecretsManager", env_name: str) -> None:
+    """If env var is set, store it in vault (safer than raw env)."""
+    value = os.environ.get(env_name, "")
+    if value and env_name not in vault.list_secrets():
+        vault.set_secret(env_name, value)
+        print(f"[NEW] {env_name} stored in vault")
+    elif env_name in vault.list_secrets():
+        print(f"[OK] {env_name} already in vault")
+
+
 def _create_eth_wallet() -> tuple[str, str]:
-    """Generate ETH wallet. Returns (address, private_key)."""
-    try:
-        from eth_account import Account
-        account = Account.create()
-        return (account.address, account.key.hex())
-    except ImportError:
-        # Fallback: generate raw key
-        import secrets
-        private_key = "0x" + secrets.token_hex(32)
-        # Can't derive address without eth_account — store key, derive later
-        return ("DERIVE_AFTER_INSTALL_ETH_ACCOUNT", private_key)
+    """Generate ETH wallet. Returns (address, private_key_hex)."""
+    from eth_account import Account
+    account = Account.create()
+    return (account.address, account.key.hex())
 
 
 def _create_btc_wallet() -> tuple[str, str]:
     """Generate BTC wallet. Returns (address, private_key_wif)."""
-    try:
-        import hashlib
-        import secrets
-
-        # Generate private key (32 bytes)
-        private_key_bytes = secrets.token_bytes(32)
-        private_key_hex = private_key_bytes.hex()
-
-        # Simple P2PKH address derivation (for receive-only)
-        # Full BTC address generation requires more dependencies
-        # For now, store the private key and derive address later
-        return ("DERIVE_WITH_BTC_LIBRARY", private_key_hex)
-    except Exception:
-        import secrets
-        return ("DERIVE_LATER", secrets.token_hex(32))
+    from bit import Key
+    key = Key()
+    return (key.address, key.to_wif())
 
 
 if __name__ == "__main__":

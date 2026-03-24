@@ -67,9 +67,14 @@ class SandboxResult:
         }
 
 
+class SandboxUnavailableError(Exception):
+    """Docker nie je dostupný — sandbox nemôže bežať."""
+
+
 class DockerSandbox:
     """
     Docker-based sandbox for safe code execution.
+    POVINNÝ pre všetko čo spúšťa kód. Žiadny code execution bez sandboxu.
     """
 
     def __init__(
@@ -83,6 +88,7 @@ class DockerSandbox:
         self._cpus = cpu_limit
         self._network = network
         self._timeout = min(timeout, _MAX_TIMEOUT)
+        self._docker_verified = False
 
     async def run_python(
         self,
@@ -146,6 +152,18 @@ class DockerSandbox:
         timeout = min(timeout or self._timeout, _MAX_TIMEOUT)
         return await self._docker_run(image, command, timeout)
 
+    async def _ensure_docker(self) -> None:
+        """Verify Docker is available. Raises SandboxUnavailableError if not."""
+        if self._docker_verified:
+            return
+        status = await self.check_docker()
+        if not status.get("available"):
+            raise SandboxUnavailableError(
+                "Docker nie je dostupný. Sandbox je povinný pre spúšťanie kódu. "
+                "Nainštaluj Docker: https://docs.docker.com/engine/install/"
+            )
+        self._docker_verified = True
+
     async def _docker_run(
         self,
         image: str,
@@ -154,6 +172,7 @@ class DockerSandbox:
         stdin_data: str | None = None,
     ) -> SandboxResult:
         """Core Docker run with all safety constraints."""
+        await self._ensure_docker()
         network_flag = "bridge" if self._network else "none"
         interactive_flag = "-i " if stdin_data else ""
 

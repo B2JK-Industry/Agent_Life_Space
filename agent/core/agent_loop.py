@@ -63,6 +63,8 @@ class AgentLoop:
         self._running = False
         self._processing = False
         self._processed_count = 0
+        self._error_count = 0
+        self._consecutive_errors = 0
         self._task: asyncio.Task[Any] | None = None
 
     async def start(self) -> None:
@@ -136,13 +138,36 @@ class AgentLoop:
             except Exception as e:
                 item.result = str(e)
                 item.success = False
-                logger.error("work_item_error", error=str(e))
+                self._error_count += 1
+                logger.error(
+                    "work_item_error",
+                    error=str(e),
+                    consecutive_errors=self._consecutive_errors + 1,
+                )
+                self._consecutive_errors += 1
 
                 if self._bot and item.callback_chat_id:
                     await self._bot.send_message(
                         item.callback_chat_id,
                         f"❌ {item.description}\nChyba: {e!s}",
                     )
+
+                # Circuit breaker: 3 chyby za sebou → pauza
+                if self._consecutive_errors >= 3:
+                    logger.warning(
+                        "circuit_breaker_triggered",
+                        consecutive=self._consecutive_errors,
+                        pause_seconds=30,
+                    )
+                    if self._bot and item.callback_chat_id:
+                        await self._bot.send_message(
+                            item.callback_chat_id,
+                            f"⚠️ 3 chyby za sebou. Pauzujem na 30s.",
+                        )
+                    await asyncio.sleep(30)
+                    self._consecutive_errors = 0
+            else:
+                self._consecutive_errors = 0
 
             self._processing = False
             # Krátka pauza medzi úlohami
@@ -202,5 +227,10 @@ class AgentLoop:
             "queue_size": len(self._queue),
             "processing": self._processing,
             "total_processed": self._processed_count,
+            "total_errors": self._error_count,
+            "consecutive_errors": self._consecutive_errors,
             "running": self._running,
+            "error_rate": round(
+                self._error_count / max(self._processed_count + self._error_count, 1), 2
+            ),
         }

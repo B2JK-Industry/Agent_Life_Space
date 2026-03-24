@@ -14,6 +14,7 @@ import asyncio
 import os
 import signal
 import sys
+from datetime import datetime, timezone
 
 import structlog
 
@@ -50,6 +51,19 @@ async def run_agent(data_dir: str = "agent") -> None:
 
     try:
         await agent.initialize()
+
+        # Docker check — sandbox je povinný
+        from agent.core.sandbox import DockerSandbox
+        sandbox = DockerSandbox()
+        docker_status = await sandbox.check_docker()
+        if docker_status.get("available"):
+            logger.info("docker_available", status="ok")
+        else:
+            logger.warning(
+                "docker_not_available",
+                error=docker_status.get("error", "unknown"),
+                hint="Docker je povinný pre sandbox. Kód sa nebude spúšťať bez neho.",
+            )
 
         # Start agent in background
         agent_task = asyncio.create_task(agent.start())
@@ -133,8 +147,22 @@ async def run_agent(data_dir: str = "agent") -> None:
         except asyncio.CancelledError:
             pass
 
-    except Exception:
-        logger.exception("agent_fatal_error")
+    except Exception as e:
+        logger.exception("agent_fatal_error", error=str(e))
+        # Store crash info for post-mortem
+        try:
+            from pathlib import Path
+            crash_log = Path(data_dir) / "logs" / "last_crash.txt"
+            crash_log.parent.mkdir(parents=True, exist_ok=True)
+            import traceback
+            crash_log.write_text(
+                f"Time: {datetime.now(timezone.utc).isoformat()}\n"
+                f"Error: {e}\n\n"
+                f"{traceback.format_exc()}"
+            )
+            logger.info("crash_log_saved", path=str(crash_log))
+        except Exception:
+            pass
         await agent.stop()
         sys.exit(1)
 

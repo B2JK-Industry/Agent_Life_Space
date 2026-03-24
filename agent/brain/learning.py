@@ -290,3 +290,158 @@ class LearningSystem:
             ],
             "total_found": len(matching_skills) + len(kb_results),
         }
+
+    # === FEEDBACK LOOP ===
+
+    def process_outcome(
+        self,
+        task_description: str,
+        reply: str,
+        success: bool,
+    ) -> dict[str, Any]:
+        """
+        Feedback loop po každom LLM volaní.
+
+        Flow:
+            1. Detekuj aké skills sa použili (z reply textu)
+            2. Aktualizuj skill status (success/failure)
+            3. Extrahuj nové poznatky (error messages, workaroundy)
+            4. Zapíš do knowledge base ak je to nové
+
+        Toto sa volá po KAŽDOM Claude response.
+        """
+        detected_skills = self._detect_skills_in_text(reply)
+        updates = []
+
+        for skill_name in detected_skills:
+            if success:
+                self.skills.record_success(skill_name)
+                updates.append(f"{skill_name}:success")
+            else:
+                error_snippet = self._extract_error(reply)
+                self.skills.record_failure(skill_name, error_snippet)
+                updates.append(f"{skill_name}:failure")
+
+        # Extract and store new knowledge
+        knowledge_saved = False
+        if not success:
+            error_msg = self._extract_error(reply)
+            if error_msg and len(error_msg) > 20:
+                # Zapíš chybu do knowledge base pre budúce referencie
+                self.knowledge.store(
+                    category="learned",
+                    name=f"error_{detected_skills[0] if detected_skills else 'unknown'}",
+                    content=(
+                        f"## Chyba pri úlohe\n\n"
+                        f"Úloha: {task_description[:200]}\n"
+                        f"Chyba: {error_msg}\n"
+                        f"Skills: {', '.join(detected_skills)}\n"
+                    ),
+                    tags=["error", "learned"] + detected_skills,
+                )
+                knowledge_saved = True
+
+        if updates:
+            logger.info("learning_feedback", updates=updates, knowledge_saved=knowledge_saved)
+
+        return {
+            "detected_skills": detected_skills,
+            "updates": updates,
+            "knowledge_saved": knowledge_saved,
+        }
+
+    def get_advice_for_task(self, task_description: str) -> dict[str, Any]:
+        """
+        Pred úlohou: čo viem, čo by som mal vedieť?
+
+        Flow:
+            1. Nájdi relevantné skills
+            2. Skontroluj knowledge base
+            3. Vráť radu: ktoré skills použiť, na čo si dať pozor
+        """
+        relevant = self.find_relevant(task_description)
+
+        # Check for past errors on similar tasks
+        past_errors = self.knowledge.search("error")
+        relevant_errors = [
+            e for e in past_errors
+            if any(word in e.get("preview", "").lower()
+                   for word in task_description.lower().split()
+                   if len(word) > 3)
+        ]
+
+        # Build advice
+        confident_skills = [
+            s for s in relevant["matching_skills"]
+            if s["confidence"] > 0.7
+        ]
+        risky_skills = [
+            s for s in relevant["matching_skills"]
+            if s["status"] in ("failed", "unknown")
+        ]
+
+        return {
+            "confident_skills": confident_skills,
+            "risky_skills": risky_skills,
+            "past_errors": [e["preview"][:100] for e in relevant_errors[:3]],
+            "knowledge_available": len(relevant["knowledge_entries"]) > 0,
+            "recommendation": self._build_recommendation(
+                confident_skills, risky_skills, relevant_errors
+            ),
+        }
+
+    def _detect_skills_in_text(self, text: str) -> list[str]:
+        """Detekuj použité skills z textu odpovede."""
+        text_lower = text.lower()
+        skill_signals = {
+            "curl": ["curl ", "curl -s", "http request", "api call"],
+            "web_scraping": ["scraping", "beautifulsoup", "requests.get"],
+            "git_commit": ["git commit", "git push", "commitol"],
+            "git_status": ["git status", "git log", "git diff"],
+            "file_write": ["zapísal", "vytvoril súbor", "wrote to", "write_text"],
+            "file_read": ["prečítal", "read_text", "načítal"],
+            "python_run": ["python3 -c", "spustil skript", "python3 -m"],
+            "pytest": ["pytest", "testov prešlo", "tests passed"],
+            "docker_run": ["docker run", "docker build", "kontajner"],
+            "system_health": ["free -h", "df -h", "cpu:", "ram:"],
+        }
+
+        detected = []
+        for skill_name, patterns in skill_signals.items():
+            if any(p in text_lower for p in patterns):
+                detected.append(skill_name)
+        return detected
+
+    def _extract_error(self, text: str) -> str:
+        """Extrahuj error message z reply."""
+        import re
+        # Hľadaj typické error patterny
+        patterns = [
+            r"(?:Error|Chyba|Exception|Traceback)[\s:]+(.{20,200})",
+            r"(?:failed|zlyhalo|nefunguje)[\s:]+(.{10,200})",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+        return ""
+
+    def _build_recommendation(
+        self,
+        confident: list[dict],
+        risky: list[dict],
+        past_errors: list[dict],
+    ) -> str:
+        """Postav odporúčanie na základe kontextu."""
+        parts = []
+        if confident:
+            names = ", ".join(s["name"] for s in confident)
+            parts.append(f"Môžem použiť: {names}")
+        if risky:
+            names = ", ".join(s["name"] for s in risky)
+            parts.append(f"Pozor na: {names} (nestabilné)")
+        if past_errors:
+            parts.append(f"Minule sa vyskytli chyby v podobnej úlohe")
+        if not parts:
+            parts.append("Nemám skúsenosti s touto témou")
+        return ". ".join(parts) + "."

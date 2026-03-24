@@ -643,8 +643,24 @@ class TelegramHandler:
             )
             reply += usage_line
 
-            # Auto-update skills based on what Claude actually did
-            await self._auto_update_skills(reply)
+            # Learning feedback loop — aktualizuj skills + knowledge
+            try:
+                from agent.brain.learning import LearningSystem
+                learner = LearningSystem()
+                # Detect success/failure markers
+                reply_lower = reply.lower()
+                success_markers = ["ok", "funguje", "hotovo", "úspešne", "✅", "success"]
+                failure_markers = ["chyba", "error", "failed", "nefunguje", "❌"]
+                has_success = any(m in reply_lower for m in success_markers)
+                has_failure = any(m in reply_lower for m in failure_markers)
+                if has_success or has_failure:
+                    learner.process_outcome(
+                        task_description=text,
+                        reply=reply,
+                        success=has_success and not has_failure,
+                    )
+            except Exception as e:
+                logger.error("learning_feedback_error", error=str(e))
 
             # Store in semantic cache for future similar queries
             try:

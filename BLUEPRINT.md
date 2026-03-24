@@ -9,10 +9,10 @@ Návod ako si vytvoriť vlastného autonómneho agenta. Daj toto svojmu botovi/a
 Self-hosted AI agent ktorý:
 - Komunikuje cez Telegram
 - Má vlastnú pamäť, skills, knowledge base
-- Učí sa z toho čo robí
-- Minimalizuje LLM tokeny cez 7-vrstvový cascade
-- Programuje, scrapuje web, spúšťa Docker kontajnery
-- Má šifrovaný vault pre citlivé dáta
+- Učí sa z toho čo robí (feedback loop: episodic → skills → knowledge)
+- Minimalizuje API volania cez 7-vrstvový cascade (lokálny compute namiesto LLM)
+- Programuje, scrapuje web, spúšťa kód v povinnom Docker sandboxe
+- Má šifrovaný vault pre citlivé dáta (Fernet AES-128 + PBKDF2)
 
 ---
 
@@ -25,12 +25,12 @@ Self-hosted AI agent ktorý:
 **Software:**
 - Ubuntu 22.04+ (alebo iný Linux)
 - Python 3.12+
-- Docker (voliteľné, pre sandbox)
+- Docker (povinné — sandbox pre spúšťanie kódu)
 - Git
 
 **Účty:**
 - Telegram Bot (cez @BotFather)
-- Claude Max subscription (pre Claude Code CLI)
+- Claude Max subscription (pre Claude Code CLI) alebo Anthropic API kľúč
 - GitHub účet (voliteľné)
 
 ---
@@ -50,13 +50,21 @@ source .venv/bin/activate
 pip install -e .
 pip install sentence-transformers  # pre semantic router
 
-# 4. Nastav env premenné
+# 4. Nastav vault (šifrované úložisko pre kľúče)
+python scripts/setup_vault.py
+# Výstup: AGENT_VAULT_KEY=... (ulož si ho bezpečne)
+
+# 5. Nastav env premenné (ideálne cez systemd, nie export)
 export TELEGRAM_BOT_TOKEN="tvoj-telegram-token"
 export TELEGRAM_USER_ID="tvoj-telegram-id"
 export CLAUDE_CODE_OAUTH_TOKEN="tvoj-claude-token"
+export AGENT_VAULT_KEY="z kroku 4"
 export GITHUB_TOKEN="tvoj-github-token"  # voliteľné
 
-# 5. Spusti
+# 6. Over Docker (povinné pre sandbox)
+docker --version || echo "CHYBA: Docker je povinný pre sandbox!"
+
+# 7. Spusti
 python -m agent
 ```
 
@@ -74,13 +82,13 @@ python -m agent
 ┌─────────────────────────────────────────────────────┐
 │                 7-LAYER CASCADE                      │
 │                                                      │
-│  1. /commands      → priame odpovede (0 tokenov)    │
-│  2. Dispatcher     → regex patterny (0 tokenov)     │
-│  3. Semantic Router→ MiniLM embeddingy (0 tokenov)  │
-│  4. Semantic Cache → podobná otázka? (0 tokenov)    │
-│  5. Self-RAG       → knowledge base (0 tokenov)     │
-│  6. Haiku/Sonnet   → jednoduché/konverzácia         │
-│  7. Opus           → programovanie                   │
+│  1. /commands      → priame odpovede (0 API callov)  │
+│  2. Dispatcher     → regex patterny (0 API callov)   │
+│  3. Semantic Router→ MiniLM lokálne (CPU/RAM)        │
+│  4. Semantic Cache → podobná otázka? (lokálne)       │
+│  5. Self-RAG       → knowledge base (lokálne embed.) │
+│  6. Haiku/Sonnet   → jednoduché/konverzácia (API)   │
+│  7. Opus           → programovanie (API)             │
 │                                                      │
 └──────────────────────┬──────────────────────────────┘
                        │
@@ -110,9 +118,9 @@ python -m agent
 
 ## Ako funguje cascade
 
-Cieľ: **odpovedať čo najlacnejšie.** LLM sa volá len keď interné moduly nestačia.
+Cieľ: **minimalizovať API volania.** Vrstvy 1-5 bežia lokálne (CPU/RAM, nie zadarmo, ale bez API callov). LLM sa volá len keď interné moduly nestačia.
 
-### Vrstva 1: Slash commands (0 tokenov)
+### Vrstva 1: Slash commands (0 API callov)
 ```python
 # telegram_handler.py
 if text.startswith("/"):
@@ -121,7 +129,7 @@ if text.startswith("/"):
 ```
 Deterministické, priamo z modulov.
 
-### Vrstva 2: InternalDispatcher (0 tokenov)
+### Vrstva 2: InternalDispatcher (0 API callov)
 ```python
 # brain/dispatcher.py
 class InternalDispatcher:
@@ -133,7 +141,7 @@ class InternalDispatcher:
 ```
 Regex patterny pre jednoznačné dotazy.
 
-### Vrstva 3: Semantic Router (0 tokenov)
+### Vrstva 3: Semantic Router (lokálny compute, ~470MB RAM)
 ```python
 # brain/semantic_router.py
 # MiniLM-L12-v2 (470MB, slovenčina + angličtina)
@@ -142,14 +150,14 @@ intent, confidence = classify_intent("ako sa cítiš?")
 ```
 Embedding model detekuje intent aj keď je otázka formulovaná inak.
 
-### Vrstva 4: Semantic Cache (0 tokenov)
+### Vrstva 4: Semantic Cache (lokálny compute)
 ```python
 # memory/semantic_cache.py
 cached = cache.lookup("koľko mám úloh?")  # cosine > 0.90 → return cached
 ```
 Ak John už odpovedal na podobnú otázku, vráti cache.
 
-### Vrstva 5: Self-RAG (0 tokenov alebo kontext pre LLM)
+### Vrstva 5: Self-RAG (lokálne embeddingy, alebo kontext pre LLM)
 ```python
 # memory/rag.py
 result = rag.retrieve_for_llm("čo viem o Danielovi?")
@@ -202,12 +210,110 @@ Uprav `agent/core/models.py` — nastav aké modely chceš používať a na čo.
 
 ## Kľúčové princípy
 
-1. **LLM je posledná možnosť** — najprv hľadaj internú odpoveď
+1. **LLM je posledná možnosť** — najprv hľadaj internú odpoveď (lokálny compute, nie API)
 2. **Determinizmus kde sa dá** — scoring, routing, scheduling algoritmicky
 3. **Pamäť je základ** — 4 typy, konsolidácia, nie len log udalostí
-4. **Skills sa učia** — UNKNOWN → LEARNED → MASTERED, auto-testing
-5. **Bezpečnosť** — vault pre kľúče, approval pre financie, timeout na všetkom
-6. **Stručnosť** — agent odpovedá krátko, tokeny stoja peniaze
+4. **Skills sa učia** — UNKNOWN → LEARNED → MASTERED, auto-testing, feedback loop
+5. **Sandbox je povinný** — kód sa spúšťa v Docker kontajneri, nikdy priamo na host
+6. **Vault pre všetky kľúče** — env vars len na master key, zvyšok šifrovaný vo vaulte
+7. **Error recovery** — watchdog, heartbeaty, auto-restart, circuit breaker
+8. **Stručnosť** — agent odpovedá krátko, tokeny stoja peniaze (aj lokálny compute)
+
+---
+
+## Ako sa agent učí (Learning Loop)
+
+Nie je to prázdna škatuľka. Konkrétny flow:
+
+```
+┌─────────────────────────────────────────────┐
+│                LEARNING LOOP                 │
+│                                              │
+│  1. ÚLOHA PRÍDE                              │
+│     │                                        │
+│  2. CHECK: can_i_do(skill)?                  │
+│     ├─ MASTERED → urob to s istotou          │
+│     ├─ LEARNED  → urob to, sleduj výsledok   │
+│     ├─ UNKNOWN  → auto-test, potom skús      │
+│     └─ FAILED   → skús znova s novým prístup.│
+│     │                                        │
+│  3. VYKONANIE                                │
+│     │                                        │
+│  4. VÝSLEDOK → i_did_it(skill, success/fail) │
+│     ├─ Aktualizuj skills.json                │
+│     │  (confidence, success_count, status)    │
+│     ├─ Zapíš do episodic memory              │
+│     └─ Ak nový poznatok → knowledge base     │
+│     │                                        │
+│  5. KONSOLIDÁCIA (každých 2-6h)              │
+│     ├─ Opakujúce sa patterny → semantic mem  │
+│     ├─ Procedurálne znalosti → procedural m. │
+│     └─ Deduplikácia starých spomienok        │
+│                                              │
+│  Čo sa ukladá: skill outcomes, error msgs,   │
+│  naučené workaroundy, nové poznatky          │
+│                                              │
+│  Ako sa aplikuje: can_i_do() kontroluje      │
+│  skills pred každou úlohou, RAG hľadá        │
+│  v knowledge base relevantné poznatky        │
+└─────────────────────────────────────────────┘
+```
+
+**Moduly:**
+- `agent/brain/learning.py` — orchestrácia (can_i_do, i_did_it, try_skill)
+- `agent/brain/skills.py` — skills.json lifecycle (UNKNOWN→TESTING→LEARNED→MASTERED)
+- `agent/brain/knowledge.py` — knowledge base (16 .md súborov v 5 kategóriách)
+- `agent/memory/consolidation.py` — episodic → semantic/procedural transformácia
+
+---
+
+## Resource Odhad
+
+**Lokálny compute (vrstvy 1-5):**
+- MiniLM model: ~470MB RAM (jednorazovo pri štarte)
+- Embedding výpočet: <100ms per query (i7-5500U)
+- Semantic cache: <1MB RAM (max 200 entries, 1h TTL)
+- RAG index: ~10MB RAM (16 knowledge docs)
+
+**API volania (vrstvy 6-7, len keď treba):**
+- Haiku: ~$0.001 per odpoveď
+- Sonnet: ~$0.01 per odpoveď
+- Opus: ~$0.05-0.20 per programovacia úloha
+- S Max subscription: $0/volanie (zahrnuté v predplatnom)
+
+**Reálna cache hit rate:** 5-10% (väčšina otázok je unikátna). Cache je bonus, nie základ optimalizácie. Hlavná úspora sú vrstvy 1-3 (dispatcher, regex, semantic router).
+
+---
+
+## Bezpečnostný Model
+
+```
+┌──────────────────────────────────┐
+│         SECURITY LAYERS          │
+│                                  │
+│  ENV VARS                        │
+│  └─ Len AGENT_VAULT_KEY          │
+│     (master šifrovací kľúč)      │
+│                                  │
+│  VAULT (Fernet AES-128 + PBKDF2)│
+│  └─ Všetky ostatné kľúče:       │
+│     API tokens, wallet keys,    │
+│     passwords                    │
+│                                  │
+│  SANDBOX (Docker, povinný)       │
+│  └─ Kód beží v kontajneri:      │
+│     256MB RAM, 1 CPU, no network │
+│     read-only FS, 60s timeout   │
+│                                  │
+│  FINANCE (human-in-the-loop)     │
+│  └─ Každá transakcia:           │
+│     propose → approve → complete │
+│                                  │
+│  WATCHDOG                        │
+│  └─ Heartbeaty, auto-restart,   │
+│     CPU/RAM alerty, circuit break│
+└──────────────────────────────────┘
+```
 
 ---
 
@@ -225,11 +331,11 @@ ExecStart=%h/agent-life-space/.venv/bin/python -m agent
 Restart=always
 RestartSec=10
 Environment=PATH=%h/.local/bin:/usr/bin:/bin
+# Minimum env vars — zvyšok je vo vaulte
+Environment=AGENT_VAULT_KEY=xxx
 Environment=TELEGRAM_BOT_TOKEN=xxx
 Environment=TELEGRAM_USER_ID=xxx
 Environment=CLAUDE_CODE_OAUTH_TOKEN=xxx
-Environment=GITHUB_TOKEN=xxx
-Environment=AGENT_VAULT_KEY=xxx
 
 [Install]
 WantedBy=default.target
