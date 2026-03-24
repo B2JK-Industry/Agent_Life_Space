@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -53,11 +55,28 @@ class TelegramBot:
         self._allowed_users = set(allowed_user_ids or [])
         self._session: aiohttp.ClientSession | None = None
         self._running = False
-        self._last_update_id = 0
+        self._update_id_file = Path(os.path.expanduser("~/agent-life-space/.last_update_id"))
+        self._last_update_id = self._load_last_update_id()
         self._handlers: dict[str, Any] = {}
         self._message_callback: Any = None
         self._bot_username: str = ""
         self._bot_id: int = 0
+
+    def _load_last_update_id(self) -> int:
+        """Load last processed update ID from disk."""
+        try:
+            if self._update_id_file.exists():
+                return int(self._update_id_file.read_text().strip())
+        except (ValueError, OSError):
+            pass
+        return 0
+
+    def _save_last_update_id(self) -> None:
+        """Persist last update ID so restarts don't reprocess old messages."""
+        try:
+            self._update_id_file.write_text(str(self._last_update_id))
+        except OSError:
+            pass
 
     async def start(self) -> None:
         """Start polling for messages."""
@@ -150,6 +169,7 @@ class TelegramBot:
 
         for update in updates:
             self._last_update_id = update["update_id"]
+            self._save_last_update_id()
             message = update.get("message")
             if message:
                 # Process in background — don't block polling
