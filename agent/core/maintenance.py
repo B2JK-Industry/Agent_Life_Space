@@ -280,7 +280,7 @@ class ServerMaintenance:
                 text=True,
                 timeout=8,
             )
-            checks["telegram_api"] = result.stdout.strip() in ("200", "404")
+            checks["telegram_api"] = result.stdout.strip() in ("200", "404", "301")
         except Exception:
             checks["telegram_api"] = False
 
