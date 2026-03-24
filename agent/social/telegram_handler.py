@@ -142,6 +142,7 @@ class TelegramHandler:
             "/web": self._cmd_web,
             "/sandbox": self._cmd_sandbox,
             "/usage": self._cmd_usage,
+            "/review": self._cmd_review,
             "/help": self._cmd_help,
         }
 
@@ -173,6 +174,7 @@ class TelegramHandler:
             "/budget — finančný stav\n"
             "/newtask [názov] — vytvor novú úlohu\n"
             "/consolidate — spusti konsolidáciu pamäte\n"
+            "/review [súbor] — code review súboru\n"
             "/web [url] — stiahni a prečítaj webovú stránku\n"
             "/sandbox [python kód] — spusti kód v Docker sandboxe\n"
             "/usage — spotreba tokenov a náklady\n"
@@ -349,6 +351,41 @@ class TelegramHandler:
             f"_Priemer na požiadavku: "
             f"${self._total_cost_usd / max(self._total_requests, 1):.4f}_"
         )
+
+    async def _cmd_review(self, args: str) -> str:
+        """Run code review on a file using Programmer brain."""
+        filepath = args.strip()
+        if not filepath:
+            return "Použi: /review [cesta k súboru]\nNapr: /review agent/core/router.py"
+
+        from agent.brain.programmer import Programmer
+        prog = Programmer()
+        review = prog.review_file(filepath)
+
+        if not review.passed:
+            errors = "\n".join(
+                f"  • {i['message']}" for i in review.issues if i["type"] == "error"
+            )
+            return f"*Code Review — FAILED*\n`{filepath}`\n\n{errors}"
+
+        lines = [f"*Code Review — {'OK ✓' if not review.issues else 'PASSED (s poznámkami)'}*"]
+        lines.append(f"`{filepath}`\n")
+
+        if review.issues:
+            lines.append("*Issues:*")
+            for issue in review.issues:
+                emoji = "⚠️" if issue["type"] == "warning" else "ℹ️"
+                lines.append(f"  {emoji} [{issue['type']}] {issue['message']}")
+
+        if review.suggestions:
+            lines.append("\n*Suggestions:*")
+            for s in review.suggestions:
+                lines.append(f"  💡 {s}")
+
+        if not review.issues and not review.suggestions:
+            lines.append("Žiadne problémy. Kód vyzerá čisto.")
+
+        return "\n".join(lines)
 
     async def _cmd_sandbox(self, args: str) -> str:
         """Run Python code in Docker sandbox."""
