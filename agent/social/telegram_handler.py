@@ -555,19 +555,21 @@ class TelegramHandler:
                 "failed": job_stats["total_failed"],
                 "timeouts": job_stats["total_timeouts"],
             },
-            "skills": self._get_skills_summary(),
+            "learning": self._get_learning_summary(),
         }
 
-    def _get_skills_summary(self) -> dict[str, Any]:
-        """Load John's skill registry for context."""
+    def _get_learning_summary(self) -> dict[str, Any]:
+        """Load John's skills + knowledge for context."""
         try:
-            from agent.brain.skills import SkillRegistry
-            registry = SkillRegistry(
-                str(Path.home() / "agent-life-space" / "agent" / "brain" / "skills.json")
+            from agent.brain.learning import LearningSystem
+            base = str(Path.home() / "agent-life-space")
+            ls = LearningSystem(
+                skills_path=f"{base}/agent/brain/skills.json",
+                knowledge_dir=f"{base}/agent/brain/knowledge",
             )
-            return registry.summary()
+            return ls.what_do_i_know()
         except Exception:
-            return {"error": "skills not loaded"}
+            return {"error": "learning system not loaded"}
 
     async def _parse_and_execute_actions(self, user_text: str, reply: str) -> None:
         """
