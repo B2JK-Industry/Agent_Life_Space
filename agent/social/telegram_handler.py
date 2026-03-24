@@ -406,8 +406,8 @@ class TelegramHandler:
                     "--output-format", "json",
                     "--model", "claude-opus-4-6",
                     "--max-turns", "1",
-                    "-p", full_prompt,
                 ],
+                input=full_prompt,
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -475,6 +475,12 @@ class TelegramHandler:
         import psutil
 
         parts = [SYSTEM_PROMPT]
+
+        # Read identity file if exists
+        from pathlib import Path
+        identity_file = Path.home() / "agent-life-space" / "JOHN.md"
+        if identity_file.exists():
+            parts.append(identity_file.read_text())
 
         # --- LIVE SYSTEM DATA ---
         health = self._agent.watchdog.get_system_health()
