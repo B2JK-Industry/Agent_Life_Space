@@ -94,6 +94,11 @@ class TelegramHandler:
         self._bot = bot
         self._work_loop = work_loop
         self._owner_chat_id = owner_chat_id
+        # Usage tracking
+        self._total_cost_usd: float = 0.0
+        self._total_input_tokens: int = 0
+        self._total_output_tokens: int = 0
+        self._total_requests: int = 0
 
     async def handle(self, text: str, user_id: int, chat_id: int) -> str:
         text = text.strip()
@@ -136,6 +141,7 @@ class TelegramHandler:
             "/consolidate": self._cmd_consolidate,
             "/web": self._cmd_web,
             "/sandbox": self._cmd_sandbox,
+            "/usage": self._cmd_usage,
             "/help": self._cmd_help,
         }
 
@@ -169,6 +175,7 @@ class TelegramHandler:
             "/consolidate — spusti konsolidáciu pamäte\n"
             "/web [url] — stiahni a prečítaj webovú stránku\n"
             "/sandbox [python kód] — spusti kód v Docker sandboxe\n"
+            "/usage — spotreba tokenov a náklady\n"
             "/queue — stav pracovnej fronty\n"
             "/help — tento help\n\n"
             "Alebo napíš čokoľvek — premýšľam a konám."
@@ -329,6 +336,19 @@ class TelegramHandler:
             return f"*{url}* (status {status})\n\n{text[:3000]}"
         finally:
             await web.close()
+
+    async def _cmd_usage(self, args: str) -> str:
+        """Show token usage and costs since last restart."""
+        return (
+            f"*Spotreba od posledného reštartu:*\n\n"
+            f"Požiadavky: {self._total_requests}\n"
+            f"Input tokeny: {self._total_input_tokens:,}\n"
+            f"Output tokeny: {self._total_output_tokens:,}\n"
+            f"Celkom tokeny: {self._total_input_tokens + self._total_output_tokens:,}\n"
+            f"Náklady: ${self._total_cost_usd:.4f}\n\n"
+            f"_Priemer na požiadavku: "
+            f"${self._total_cost_usd / max(self._total_requests, 1):.4f}_"
+        )
 
     async def _cmd_sandbox(self, args: str) -> str:
         """Run Python code in Docker sandbox."""
@@ -514,13 +534,22 @@ class TelegramHandler:
 
             cost = response_data.get("total_cost_usd", 0)
             tokens = response_data.get("usage", {})
+            input_tok = tokens.get("input_tokens", 0)
+            output_tok = tokens.get("output_tokens", 0)
+
+            # Track cumulative usage
+            self._total_cost_usd += cost
+            self._total_input_tokens += input_tok
+            self._total_output_tokens += output_tok
+            self._total_requests += 1
 
             logger.info(
                 "john_response",
                 cost_usd=round(cost, 4),
+                total_cost_usd=round(self._total_cost_usd, 4),
                 output_length=len(reply),
-                input_tokens=tokens.get("input_tokens", 0),
-                output_tokens=tokens.get("output_tokens", 0),
+                input_tokens=input_tok,
+                output_tokens=output_tok,
             )
 
             # Store response in memory (short summary only)
@@ -533,6 +562,13 @@ class TelegramHandler:
                     importance=0.3,
                 )
             )
+
+            # Append usage info to reply
+            usage_line = (
+                f"\n\n_💰 ${cost:.4f} | "
+                f"⬆{input_tok:,} ⬇{output_tok:,} tokens_"
+            )
+            reply += usage_line
 
             await self._parse_and_execute_actions(text, reply, chat_id=self._owner_chat_id)
             return reply
