@@ -214,16 +214,7 @@ class AgentCron:
         maint = ServerMaintenance()
         report = await maint.run_full_maintenance()
 
-        if report["warnings"] and self._bot and self._owner_chat_id:
-            warnings_text = "\n".join(f"  • {w}" for w in report["warnings"])
-            await self._bot.send_message(
-                self._owner_chat_id,
-                f"🔧 *John — Maintenance Report*\n\n"
-                f"{warnings_text}\n\n"
-                f"Disk: {report['disk']['disk_percent']}%, "
-                f"RAM: {report['memory']['ram_percent']}%, "
-                f"Cache freed: {report['cache_cleanup']['mb_freed']}MB",
-            )
+        # Maintenance runs silently — only log, don't spam Telegram
 
         logger.info(
             "cron_maintenance_done",
