@@ -92,6 +92,9 @@ class TelegramHandler:
     async def _handle_command(self, text: str) -> str:
         parts = text.split(maxsplit=1)
         command = parts[0].lower()
+        # Strip @botname suffix (Telegram adds it in groups)
+        if "@" in command:
+            command = command.split("@")[0]
         args = parts[1] if len(parts) > 1 else ""
 
         handlers = {
