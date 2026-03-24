@@ -67,17 +67,17 @@ class InternalDispatcher:
                     except Exception as e:
                         logger.error("dispatch_error", handler=method_name, error=str(e))
 
-        # Skús vyhľadať v pamäti — ak nájdeme relevantnú odpoveď
-        memory_answer = await self._search_memory(text_lower)
-        if memory_answer:
-            logger.info("dispatch_memory_hit")
-            return memory_answer
-
-        # Skús knowledge base
+        # Knowledge base first (structured, reliable)
         kb_answer = self._search_knowledge(text_lower)
         if kb_answer:
             logger.info("dispatch_knowledge_hit")
             return kb_answer
+
+        # Then memory (semantic/procedural)
+        memory_answer = await self._search_memory(text_lower)
+        if memory_answer:
+            logger.info("dispatch_memory_hit")
+            return memory_answer
 
         # Neviem — treba LLM
         return None
