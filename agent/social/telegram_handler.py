@@ -438,6 +438,13 @@ class TelegramHandler:
 
             claude_bin = os.path.expanduser("~/.local/bin/claude")
 
+            # Longer timeout for programming tasks (need time to read, write, test)
+            is_programming = any(
+                kw in text.lower()
+                for kw in ["naprogramuj", "implementuj", "napíš kód", "pridaj", "oprav", "vytvor"]
+            )
+            task_timeout = 300 if is_programming else 180
+
             result = await asyncio.to_thread(
                 subprocess.run,
                 [
@@ -445,13 +452,13 @@ class TelegramHandler:
                     "--print",
                     "--output-format", "json",
                     "--model", "claude-opus-4-6",
-                    "--max-turns", "10",
+                    "--max-turns", "15" if is_programming else "10",
                     "--dangerously-skip-permissions",
                 ],
                 input=prompt,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=task_timeout,
                 env=env,
                 cwd=os.path.expanduser("~/agent-life-space"),
             )
