@@ -108,26 +108,34 @@ class TelegramBot:
         text: str,
         parse_mode: str = "Markdown",
     ) -> dict[str, Any] | None:
-        """Send a message to a chat."""
+        """Send a message. Falls back to plain text if Markdown fails."""
         if len(text) > 4096:
-            # Telegram limit — split into chunks
             chunks = [text[i : i + 4096] for i in range(0, len(text), 4096)]
             result = None
             for chunk in chunks:
-                result = await self._api_call(
-                    "sendMessage",
-                    chat_id=chat_id,
-                    text=chunk,
-                    parse_mode=parse_mode,
-                )
+                result = await self._send_with_fallback(chat_id, chunk, parse_mode)
             return result
 
-        return await self._api_call(
+        return await self._send_with_fallback(chat_id, text, parse_mode)
+
+    async def _send_with_fallback(
+        self, chat_id: int, text: str, parse_mode: str
+    ) -> dict[str, Any] | None:
+        """Try Markdown first, fall back to plain text on parse error."""
+        result = await self._api_call(
             "sendMessage",
             chat_id=chat_id,
             text=text,
             parse_mode=parse_mode,
         )
+        if result is None:
+            # Markdown parse error — retry without formatting
+            result = await self._api_call(
+                "sendMessage",
+                chat_id=chat_id,
+                text=text,
+            )
+        return result
 
     async def _poll_updates(self) -> None:
         """Long-poll for new messages."""
