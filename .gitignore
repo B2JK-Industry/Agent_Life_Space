@@ -8,3 +8,20 @@ agent/finance/*.secret
 *.key
 .claude/
 .tools/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Agent data (persistent, not in git)
+*.db
+agent/memory/memories.db
+agent/tasks/tasks.db
+agent/logs/*.log
