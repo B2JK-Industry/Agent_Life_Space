@@ -627,8 +627,9 @@ class TelegramHandler:
             )
             reply += usage_line
 
-            # Work queue triggered ONLY from user input (before Claude call).
-            # Claude has 15 turns — does multiple things itself, no re-queuing.
+            # Auto-update skills based on what Claude actually did
+            await self._auto_update_skills(reply)
+
             return reply
 
         except subprocess.TimeoutExpired:
@@ -787,6 +788,76 @@ class TelegramHandler:
         except Exception as e:
             logger.error("programmer_context_error", error=str(e))
             return {}
+
+    async def _auto_update_skills(self, reply: str) -> None:
+        """
+        Scan Claude's reply for evidence of skill usage and auto-update skills.json.
+        If Claude successfully used curl, git, docker etc. — record it.
+        """
+        try:
+            from pathlib import Path
+            from agent.brain.skills import SkillRegistry
+
+            base = str(Path.home() / "agent-life-space")
+            registry = SkillRegistry(f"{base}/agent/brain/skills.json")
+
+            reply_lower = reply.lower()
+
+            # Map: keyword patterns in reply → skill name
+            skill_signals = {
+                "curl": ["curl ", "curl -s", "http request", "api call"],
+                "web_scraping": ["scraping", "beautifulsoup", "requests.get", "parsoval", "stiahol stránku"],
+                "git_commit": ["git commit", "git push", "commitol", "pushol", "pushed"],
+                "git_status": ["git status", "git log", "git diff"],
+                "file_write": ["zapísal som", "vytvoril súbor", "wrote to", "write_text"],
+                "file_read": ["prečítal som", "read_text", "načítal súbor"],
+                "python_run": ["python3 -c", "spustil skript", "python3 -m"],
+                "pytest": ["pytest", "testov prešlo", "tests passed", "test ok"],
+                "docker_run": ["docker run", "docker build", "kontajner"],
+                "system_health": ["free -h", "df -h", "cpu:", "ram:"],
+                "process_check": ["ps aux", "top procesy", "procesov"],
+                "maintenance": ["cache", "čistenie", "stale proces", "disk usage"],
+                "pip_install": ["pip install", "pip3 install", "nainštaloval balík"],
+                "memory_store": ["uložil do pamäte", "memory.store", "zapamätal"],
+                "memory_query": ["memory.query", "prehľadal pamäť", "hľadal v pamäti"],
+                "task_create": ["vytvoril úlohu", "task_create", "create_task"],
+                "telegram_send": ["poslal správu", "send_message", "telegram"],
+                "github_api": ["github api", "api.github.com"],
+                "github_create_issue": ["vytvoril issue", "create issue"],
+                "github_create_repo": ["vytvoril repo", "create repo", "nové repo"],
+            }
+
+            # Success indicators — Claude reports it worked
+            success_markers = [
+                "ok", "funguje", "hotovo", "úspešne", "prešlo", "success",
+                "done", "passed", "works", "✅", "otestoval",
+            ]
+            has_success = any(m in reply_lower for m in success_markers)
+
+            # Failure indicators
+            failure_markers = ["chyba", "error", "failed", "nefunguje", "timeout", "❌"]
+            has_failure = any(m in reply_lower for m in failure_markers)
+
+            if not has_success and not has_failure:
+                return  # Can't determine outcome
+
+            updated = []
+            for skill_name, patterns in skill_signals.items():
+                if any(p in reply_lower for p in patterns):
+                    if has_success and not has_failure:
+                        registry.record_success(skill_name)
+                        updated.append(f"{skill_name}:success")
+                    elif has_failure and not has_success:
+                        # Extract error snippet
+                        error_snippet = reply[:200] if len(reply) < 500 else ""
+                        registry.record_failure(skill_name, error_snippet)
+                        updated.append(f"{skill_name}:failure")
+
+            if updated:
+                logger.info("skills_auto_updated", skills=updated)
+
+        except Exception as e:
+            logger.error("skills_auto_update_error", error=str(e))
 
     async def _parse_and_execute_actions(
         self, user_text: str, reply: str, chat_id: int = 0

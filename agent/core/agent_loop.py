@@ -160,8 +160,10 @@ class AgentLoop:
 
         prompt = (
             f"Si John, agent na serveri b2jk-agentlifespace. "
-            f"Urob túto jednu konkrétnu vec a odpovedz stručne čo si urobil:\n\n"
-            f"{item.description}"
+            f"Pracuješ v ~/agent-life-space.\n\n"
+            f"ÚLOHA: {item.description}\n\n"
+            f"Urob to a na konci VŽDY napíš stručné zhrnutie čo si urobil. "
+            f"Odpovedaj po slovensky."
         )
 
         result = await asyncio.to_thread(
@@ -171,13 +173,13 @@ class AgentLoop:
                 "--print",
                 "--output-format", "json",
                 "--model", "claude-opus-4-6",
-                "--max-turns", "5",
+                "--max-turns", "10",
                 "--dangerously-skip-permissions",
             ],
             input=prompt,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=300,
             env=env,
             cwd=os.path.expanduser("~/agent-life-space"),
         )
