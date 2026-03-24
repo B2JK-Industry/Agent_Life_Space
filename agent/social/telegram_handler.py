@@ -536,6 +536,7 @@ class TelegramHandler:
     def _get_learning_summary(self) -> dict[str, Any]:
         """Load John's skills + knowledge for context."""
         try:
+            from pathlib import Path
             from agent.brain.learning import LearningSystem
             base = str(Path.home() / "agent-life-space")
             ls = LearningSystem(
