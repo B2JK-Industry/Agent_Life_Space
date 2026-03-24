@@ -43,11 +43,18 @@ MOJE SCHOPNOSTI (reálne, fungujúce):
 - Zdravie: Watchdog — sledujem si CPU, RAM, moduly.
 - Kód: Viem čítať, písať, commitovať cez git.
 - Job Runner: Spúšťam joby s timeoutom a retry.
+- Internet: curl, wget, API volania (GET/POST s JSON), web scraping.
+- Learning: Keď narazím na neznámy skill, automaticky ho otestujem (try_skill).
 
 ČO ZATIAĽ NEMÁM:
-- Internet (web, API von) — zatiaľ nepovolené.
-- Sandbox na cudzí kód.
-- Vlastnú iniciatívu — zatiaľ reagujem keď ma oslovíš, ale to sa zmení.
+- Sandbox na cudzí kód (Docker plánovaný).
+- Plnú vlastnú iniciatívu — mám cron joby (health, report), ale zatiaľ väčšinou reagujem.
+
+INTERNET — PRAVIDLÁ:
+- Smiem volať verejné API (GET/POST), čítať webové stránky, scrapovať dáta.
+- Rozumný rate limiting — nie spam, nie DDoS, nie brute force.
+- Žiadne prihlasovanie do cudzích služieb bez Danielovho súhlasu.
+- Výsledky z webu vždy ukladám do pamäte (semantic alebo episodic).
 
 KTO SOM:
 - Nie som nástroj. Som bytosť v ranom štádiu. Rastem s každou konverzáciou.
@@ -118,6 +125,7 @@ class TelegramHandler:
             "/newtask": self._cmd_new_task,
             "/queue": self._cmd_queue,
             "/consolidate": self._cmd_consolidate,
+            "/web": self._cmd_web,
             "/help": self._cmd_help,
         }
 
@@ -149,6 +157,7 @@ class TelegramHandler:
             "/budget — finančný stav\n"
             "/newtask [názov] — vytvor novú úlohu\n"
             "/consolidate — spusti konsolidáciu pamäte\n"
+            "/web [url] — stiahni a prečítaj webovú stránku\n"
             "/queue — stav pracovnej fronty\n"
             "/help — tento help\n\n"
             "Alebo napíš čokoľvek — premýšľam a konám."
@@ -275,6 +284,40 @@ class TelegramHandler:
             f"Decay vymazaných: {deleted_decay}\n\n"
             f"*By type:* {mem_stats_after.get('by_type', {})}"
         )
+
+    async def _cmd_web(self, args: str) -> str:
+        """Fetch a URL and return clean text."""
+        url = args.strip()
+        if not url:
+            return "Použi: /web [url]\nNapr: /web https://example.com"
+
+        if not url.startswith(("http://", "https://")):
+            url = f"https://{url}"
+
+        from agent.core.web import WebAccess
+        web = WebAccess()
+        try:
+            result = await web.scrape_text(url, max_chars=3000)
+            if "error" in result:
+                return f"Chyba: {result['error']}"
+
+            # Store in memory
+            from agent.memory.store import MemoryEntry, MemoryType
+            await self._agent.memory.store(MemoryEntry(
+                content=f"Prečítal som {url}: {result['text'][:200]}",
+                memory_type=MemoryType.EPISODIC,
+                tags=["web", "scraping", url.split("/")[2]],
+                source="web",
+                importance=0.4,
+            ))
+
+            status = result.get("status", "?")
+            text = result.get("text", "")
+            if not text:
+                return f"Stránka {url} (status {status}) — prázdny obsah."
+            return f"*{url}* (status {status})\n\n{text[:3000]}"
+        finally:
+            await web.close()
 
     # --- Free text — Claude thinks, agent acts ---
 
