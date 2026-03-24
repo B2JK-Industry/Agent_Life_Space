@@ -586,7 +586,12 @@ class TelegramHandler:
 
             cost = response_data.get("total_cost_usd", 0)
             tokens = response_data.get("usage", {})
-            input_tok = tokens.get("input_tokens", 0)
+            # Total input = direct + cache_creation + cache_read
+            input_tok = (
+                tokens.get("input_tokens", 0)
+                + tokens.get("cache_creation_input_tokens", 0)
+                + tokens.get("cache_read_input_tokens", 0)
+            )
             output_tok = tokens.get("output_tokens", 0)
 
             # Track cumulative usage
