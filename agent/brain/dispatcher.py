@@ -89,25 +89,38 @@ class InternalDispatcher:
         return None
 
     # --- Detectors: return True only when CONFIDENT ---
+    # Sprísniené — dlhšie otázky (>6 slov) nechaj na LLM.
+    # Dispatcher len pre krátke priame dotazy.
 
     @staticmethod
     def _is_status_query(text: str) -> bool:
-        return bool(re.search(r"\b(stav|status|ako sa máš|bežíš)\b", text))
+        if len(text.split()) > 6:
+            return False  # Dlhá otázka → LLM
+        return bool(re.search(r"\b(stav|status)\b", text))
 
     @staticmethod
     def _is_health_query(text: str) -> bool:
-        return bool(re.search(r"\b(zdravie|health|cpu|ram|disk|server)\b", text))
+        if len(text.split()) > 6:
+            return False
+        return bool(re.search(r"\b(zdravie|health|cpu|ram|disk)\b", text))
 
     @staticmethod
     def _is_tasks_query(text: str) -> bool:
-        return bool(re.search(r"\b(úloh|tasks?|čo robíš|fronta)\b", text))
+        if len(text.split()) > 6:
+            return False
+        # "čo robíš" je príliš vágne — nechaj na LLM
+        return bool(re.search(r"\b(úloh|tasks?|fronta)\b", text))
 
     @staticmethod
     def _is_skills_query(text: str) -> bool:
-        return bool(re.search(r"\b(skills?|schopnost|ovládaš)\b", text))
+        if len(text.split()) > 6:
+            return False
+        return bool(re.search(r"\b(skills?|schopnost)\b", text))
 
     @staticmethod
     def _is_budget_query(text: str) -> bool:
+        if len(text.split()) > 6:
+            return False
         return bool(re.search(r"\b(rozpočet|budget|financ|peniaze)\b", text))
 
     @staticmethod
