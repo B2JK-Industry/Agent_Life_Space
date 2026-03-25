@@ -325,7 +325,7 @@ grep "Cost odhad" agent/core/models.py
 # Spusti VŠETKY testy
 python -m pytest tests/ -v --tb=short
 
-# Očakávaný výsledok: 414 passed, 4 skipped, 0 failed
+# Očakávaný výsledok: 472+ passed, 4 skipped, 0 failed
 
 # Nové test súbory:
 # tests/test_llm_client.py        — 15 testov (API client)
@@ -347,7 +347,7 @@ python -m pytest tests/ -v --tb=short
 - [ ] Finance modul vyžaduje human approval pre transakcie
 
 ### Funkčnosť
-- [ ] 414 testov prechádza
+- [ ] 472+ testov prechádza
 - [ ] Learning feedback loop detekuje skills z textu
 - [ ] Circuit breaker zastaví cascading failures
 - [ ] Cost estimation je správna pre Haiku/Sonnet/Opus
@@ -386,7 +386,7 @@ pip install -e .
 
 # Spusti unit testy PRED nasadením
 python -m pytest tests/ -q --tb=short
-# MUSÍ: 414 passed, 0 failed
+# MUSÍ: 472+ passed, 0 failed
 # Ak zlyhá čokoľvek → NEPLOY, oprav najprv
 
 # Vault setup (ak ešte nebol)
@@ -773,7 +773,7 @@ asyncio.run(test())
 
 ## Poradie Nasadenia
 
-1. **Spusti Scenár 0** — unit testy musia prejsť (414 passed)
+1. **Spusti Scenár 0** — unit testy musia prejsť (472+ passed)
 2. **Spusti Scenár 8** — lifecycle test (bez Telegram)
 3. **Spusti Scenár 7** — watchdog health
 4. **Spusti Scenár 1** — Docker sandbox

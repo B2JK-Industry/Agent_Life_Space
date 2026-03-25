@@ -4,13 +4,23 @@ Self-hosted autonomous AI agent that lives on your server. Communicates via Tele
 
 ## What it does
 
+**Stable (production-tested):**
 - **7-layer cascade** — 5 layers of local processing before calling LLM
-- **Learns** — tracks skill outcomes, escalates model on failure, augments prompts from past errors
 - **Docker sandbox** — code runs in isolated containers (256MB, no network, read-only FS)
 - **Encrypted vault** — API keys, wallet keys (ETH/BTC) encrypted with Fernet AES-128
 - **Memory** — 4 types (episodic, semantic, procedural, working), consolidation, decay
+- **Watchdog** — heartbeats, auto-restart, circuit breaker
+- **472+ tests**
+
+**Beta (working, evolving):**
+- **Learning system** — skill outcome tracking, model escalation, prompt augmentation
 - **Agent-to-Agent API** — HTTP endpoint for communication with other agents
-- **470+ tests**
+- **Tool pre-routing** — auto-fetch weather, crypto prices, datetime
+- **Persistent conversation** — SQLite-backed, survives restarts
+
+**Experimental:**
+- **Projects/Workspace modules** — project lifecycle, isolated workspaces
+- **Moltbook integration** — social network for agents
 
 ## Setup Your Own Agent (Step by Step)
 
@@ -196,10 +206,39 @@ Add `.md` files to `agent/brain/knowledge/`:
 └─────────────────────────────────────────────────────┘
 ```
 
+## Module Maturity
+
+| Module | Status | Tests | Notes |
+|--------|--------|-------|-------|
+| Cascade routing | Stable | 18 | 7 layers, production-tested |
+| Memory store | Stable | 30 | 4 types, SQLite, decay |
+| Watchdog | Stable | 37 | Heartbeats, auto-restart |
+| Job runner | Stable | 49 | Circuit breaker, retry |
+| Docker sandbox | Stable | 18 | Mandatory, timeout kill |
+| Vault | Stable | 10 | Fernet AES, audit log |
+| Finance | Stable | ~20 | Human approval, dead man switch |
+| Telegram handler | Stable | 9 | Cascade, commands |
+| Learning system | Beta | 22 | Outcome tracking, escalation |
+| Response quality | Beta | 15 | Post-routing, Haiku→Sonnet |
+| Tool pre-routing | Beta | 10 | Weather, crypto, datetime |
+| Agent API | Beta | — | HTTP, auth, structured msgs |
+| Persistent conversation | Beta | — | SQLite, summary, retrieval |
+| Projects | Experimental | 16 | Lifecycle, progress tracking |
+| Workspace | Experimental | — | Isolated dirs, cleanup |
+
+## Known Limitations
+
+- **CLI token overhead**: ~16k tokens minimum per call (CLI injects CLAUDE.md context)
+- **No API mode**: Currently requires Claude Max subscription (CLI only)
+- **Single-user Telegram**: Bot API doesn't relay messages between bots
+- **MiniLM on Slovak**: Semantic router accuracy lower for Slovak language
+- **Tunnel instability**: Cloudflare quick tunnels change URL on restart
+
 ## Docs
 
 - [docs/BLUEPRINT.md](docs/BLUEPRINT.md) — full architecture details
 - [docs/VERIFICATION.md](docs/VERIFICATION.md) — 8 E2E deployment scenarios
+- [docs/REVIEW_NOTES.md](docs/REVIEW_NOTES.md) — verification test instructions
 
 ## License
 
