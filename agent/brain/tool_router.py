@@ -127,10 +127,11 @@ async def _fetch_weather(location: str) -> str:
 
         url = f"https://wttr.in/{location}?format=j1&lang=sk"
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=5)
+            timeout=aiohttp.ClientTimeout(total=15)
         ) as session:
             async with session.get(url) as resp:
                 if resp.status != 200:
+                    logger.warning("weather_http_error", status=resp.status, location=location)
                     return ""
                 data = await resp.json(content_type=None)
 
@@ -185,7 +186,7 @@ async def _fetch_crypto_price(text: str) -> str:
         url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd,eur"
 
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=5)
+            timeout=aiohttp.ClientTimeout(total=15)
         ) as session:
             async with session.get(url) as resp:
                 if resp.status != 200:
