@@ -507,11 +507,15 @@ class TelegramHandler:
         )
 
         # === STEP 1: Try internal dispatch FIRST (no LLM) ===
-        from agent.brain.dispatcher import InternalDispatcher
-        dispatcher = InternalDispatcher(self._agent)
-        internal_result = await dispatcher.try_handle(text)
-        if internal_result:
-            return internal_result
+        # Skip dispatcher ak máme conversation context a správa je krátka
+        # (pravdepodobne nadväzuje na predchádzajúcu tému)
+        short_followup = len(self._conversation) > 0 and len(text.split()) <= 8
+        if not short_followup:
+            from agent.brain.dispatcher import InternalDispatcher
+            dispatcher = InternalDispatcher(self._agent)
+            internal_result = await dispatcher.try_handle(text)
+            if internal_result:
+                return internal_result
 
         # === STEP 2: Semantic cache — already answered similar question? ===
         try:
@@ -596,12 +600,22 @@ class TelegramHandler:
 
         # === STEP 4.9: Build conversation history ===
         conv_context = ""
-        if self._conversation and task_type not in ("simple", "greeting"):
+        has_conversation = len(self._conversation) > 0
+        if has_conversation:
             conv_lines = []
             for msg in self._conversation[-self._max_conversation:]:
                 role = "Daniel" if msg["role"] == "user" else "John"
                 conv_lines.append(f"{role}: {msg['content'][:200]}")
             conv_context = "\n".join(conv_lines)
+
+            # Ak existuje konverzácia a správa je krátka/vágna,
+            # eskaluj na chat (nie simple/factual) aby John použil kontext
+            if task_type in ("simple", "factual") and len(text.split()) <= 8:
+                task_type = "chat"
+                from agent.core.models import get_model
+                model = get_model(task_type)
+                logger.info("conversation_context_escalation",
+                            original_type=task_type, reason="short msg with conversation history")
 
         # Store user message in conversation buffer
         self._conversation.append({"role": "user", "content": text})
