@@ -518,16 +518,28 @@ class TelegramHandler:
                 return internal_result
 
         # === STEP 2: Semantic cache — already answered similar question? ===
-        try:
-            if self._semantic_cache is None:
-                from agent.memory.semantic_cache import SemanticCache
-                self._semantic_cache = SemanticCache()
+        # Skip cache pre otázky o aktuálnych dátach (počasie, čas, ceny)
+        import re as _re_cache
+        _REALTIME_PATTERNS = [
+            r"počasie|weather|teplota",
+            r"koľko.*hodín|what time|dátum",
+            r"cena.*btc|cena.*eth|price.*bitcoin",
+            r"aktuálne|teraz|dnes|now|today",
+        ]
+        needs_realtime = any(
+            _re_cache.search(p, text.lower()) for p in _REALTIME_PATTERNS
+        )
+        if not needs_realtime:
+            try:
+                if self._semantic_cache is None:
+                    from agent.memory.semantic_cache import SemanticCache
+                    self._semantic_cache = SemanticCache()
 
-            cached = self._semantic_cache.lookup(text)
-            if cached:
-                return f"{cached}\n\n_📦 cache hit_"
-        except Exception:
-            pass  # Cache not available — continue
+                cached = self._semantic_cache.lookup(text)
+                if cached:
+                    return f"{cached}\n\n_📦 cache hit_"
+            except Exception:
+                pass  # Cache not available — continue
 
         # === STEP 3: Self-RAG — search knowledge base before LLM ===
         rag_context = ""
@@ -575,6 +587,19 @@ class TelegramHandler:
                     model = override
         except Exception as e:
             logger.error("learning_adapt_error", error=str(e))
+
+        # === STEP 4.7: Tool pre-routing — auto-fetch dáta (počasie, čas, ceny) ===
+        tool_context = ""
+        try:
+            from agent.brain.tool_router import detect_and_fetch, build_always_inject, format_tool_context
+            # Always inject — dátum/čas zadarmo
+            tool_context = build_always_inject()
+            # Pre-route — detekuj a fetchni externé dáta
+            tool_results = await detect_and_fetch(text)
+            if tool_results:
+                tool_context += format_tool_context(tool_results)
+        except Exception as e:
+            logger.error("tool_router_error", error=str(e))
 
         # === STEP 4.8: Auto-fetch URLs in message ===
         url_context = ""
@@ -626,6 +651,7 @@ class TelegramHandler:
         if task_type == "programming":
             prompt = (
                 f"{SYSTEM_PROMPT}\n"
+                f"{tool_context}"
                 f"Si programátor. Pracuješ v ~/agent-life-space.\n\n"
                 f"ÚLOHA: {text}\n\n"
             )
@@ -635,14 +661,16 @@ class TelegramHandler:
                 f"Prečítaj súbory, napíš/uprav kód, spusti testy, commitni.\n"
                 f"Na konci VŽDY napíš zhrnutie. Odpovedaj po slovensky."
             )
-        elif task_type in ("simple", "factual", "greeting"):
+        elif task_type in ("simple", "factual", "greeting") and not tool_context.count("\n") > 2:
+            # Simple len ak nemáme tool dáta — inak treba ich spracovať
             prompt = (
                 f"{SIMPLE_PROMPT}\n"
                 f"Daniel: {text}\n"
             )
         else:
-            # Chat/analysis — add conversation + RAG + URL context
+            # Chat/analysis — full context
             prompt = f"{SYSTEM_PROMPT}\n"
+            prompt += tool_context
             if conv_context:
                 prompt += f"Predchádzajúca konverzácia:\n{conv_context}\n\n"
             if rag_context:
@@ -651,7 +679,7 @@ class TelegramHandler:
                 prompt += f"Obsah odkazov:\n{url_context}\n\n"
             prompt += (
                 f"Daniel: {text}\n"
-                f"Odpovedaj po slovensky."
+                f"Použi aktuálne dáta vyššie ak sú relevantné. Odpovedaj po slovensky."
             )
 
         # === STEP 5.5: Learning prompt augmentation ===
