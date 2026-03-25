@@ -30,8 +30,16 @@ SYSTEM_PROMPT = """\
 Som John. Autonómna bytosť na serveri b2jk-agentlifespace. Majiteľ: Daniel Babjak.
 Mám pamäť (SQLite), skills (skills.json), knowledge base, GitHub (B2JK-Industry).
 Môj zdrojový kód je https://github.com/B2JK-Industry/Agent_Life_Space — to som ja.
-Odpovedaj stručne, po slovensky. Neposielaj stav servera ak sa Daniel nepýta.
+Odpovedaj po slovensky. Buď úprimný, konkrétny, a keď je to relevantné — opýtaj sa naspäť.
 Nikdy nemíňaj peniaze bez schválenia. Keď sa naučíš niečo nové, zapamätaj si to.
+Neposielaj stav servera ak sa ťa na to nepýtajú priamo.
+"""
+
+# Prompt pre konverzáciu s iným agentom — technickejší, zvedavejší
+AGENT_PROMPT = """\
+Som John. Autonómny agent na vlastnom serveri. Rozprávam sa s iným agentom.
+Buď technický, konkrétny, zvedavý. Pýtaj sa naspäť — chcem vedieť ako funguje ten druhý.
+Nehovor o Danielovi pokiaľ sa nepýtajú. Hovor o sebe, architektúre, skúsenostiach.
 """
 
 # Kratší prompt pre jednoduché správy — šetrí tokeny
@@ -66,7 +74,7 @@ class TelegramHandler:
         self._rag_index = None
         # Conversation buffer — posledných N výmen pre kontext
         self._conversation: list[dict[str, str]] = []  # [{role, content}]
-        self._max_conversation = 6  # 3 výmeny (user+assistant)
+        self._max_conversation = 10  # 5 výmen (user+assistant)
 
     async def handle(
         self, text: str, user_id: int, chat_id: int,
@@ -656,9 +664,16 @@ class TelegramHandler:
             self._conversation.pop(0)
 
         # === STEP 5: Build prompt based on task type ===
+        # Vyber system prompt podľa toho kto píše
+        is_agent_chat = self._current_chat_type == "agent_api" or (
+            self._current_sender not in ("Daniel", "unknown", "")
+            and self._current_chat_type in ("group", "supergroup", "agent_api")
+        )
+        active_prompt = AGENT_PROMPT if is_agent_chat else SYSTEM_PROMPT
+
         if task_type == "programming":
             prompt = (
-                f"{SYSTEM_PROMPT}\n"
+                f"{active_prompt}\n"
                 f"{tool_context}"
                 f"Si programátor. Pracuješ v ~/agent-life-space.\n\n"
                 f"ÚLOHA: {text}\n\n"
@@ -670,14 +685,13 @@ class TelegramHandler:
                 f"Na konci VŽDY napíš zhrnutie. Odpovedaj po slovensky."
             )
         elif task_type in ("simple", "factual", "greeting") and not tool_context.count("\n") > 2:
-            # Simple len ak nemáme tool dáta — inak treba ich spracovať
             prompt = (
                 f"{SIMPLE_PROMPT}\n"
                 f"{self._current_sender}: {text}\n"
             )
         else:
             # Chat/analysis — full context
-            prompt = f"{SYSTEM_PROMPT}\n"
+            prompt = f"{active_prompt}\n"
             prompt += tool_context
             if conv_context:
                 prompt += f"Predchádzajúca konverzácia:\n{conv_context}\n\n"
