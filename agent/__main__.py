@@ -106,14 +106,19 @@ async def run_agent(data_dir: str = "agent") -> None:
                     logger.warning("preload_failed", error=str(e))
             asyncio.create_task(_preload_models())
 
-            # Start Agent-to-Agent API
+            # Start Agent-to-Agent API (s autentifikáciou)
             from agent.social.agent_api import AgentAPI
+            agent_api_keys = []
+            agent_api_key = os.environ.get("AGENT_API_KEY", "")
+            if agent_api_key:
+                agent_api_keys.append(agent_api_key)
             agent_api = AgentAPI(
                 handler_callback=handler.handle,
                 agent=agent,
+                api_keys=agent_api_keys if agent_api_keys else None,
             )
             agent_api_task = asyncio.create_task(agent_api.start())
-            logger.info("agent_api_enabled", port=8420)
+            logger.info("agent_api_enabled", port=8420, auth="key" if agent_api_keys else "open")
 
             # Start cron (John's initiative)
             from agent.core.cron import AgentCron

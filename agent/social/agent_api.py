@@ -45,14 +45,41 @@ class AgentAPI:
         handler_callback: Any = None,
         agent: Any = None,
         port: int = _DEFAULT_PORT,
+        api_keys: list[str] | None = None,
     ) -> None:
         self._handler = handler_callback  # async fn(text, sender) -> str
         self._agent = agent
         self._port = port
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
+        # API key autentifikácia — len autorizovaní agenti
+        self._api_keys: set[str] = set(api_keys or [])
         # Rate limiting
         self._request_times: dict[str, list[float]] = defaultdict(list)
+
+    def add_api_key(self, key: str) -> None:
+        """Pridaj autorizovaný API kľúč."""
+        self._api_keys.add(key)
+
+    def _check_auth(self, request: web.Request) -> str | None:
+        """
+        Over API key z Authorization header.
+        Vracia None ak OK, error string ak nie.
+        Status a health sú verejné — auth len pre /message.
+        """
+        if not self._api_keys:
+            return None  # Žiadne keys nastavené → všetko povolené (dev mode)
+
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return "Missing Authorization: Bearer <api_key>"
+
+        key = auth[7:].strip()
+        if key not in self._api_keys:
+            logger.warning("agent_api_unauthorized", key_prefix=key[:8])
+            return "Invalid API key"
+
+        return None
 
     def _check_rate_limit(self, ip: str) -> bool:
         """Max N requests per minute per IP."""
@@ -65,7 +92,12 @@ class AgentAPI:
         return True
 
     async def _handle_message(self, request: web.Request) -> web.Response:
-        """POST /api/message — prijmi správu od agenta."""
+        """POST /api/message — prijmi správu od agenta. Vyžaduje API key."""
+        # Auth check
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return web.json_response({"error": auth_error}, status=401)
+
         ip = request.remote or "unknown"
 
         if not self._check_rate_limit(ip):
