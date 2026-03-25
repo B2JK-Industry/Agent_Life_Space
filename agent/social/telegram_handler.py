@@ -64,6 +64,9 @@ class TelegramHandler:
         # Semantic cache and RAG (lazy init)
         self._semantic_cache = None
         self._rag_index = None
+        # Conversation buffer — posledných N výmen pre kontext
+        self._conversation: list[dict[str, str]] = []  # [{role, content}]
+        self._max_conversation = 6  # 3 výmeny (user+assistant)
 
     async def handle(self, text: str, user_id: int, chat_id: int) -> str:
         text = text.strip()
@@ -112,6 +115,7 @@ class TelegramHandler:
             "/usage": self._cmd_usage,
             "/review": self._cmd_review,
             "/wallet": self._cmd_wallet,
+            "/projects": self._cmd_projects,
             "/help": self._cmd_help,
         }
 
@@ -147,6 +151,7 @@ class TelegramHandler:
             "/web [url] — stiahni a prečítaj webovú stránku\n"
             "/sandbox [python kód] — spusti kód v Docker sandboxe\n"
             "/wallet — stav peňaženiek (ETH, BTC)\n"
+            "/projects — zoznam projektov\n"
             "/usage — spotreba tokenov a náklady\n"
             "/queue — stav pracovnej fronty\n"
             "/help — tento help\n\n"
@@ -432,6 +437,31 @@ class TelegramHandler:
                 f"```\n{errors[:2000] or output[:2000]}\n```"
             )
 
+    async def _cmd_projects(self, args: str) -> str:
+        """Show projects or create new one."""
+        args = args.strip()
+
+        if args:
+            # Vytvor nový projekt
+            project = await self._agent.projects.create(name=args)
+            return f"Projekt vytvorený: *{project.name}* (id: `{project.id}`)"
+
+        # List projektov
+        projects = await self._agent.projects.list_projects()
+        if not projects:
+            return "Žiadne projekty. Použi /projects [názov] na vytvorenie."
+
+        lines = [f"*Projekty* ({len(projects)} celkom):"]
+        for p in projects:
+            status_emoji = {
+                "idea": "💡", "planning": "📝", "active": "🔨",
+                "paused": "⏸", "completed": "✅", "abandoned": "❌",
+            }
+            emoji = status_emoji.get(p.status.value, "❓")
+            tasks_count = len(p.task_ids)
+            lines.append(f"{emoji} *{p.name}* ({p.status.value}, {tasks_count} taskov)")
+        return "\n".join(lines)
+
     # --- Free text — Claude thinks, agent acts ---
 
     async def _handle_text(self, text: str) -> str:
@@ -564,6 +594,20 @@ class TelegramHandler:
             except Exception as e:
                 logger.error("auto_fetch_exception", error=str(e))
 
+        # === STEP 4.9: Build conversation history ===
+        conv_context = ""
+        if self._conversation and task_type not in ("simple", "greeting"):
+            conv_lines = []
+            for msg in self._conversation[-self._max_conversation:]:
+                role = "Daniel" if msg["role"] == "user" else "John"
+                conv_lines.append(f"{role}: {msg['content'][:200]}")
+            conv_context = "\n".join(conv_lines)
+
+        # Store user message in conversation buffer
+        self._conversation.append({"role": "user", "content": text})
+        if len(self._conversation) > self._max_conversation:
+            self._conversation.pop(0)
+
         # === STEP 5: Build prompt based on task type ===
         if task_type == "programming":
             prompt = (
@@ -578,14 +622,15 @@ class TelegramHandler:
                 f"Na konci VŽDY napíš zhrnutie. Odpovedaj po slovensky."
             )
         elif task_type in ("simple", "factual", "greeting"):
-            # Kratší prompt — šetrí tokeny (SIMPLE_PROMPT namiesto SYSTEM_PROMPT)
             prompt = (
                 f"{SIMPLE_PROMPT}\n"
                 f"Daniel: {text}\n"
             )
         else:
-            # Chat/analysis — add RAG + URL context
+            # Chat/analysis — add conversation + RAG + URL context
             prompt = f"{SYSTEM_PROMPT}\n"
+            if conv_context:
+                prompt += f"Predchádzajúca konverzácia:\n{conv_context}\n\n"
             if rag_context:
                 prompt += f"Relevantný kontext z knowledge base:\n{rag_context}\n\n"
             if url_context:
@@ -692,7 +737,7 @@ class TelegramHandler:
                 output_tokens=output_tok,
             )
 
-            # Store response in memory (short summary only)
+            # Store response in memory + conversation buffer
             await self._agent.memory.store(
                 MemoryEntry(
                     content=f"Odpovedal som na '{text[:40]}': {reply[:150]}",
@@ -702,6 +747,11 @@ class TelegramHandler:
                     importance=0.3,
                 )
             )
+            # Store clean reply in conversation buffer (bez usage line)
+            clean_reply = reply.split("\n\n_💰")[0] if "_💰" in reply else reply
+            self._conversation.append({"role": "assistant", "content": clean_reply[:300]})
+            if len(self._conversation) > self._max_conversation:
+                self._conversation.pop(0)
 
             # === POST-ROUTING: Confidence-based escalation ===
             # Ak Haiku odpovedal nekvalitne → eskaluj na Sonnet

@@ -41,7 +41,9 @@ from agent.core.router import MessageRouter
 from agent.core.watchdog import Watchdog
 from agent.memory.store import MemoryEntry, MemoryStore, MemoryType
 from agent.finance.tracker import FinanceTracker
+from agent.projects.manager import ProjectManager
 from agent.tasks.manager import TaskManager, TaskStatus
+from agent.work.workspace import WorkspaceManager
 
 logger = structlog.get_logger(__name__)
 
@@ -85,6 +87,10 @@ class AgentOrchestrator:
         self.finance = FinanceTracker(
             db_path=str(self._data_dir / "finance" / "finance.db")
         )
+        self.projects = ProjectManager(
+            db_path=str(self._data_dir / "projects" / "projects.db")
+        )
+        self.workspaces = WorkspaceManager()
 
         # Background tasks
         self._background_tasks: list[asyncio.Task[Any]] = []
@@ -100,12 +106,15 @@ class AgentOrchestrator:
         (self._data_dir / "memory").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "tasks").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "finance").mkdir(parents=True, exist_ok=True)
+        (self._data_dir / "projects").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "logs").mkdir(parents=True, exist_ok=True)
 
         # Initialize persistent stores
         await self.memory.initialize()
         await self.tasks.initialize()
         await self.finance.initialize()
+        await self.projects.initialize()
+        self.workspaces.initialize()
 
         # Register message handlers
         self.router.register_handler(ModuleID.BRAIN, self._handle_brain_message)
@@ -196,6 +205,7 @@ class AgentOrchestrator:
         await self.memory.close()
         await self.tasks.close()
         await self.finance.close()
+        await self.projects.close()
 
         # Store shutdown memory (in a new connection since we closed)
         logger.info("agent_stopped")
