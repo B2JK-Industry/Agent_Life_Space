@@ -59,8 +59,8 @@ python -m agent
 
 ## Docs
 
-- [BLUEPRINT.md](BLUEPRINT.md) — full architecture, cascade details, setup guide
-- [VERIFICATION.md](VERIFICATION.md) — 8 E2E deployment scenarios, verification checklist
+- [docs/BLUEPRINT.md](docs/BLUEPRINT.md) — full architecture, cascade details, setup guide
+- [docs/VERIFICATION.md](docs/VERIFICATION.md) — 8 E2E deployment scenarios, verification checklist
 
 ## License
 
