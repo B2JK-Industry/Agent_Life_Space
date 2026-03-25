@@ -68,10 +68,18 @@ class TelegramHandler:
         self._conversation: list[dict[str, str]] = []  # [{role, content}]
         self._max_conversation = 6  # 3 výmeny (user+assistant)
 
-    async def handle(self, text: str, user_id: int, chat_id: int) -> str:
+    async def handle(
+        self, text: str, user_id: int, chat_id: int,
+        username: str = "", chat_type: str = "private",
+        **kwargs: Any,
+    ) -> str:
         text = text.strip()
         if not text:
             return "Prázdna správa."
+
+        # Zisti kto píše — pre prompt
+        self._current_sender = username or "Daniel"
+        self._current_chat_type = chat_type
 
         if text.startswith("/"):
             return await self._handle_command(text)
@@ -498,7 +506,7 @@ class TelegramHandler:
         # Store user message
         await self._agent.memory.store(
             MemoryEntry(
-                content=f"Daniel mi napísal: {text}",
+                content=f"{self._current_sender} mi napísal: {text}",
                 memory_type=MemoryType.EPISODIC,
                 tags=["telegram", "user_input", "daniel"],
                 source="telegram",
@@ -629,7 +637,7 @@ class TelegramHandler:
         if has_conversation:
             conv_lines = []
             for msg in self._conversation[-self._max_conversation:]:
-                role = "Daniel" if msg["role"] == "user" else "John"
+                role = msg.get("sender", "Daniel") if msg["role"] == "user" else "John"
                 conv_lines.append(f"{role}: {msg['content'][:200]}")
             conv_context = "\n".join(conv_lines)
 
@@ -643,7 +651,7 @@ class TelegramHandler:
                             original_type=task_type, reason="short msg with conversation history")
 
         # Store user message in conversation buffer
-        self._conversation.append({"role": "user", "content": text})
+        self._conversation.append({"role": "user", "content": text, "sender": self._current_sender})
         if len(self._conversation) > self._max_conversation:
             self._conversation.pop(0)
 
@@ -665,7 +673,7 @@ class TelegramHandler:
             # Simple len ak nemáme tool dáta — inak treba ich spracovať
             prompt = (
                 f"{SIMPLE_PROMPT}\n"
-                f"Daniel: {text}\n"
+                f"{self._current_sender}: {text}\n"
             )
         else:
             # Chat/analysis — full context
@@ -678,7 +686,7 @@ class TelegramHandler:
             if url_context:
                 prompt += f"Obsah odkazov:\n{url_context}\n\n"
             prompt += (
-                f"Daniel: {text}\n"
+                f"{self._current_sender}: {text}\n"
                 f"Použi aktuálne dáta vyššie ak sú relevantné. Odpovedaj po slovensky."
             )
 

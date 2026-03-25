@@ -199,17 +199,28 @@ class TelegramBot:
             return
 
         # Security: check if user is authorized
+        # V skupinách povoliť aj newhitelistovaným (boti, iní ľudia)
+        # ale len ak je John explicitne @mentioned
+        is_group = chat_type in ("group", "supergroup")
         if self._allowed_users and user_id not in self._allowed_users:
-            logger.warning(
-                "telegram_unauthorized",
+            if not is_group:
+                # Privátna správa od neautorizovaného → blokovať
+                logger.warning(
+                    "telegram_unauthorized",
+                    user_id=user_id,
+                    username=username,
+                    chat_type=chat_type,
+                )
+                await self.send_message(
+                    chat_id, "Unauthorized. This bot only responds to its owner."
+                )
+                return
+            # V skupine od neautorizovaného → povoliť (bol @mentioned)
+            logger.info(
+                "telegram_group_interaction",
                 user_id=user_id,
                 username=username,
-                chat_type=chat_type,
             )
-            await self.send_message(
-                chat_id, "Unauthorized. This bot only responds to its owner."
-            )
-            return
 
         logger.info(
             "telegram_message_received",
@@ -218,10 +229,13 @@ class TelegramBot:
             text_length=len(text),
         )
 
-        # Route to callback
+        # Route to callback — include username and chat_type
         if self._message_callback:
             try:
-                response = await self._message_callback(text, user_id, chat_id)
+                response = await self._message_callback(
+                    text, user_id, chat_id,
+                    username=username, chat_type=chat_type,
+                )
                 if response:
                     await self.send_message(chat_id, str(response))
             except Exception as e:
