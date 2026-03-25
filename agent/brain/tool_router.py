@@ -120,11 +120,26 @@ def format_tool_context(results: dict[str, str]) -> str:
 # --- Tool implementations ---
 
 
+# Slovenské skloňované tvary → základný tvar pre wttr.in
+_LOCATION_NORMALIZE: dict[str, str] = {
+    "prahe": "Praha", "prahy": "Praha", "prahu": "Praha", "prahou": "Praha",
+    "bratislave": "Bratislava", "bratislavy": "Bratislava", "bratislavu": "Bratislava",
+    "košiciach": "Košice", "košíc": "Košice",
+    "brne": "Brno", "brna": "Brno",
+    "viedni": "Wien", "viedne": "Wien",
+    "londýne": "London", "londýna": "London",
+    "berlíne": "Berlin", "berlína": "Berlin",
+    "paríži": "Paris", "paríža": "Paris",
+}
+
+
 async def _fetch_weather(location: str) -> str:
     """Fetch počasie z wttr.in (zadarmo, bez API key)."""
     try:
         import aiohttp
 
+        # Normalizuj slovenské skloňovanie
+        location = _LOCATION_NORMALIZE.get(location.lower(), location.capitalize())
         url = f"https://wttr.in/{location}?format=j1&lang=sk"
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=15)
