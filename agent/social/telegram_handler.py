@@ -135,6 +135,7 @@ class TelegramHandler:
             "/review": self._cmd_review,
             "/wallet": self._cmd_wallet,
             "/projects": self._cmd_projects,
+            "/runtime": self._cmd_runtime,
             "/help": self._cmd_help,
         }
 
@@ -171,6 +172,7 @@ class TelegramHandler:
             "/sandbox [python kód] — spusti kód v Docker sandboxe\n"
             "/wallet — stav peňaženiek (ETH, BTC)\n"
             "/projects — zoznam projektov\n"
+            "/runtime — čo beží na pozadí (cron, API, watchdog)\n"
             "/usage — spotreba tokenov a náklady\n"
             "/queue — stav pracovnej fronty\n"
             "/help — tento help\n\n"
@@ -455,6 +457,60 @@ class TelegramHandler:
                 f"*Chyba (exit {result.exit_code}):*\n"
                 f"```\n{errors[:2000] or output[:2000]}\n```"
             )
+
+    async def _cmd_runtime(self, args: str) -> str:
+        """Show what's actually running — cron, API, watchdog, loops."""
+        import os
+        import psutil
+
+        lines = ["*Runtime stav:*\n"]
+
+        # Process info
+        proc = psutil.Process(os.getpid())
+        uptime_seconds = int(psutil.time.time() - proc.create_time())
+        hours, remainder = divmod(uptime_seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        lines.append(f"*Uptime:* {hours}h {minutes}m")
+        lines.append(f"*PID:* {proc.pid}")
+        lines.append(f"*RAM:* {proc.memory_info().rss / 1024 / 1024:.0f} MB")
+        lines.append(f"*Threads:* {proc.num_threads()}")
+
+        # Background tasks
+        import asyncio
+        all_tasks = [t for t in asyncio.all_tasks() if not t.done()]
+        cron_tasks = [t for t in all_tasks if "cron" in str(t.get_coro()).lower()
+                      or "loop" in str(t.get_coro()).lower()
+                      or "maintenance" in str(t.get_coro()).lower()]
+        lines.append(f"\n*Async tasks:* {len(all_tasks)} celkom")
+        lines.append(f"*Background loops:* {len(cron_tasks)}")
+
+        # Watchdog
+        watchdog_stats = self._agent.watchdog.get_stats()
+        lines.append(
+            f"\n*Watchdog:* {watchdog_stats['modules_registered']} modulov "
+            f"({watchdog_stats['modules_healthy']} healthy)"
+        )
+
+        # Work loop
+        if self._work_loop:
+            wl_status = self._work_loop.get_status()
+            lines.append(
+                f"*Work queue:* {wl_status['queue_size']} v rade, "
+                f"{wl_status['total_success']} hotových, "
+                f"{wl_status['total_errors']} chýb"
+            )
+
+        # Agent API
+        lines.append(f"\n*Agent API:* port 8420 (aktívny)")
+
+        # Conversation buffer
+        lines.append(f"*Conversation buffer:* {len(self._conversation)} správ")
+
+        # Memory
+        mem_stats = self._agent.memory.get_stats()
+        lines.append(f"*Spomienky:* {mem_stats['total_memories']}")
+
+        return "\n".join(lines)
 
     @staticmethod
     def _sanitize_input(text: str) -> str:
