@@ -68,7 +68,8 @@ class InternalDispatcher:
             from agent.brain.semantic_router import classify_intent, is_available
             if is_available():
                 intent, confidence = classify_intent(text_lower)
-                if confidence >= 0.55:
+                # Zvýšený threshold — 0.55 bol príliš nízky, matchoval konverzačné otázky
+                if confidence >= 0.75 and len(text_lower.split()) <= 6:
                     intent_handler_map = {
                         "status": self._handle_status,
                         "health": self._handle_health,
@@ -89,43 +90,44 @@ class InternalDispatcher:
         return None
 
     # --- Detectors: return True only when CONFIDENT ---
-    # Sprísniené — dlhšie otázky (>6 slov) nechaj na LLM.
-    # Dispatcher len pre krátke priame dotazy.
+    # MAX 4 SLOVÁ. Dispatcher len pre krátke priame dotazy.
+    # Všetko dlhšie alebo konverzačné → LLM.
 
     @staticmethod
     def _is_status_query(text: str) -> bool:
-        if len(text.split()) > 6:
-            return False  # Dlhá otázka → LLM
+        if len(text.split()) > 4:
+            return False
         return bool(re.search(r"\b(stav|status)\b", text))
 
     @staticmethod
     def _is_health_query(text: str) -> bool:
-        if len(text.split()) > 6:
+        if len(text.split()) > 4:
             return False
-        return bool(re.search(r"\b(zdravie|health|cpu|ram|disk)\b", text))
+        return bool(re.search(r"\b(zdravie|health)\b", text))
 
     @staticmethod
     def _is_tasks_query(text: str) -> bool:
-        if len(text.split()) > 6:
+        if len(text.split()) > 4:
             return False
-        # "čo robíš" je príliš vágne — nechaj na LLM
-        return bool(re.search(r"\b(úloh|tasks?|fronta)\b", text))
+        return bool(re.search(r"\b(úloh[ya]?|tasks?)\b", text))
 
     @staticmethod
     def _is_skills_query(text: str) -> bool:
-        if len(text.split()) > 6:
+        if len(text.split()) > 4:
             return False
-        return bool(re.search(r"\b(skills?|schopnost)\b", text))
+        return bool(re.search(r"\b(skills)\b", text))
 
     @staticmethod
     def _is_budget_query(text: str) -> bool:
         if len(text.split()) > 4:
-            return False  # Len veľmi krátke priame dotazy
-        return bool(re.search(r"\b(rozpočet|budget|peniaze)\b", text))
+            return False
+        return bool(re.search(r"\b(rozpočet|budget)\b", text))
 
     @staticmethod
     def _is_identity_query(text: str) -> bool:
-        return bool(re.search(r"\b(kto si|kto som|identita|o sebe)\b", text))
+        if len(text.split()) > 4:
+            return False
+        return bool(re.search(r"\b(kto si|kto som)\b", text))
 
     # --- Handlers: structured responses from modules ---
 
