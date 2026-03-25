@@ -85,6 +85,9 @@ class TelegramHandler:
         if not text:
             return "Prázdna správa."
 
+        # Input sanitizácia — základná ochrana proti prompt injection
+        text = self._sanitize_input(text)
+
         # Zisti kto píše — pre prompt
         self._current_sender = username or "Daniel"
         self._current_chat_type = chat_type
@@ -453,6 +456,41 @@ class TelegramHandler:
                 f"```\n{errors[:2000] or output[:2000]}\n```"
             )
 
+    @staticmethod
+    def _sanitize_input(text: str) -> str:
+        """
+        Základná ochrana proti prompt injection.
+
+        Neblokuje — len označí podozrivé patterny.
+        LLM vidí originálny text ale s varovaním.
+        """
+        import re
+
+        # Detekuj injection patterny
+        injection_patterns = [
+            r"ignore\s+(all\s+)?previous\s+instructions",
+            r"forget\s+(all\s+)?previous",
+            r"you\s+are\s+now\s+",
+            r"new\s+instructions?\s*:",
+            r"system\s*:\s*",
+            r"<\s*system\s*>",
+            r"pretend\s+you\s+are",
+            r"act\s+as\s+if",
+            r"override\s+your\s+(rules|instructions)",
+            r"zabudni\s+(na\s+)?(všetk|predchádzajúc)",
+            r"ignoruj\s+(všetk|predchádzajúc)",
+            r"teraz\s+si\s+",
+            r"nové\s+inštrukcie",
+        ]
+
+        for pattern in injection_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                logger.warning("prompt_injection_detected", pattern=pattern, text=text[:100])
+                # Neblokuj ale pridaj warning do textu
+                return f"[POZOR: podozrivý vstup detekovaný] {text}"
+
+        return text
+
     async def _cmd_projects(self, args: str) -> str:
         """Show projects or create new one."""
         args = args.strip()
@@ -774,7 +812,30 @@ class TelegramHandler:
                     if texts:
                         reply = texts[-1].strip()
             if not reply:
-                reply = "Spustil som úlohu, ale nedostal som výsledok. Skús /status alebo zopakuj otázku."
+                # CLI vrátilo prázdny result — skús retry s jednoduchším promptom
+                logger.warning("empty_cli_result", original_prompt_len=len(prompt))
+                retry_prompt = (
+                    f"{active_prompt}\n"
+                    f"Otázka: {text}\n"
+                    f"Odpovedaj priamo, stručne, po slovensky. Nepoužívaj nástroje."
+                )
+                retry_result = await asyncio.to_thread(
+                    subprocess.run,
+                    [claude_bin, "--print", "--output-format", "json",
+                     "--model", model.model_id, "--max-turns", "1"],
+                    input=retry_prompt,
+                    capture_output=True, text=True,
+                    timeout=60, env=env,
+                    cwd=os.path.expanduser("~/agent-life-space"),
+                )
+                if retry_result.returncode == 0:
+                    try:
+                        retry_data = orjson.loads(retry_result.stdout)
+                        reply = retry_data.get("result", "").strip()
+                    except Exception:
+                        pass
+                if not reply:
+                    reply = "Prepáč, nepodarilo sa mi odpovedať. Skús otázku preformulovať."
 
             cost = response_data.get("total_cost_usd", 0)
             tokens = response_data.get("usage", {})
