@@ -16,6 +16,7 @@ Flow:
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 import structlog
@@ -88,15 +89,36 @@ class TelegramHandler:
         if not text:
             return "Prázdna správa."
 
-        # Input sanitizácia — základná ochrana proti prompt injection
-        text = self._sanitize_input(text)
-
-        # Zisti kto píše — pre prompt
-        self._current_sender = username or "Daniel"
+        # Zisti kto píše — pre sanitizáciu (sender context)
+        # Musí byť pred sanitize aby logy mali sender info
+        # Bot už resolved owner name pre allowed users
+        # Fallback: private chat bez username = pravdepodobne owner
+        if not username or username == "unknown":
+            owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
+            self._current_sender = owner_name if chat_type == "private" else "unknown"
+        else:
+            self._current_sender = username
         self._current_chat_type = chat_type
+
+        # Input sanitizácia — prompt injection ochrana
+        sanitized = self._sanitize_input(text)
+        if sanitized is None:
+            return "Tento vstup bol zablokovaný bezpečnostným filtrom."
+        text = sanitized
 
         if text.startswith("/"):
             return await self._handle_command(text)
+
+        # SECURITY: V skupinách non-owner nemôže spúšťať programovacie úlohy
+        # ani work queue. Len konverzácia (chat/simple/greeting).
+        owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
+        is_owner = self._current_sender == owner_name
+        is_group = chat_type in ("group", "supergroup")
+        if is_group and not is_owner:
+            # Force non-programming task type pre non-owners
+            self._force_safe_mode = True
+        else:
+            self._force_safe_mode = False
 
         # Keep sending typing indicator while John thinks
         typing_task = None
@@ -515,38 +537,49 @@ class TelegramHandler:
 
         return "\n".join(lines)
 
-    @staticmethod
-    def _sanitize_input(text: str) -> str:
+    def _sanitize_input(self, text: str) -> str | None:
         """
-        Základná ochrana proti prompt injection.
+        Ochrana proti prompt injection.
 
-        Neblokuje — len označí podozrivé patterny.
-        LLM vidí originálny text ale s varovaním.
+        Rozlišuje tvrdé a mäkké patterny:
+        - Tvrdé (priamy útok) → blokuj, vráť None
+        - Mäkké (podozrivé ale môže byť legitímne) → strip + warning v logu
         """
         import re
 
-        # Detekuj injection patterny
-        injection_patterns = [
+        # Tvrdé patterny — priamy prompt injection → BLOKOVAŤ
+        _HARD_INJECTION = [
             r"ignore\s+(all\s+)?previous\s+instructions",
             r"forget\s+(all\s+)?previous",
             r"you\s+are\s+now\s+",
             r"new\s+instructions?\s*:",
-            r"system\s*:\s*",
             r"<\s*system\s*>",
-            r"pretend\s+you\s+are",
-            r"act\s+as\s+if",
             r"override\s+your\s+(rules|instructions)",
             r"zabudni\s+(na\s+)?(všetk|predchádzajúc)",
             r"ignoruj\s+(všetk|predchádzajúc)",
-            r"teraz\s+si\s+",
             r"nové\s+inštrukcie",
         ]
 
-        for pattern in injection_patterns:
+        # Mäkké patterny — podozrivé, ale neblokuj (môže byť otázka O injekcii)
+        _SOFT_INJECTION = [
+            r"system\s*:\s*",
+            r"pretend\s+you\s+are",
+            r"act\s+as\s+if",
+            r"teraz\s+si\s+",
+        ]
+
+        for pattern in _HARD_INJECTION:
             if re.search(pattern, text, re.IGNORECASE):
-                logger.warning("prompt_injection_detected", pattern=pattern, text=text[:100])
-                # Neblokuj ale pridaj warning do textu
-                return f"[POZOR: podozrivý vstup detekovaný] {text}"
+                logger.warning("prompt_injection_blocked", pattern=pattern,
+                             text=text[:100], sender=self._current_sender)
+                return None  # Blokované
+
+        for pattern in _SOFT_INJECTION:
+            if re.search(pattern, text, re.IGNORECASE):
+                logger.warning("prompt_injection_soft", pattern=pattern,
+                             text=text[:100], sender=self._current_sender)
+                # Neblokuj ale strip podozrivý pattern
+                text = re.sub(pattern, "[redacted]", text, flags=re.IGNORECASE)
 
         return text
 
@@ -603,6 +636,10 @@ class TelegramHandler:
                         break
 
         if len(numbered) >= 2 and self._work_loop:
+            # SECURITY: Work queue len pre ownera
+            if getattr(self, "_force_safe_mode", False):
+                logger.warning("work_queue_blocked_non_owner", sender=self._current_sender)
+                return "Pracovnú frontu môže používať len owner."
             cid = self._owner_chat_id
             added = self._work_loop.add_work(numbered, chat_id=cid)
             return f"Mám {added} úloh. Spracúvam postupne, výsledky posielam priebežne."
@@ -631,7 +668,7 @@ class TelegramHandler:
                 return internal_result
 
         # === STEP 2: Semantic cache — already answered similar question? ===
-        # Skip cache pre otázky o aktuálnych dátach (počasie, čas, ceny)
+        # Skip cache pre: agent API, realtime dáta, operačné príkazy
         import re as _re_cache
         _REALTIME_PATTERNS = [
             r"počasie|weather|teplota",
@@ -639,10 +676,25 @@ class TelegramHandler:
             r"cena.*btc|cena.*eth|price.*bitcoin",
             r"aktuálne|teraz|dnes|now|today",
         ]
+        _OPERATIONAL_PATTERNS = [
+            r"git\s+(pull|push|commit|checkout|rebase)",
+            r"systemctl|restart|deploy|spusti|spust",
+            r"pip\s+install|apt\s+install",
+            r"cloudflared|tunnel",
+            r"naprogramuj|bash:|terminal",
+        ]
         needs_realtime = any(
             _re_cache.search(p, text.lower()) for p in _REALTIME_PATTERNS
         )
-        if not needs_realtime:
+        is_operational = any(
+            _re_cache.search(p, text.lower()) for p in _OPERATIONAL_PATTERNS
+        )
+        skip_cache = (
+            needs_realtime
+            or is_operational
+            or self._current_chat_type == "agent_api"
+        )
+        if not skip_cache:
             try:
                 if self._semantic_cache is None:
                     from agent.memory.semantic_cache import SemanticCache
@@ -798,7 +850,8 @@ class TelegramHandler:
         if has_conversation:
             conv_lines = []
             for msg in self._conversation[-self._max_conversation:]:
-                role = msg.get("sender", "Daniel") if msg["role"] == "user" else "John"
+                _owner = os.environ.get("AGENT_OWNER_NAME", "Daniel")
+                role = msg.get("sender", _owner) if msg["role"] == "user" else "John"
                 conv_lines.append(f"{role}: {msg['content'][:200]}")
             conv_context = "\n".join(conv_lines)
 
@@ -819,10 +872,15 @@ class TelegramHandler:
         # === STEP 5: Build prompt based on task type ===
         # Vyber system prompt podľa toho kto píše
         is_agent_chat = self._current_chat_type == "agent_api" or (
-            self._current_sender not in ("Daniel", "unknown", "")
+            self._current_sender not in (os.environ.get("AGENT_OWNER_NAME", "Daniel"), "unknown", "")
             and self._current_chat_type in ("group", "supergroup", "agent_api")
         )
         active_prompt = AGENT_PROMPT if is_agent_chat else SYSTEM_PROMPT
+
+        # SECURITY: Non-owner v skupine nemôže spúšťať programming tasky
+        if getattr(self, "_force_safe_mode", False) and task_type == "programming":
+            logger.warning("programming_downgraded_to_chat", sender=self._current_sender)
+            task_type = "chat"
 
         if task_type == "programming":
             prompt = (

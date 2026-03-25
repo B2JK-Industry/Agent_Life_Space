@@ -78,7 +78,8 @@ async def run_agent(data_dir: str = "agent") -> None:
 
             # Support comma-separated user IDs: "123,456,789"
             allowed_ids = [int(x.strip()) for x in tg_user_id.split(",") if x.strip()] if tg_user_id else []
-            bot = TelegramBot(token=tg_token, allowed_user_ids=allowed_ids)
+            owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
+            bot = TelegramBot(token=tg_token, allowed_user_ids=allowed_ids, owner_name=owner_name)
             # Start agent work loop
             from agent.core.agent_loop import AgentLoop
             owner_id = int(tg_user_id.split(",")[0]) if tg_user_id else 0
@@ -112,13 +113,18 @@ async def run_agent(data_dir: str = "agent") -> None:
             agent_api_key = os.environ.get("AGENT_API_KEY", "")
             if agent_api_key:
                 agent_api_keys.append(agent_api_key)
+            # SECURITY: bind na 127.0.0.1 default — cloudflare tunnel sa pripája lokálne
+            # Ak chceš exponovať priamo (nie cez tunnel), použi AGENT_API_BIND=0.0.0.0
+            api_bind = os.environ.get("AGENT_API_BIND", "127.0.0.1")
             agent_api = AgentAPI(
                 handler_callback=handler.handle,
                 agent=agent,
                 api_keys=agent_api_keys if agent_api_keys else None,
+                bind_host=api_bind,
             )
             agent_api_task = asyncio.create_task(agent_api.start())
-            logger.info("agent_api_enabled", port=8420, auth="key" if agent_api_keys else "open")
+            logger.info("agent_api_enabled", port=8420, bind=api_bind,
+                       auth="key" if agent_api_keys else "NONE — SET AGENT_API_KEY!")
 
             # Start cron (John's initiative)
             from agent.core.cron import AgentCron

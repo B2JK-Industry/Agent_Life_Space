@@ -46,10 +46,12 @@ class AgentAPI:
         agent: Any = None,
         port: int = _DEFAULT_PORT,
         api_keys: list[str] | None = None,
+        bind_host: str = "127.0.0.1",
     ) -> None:
         self._handler = handler_callback  # async fn(text, sender) -> str
         self._agent = agent
         self._port = port
+        self._bind_host = bind_host
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
         # API key autentifikácia — len autorizovaní agenti
@@ -68,7 +70,10 @@ class AgentAPI:
         Status a health sú verejné — auth len pre /message.
         """
         if not self._api_keys:
-            return None  # Žiadne keys nastavené → všetko povolené (dev mode)
+            # SECURITY: Bez API keys sa /message blokuje
+            # Dev mode odstránený — vždy vyžaduj auth pre message endpoint
+            logger.warning("agent_api_no_keys_configured")
+            return "No API keys configured. Set AGENT_API_KEY env variable."
 
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
@@ -165,8 +170,9 @@ class AgentAPI:
                 )
         except Exception as e:
             logger.error("agent_api_error", error=str(e))
+            # SECURITY: Nevracaj interné detaily chýb
             return web.json_response(
-                {"error": str(e)}, status=500
+                {"error": "Internal processing error"}, status=500
             )
 
     async def _handle_status(self, request: web.Request) -> web.Response:
@@ -206,7 +212,7 @@ class AgentAPI:
 
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
-        site = web.TCPSite(self._runner, "0.0.0.0", self._port)
+        site = web.TCPSite(self._runner, self._bind_host, self._port)
         await site.start()
         logger.info("agent_api_started", port=self._port)
 

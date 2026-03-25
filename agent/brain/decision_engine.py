@@ -134,7 +134,7 @@ class DecisionEngine:
     def _cache_key(self, prefix: str, *args: Any) -> str:
         """Deterministic cache key from inputs."""
         raw = f"{prefix}:{'|'.join(str(a) for a in args)}"
-        return hashlib.md5(raw.encode()).hexdigest()[:16]
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def _cache_get(self, key: str) -> Decision | None:
         decision = self._cache.get(key)

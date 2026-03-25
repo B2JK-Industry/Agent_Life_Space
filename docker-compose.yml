@@ -17,9 +17,19 @@ services:
       - agent-finance:/app/agent/finance
       - agent-vault:/app/agent/vault
       - agent-logs:/app/agent/logs
-      - /var/run/docker.sock:/var/run/docker.sock
+      # SECURITY: Docker socket NIE je mountovaný
+      # Agent beží priamo na hostovi (systemd), nie v kontajneri
+      # Sandbox volá Docker cez host CLI (sg docker)
+      # Ak MUSÍŠ bežať v kontajneri, použi socket proxy:
+      #   - /var/run/docker.sock:/var/run/docker.sock:ro
+      # alebo Docker-in-Docker sidecar (bezpečnejšie)
     mem_limit: 4g
     cpus: 2.0
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,size=256m
 
 volumes:
   agent-data:

@@ -81,6 +81,7 @@ Environment=AGENT_VAULT_KEY=<your-vault-key-from-step-4>
 Environment=TELEGRAM_BOT_TOKEN=<your-bot-token>
 Environment=TELEGRAM_USER_ID=<your-user-id>
 Environment=CLAUDE_CODE_OAUTH_TOKEN=<your-claude-token>
+Environment=AGENT_OWNER_NAME=<your-name>
 
 [Install]
 WantedBy=default.target

@@ -45,6 +45,7 @@ class TelegramBot:
         self,
         token: str,
         allowed_user_ids: list[int] | None = None,
+        owner_name: str = "owner",
     ) -> None:
         if not token or not token.strip():
             msg = "Telegram bot token cannot be empty"
@@ -53,6 +54,7 @@ class TelegramBot:
         self._token = token
         self._base_url = TG_API.format(token=token)
         self._allowed_users = set(allowed_user_ids or [])
+        self._owner_name = owner_name
         self._session: aiohttp.ClientSession | None = None
         self._running = False
         self._update_id_file = Path(os.path.expanduser("~/agent-life-space/.last_update_id"))
@@ -181,7 +183,14 @@ class TelegramBot:
         chat_type = message["chat"].get("type", "private")
         user_id = message.get("from", {}).get("id", 0)
         text = message.get("text", "")
-        username = message.get("from", {}).get("username", "unknown")
+        raw_username = message.get("from", {}).get("username", "")
+        first_name = message.get("from", {}).get("first_name", "")
+        # Ak user_id je v allowed_users → je to owner
+        # Inak použi Telegram username alebo first_name
+        if self._allowed_users and user_id in self._allowed_users:
+            username = self._owner_name
+        else:
+            username = raw_username or first_name or "unknown"
 
         # In groups, only respond if mentioned or replied to
         if chat_type in ("group", "supergroup"):

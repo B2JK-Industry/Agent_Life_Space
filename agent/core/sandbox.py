@@ -164,6 +164,14 @@ class DockerSandbox:
             )
         self._docker_verified = True
 
+    # Povolené Docker image — whitelist proti injection cez image name
+    _ALLOWED_IMAGES = frozenset({
+        "python:3.12-slim",
+        "node:20-slim",
+        "alpine:latest",
+        "ruby:3.2-slim",
+    })
+
     async def _docker_run(
         self,
         image: str,
@@ -173,27 +181,52 @@ class DockerSandbox:
     ) -> SandboxResult:
         """Core Docker run with all safety constraints."""
         await self._ensure_docker()
+
+        # SECURITY: Validate image against whitelist
+        if image not in self._ALLOWED_IMAGES:
+            logger.warning("sandbox_image_rejected", image=image)
+            return SandboxResult(
+                success=False,
+                stderr=f"Image '{image}' not in whitelist. Allowed: {sorted(self._ALLOWED_IMAGES)}",
+                exit_code=1,
+                image=image,
+            )
+
+        # SECURITY: Validate command elements — no shell metacharacters
+        import re
+        _SHELL_META = re.compile(r"[;&|`$(){}\\\"']")
+        for part in command:
+            if _SHELL_META.search(part) and part != command[-1]:
+                # Posledný element môže byť bash -c script (stdin je bezpečnejší)
+                logger.warning("sandbox_cmd_suspicious", part=part[:50])
+
         network_flag = "bridge" if self._network else "none"
-        interactive_flag = "-i " if stdin_data else ""
 
         # Unique container name pre timeout kill
         import uuid
         container_name = f"sandbox-{uuid.uuid4().hex[:12]}"
 
-        cmd_str = " ".join(command)
-        docker_args = (
-            f"docker run --rm {interactive_flag}"
-            f"--name={container_name} "
-            f"--memory={self._memory} "
-            f"--cpus={self._cpus} "
-            f"--network={network_flag} "
-            f"--read-only "
-            f"--tmpfs /tmp:rw,size=64m "
-            f"--pids-limit=50 "
-            f"--security-opt=no-new-privileges "
-            f"{image} {cmd_str}"
-        )
-        docker_cmd = f"sg docker -c '{docker_args}'"
+        # Build Docker args as explicit list — nie string concatenation
+        docker_args = [
+            "docker", "run", "--rm",
+            f"--name={container_name}",
+            f"--memory={self._memory}",
+            f"--cpus={self._cpus}",
+            f"--network={network_flag}",
+            "--read-only",
+            "--tmpfs", "/tmp:rw,size=64m",
+            "--pids-limit=50",
+            "--security-opt=no-new-privileges",
+        ]
+        if stdin_data:
+            docker_args.append("-i")
+        docker_args.append(image)
+        docker_args.extend(command)
+
+        # sg docker -c vyžaduje shell wrapping (Linux group permissions)
+        # Ale teraz s validovaným image a explicitným arg listom
+        import shlex
+        docker_cmd = f"sg docker -c {shlex.quote(' '.join(shlex.quote(a) for a in docker_args))}"
 
         logger.info(
             "sandbox_run",

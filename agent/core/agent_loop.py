@@ -173,6 +173,21 @@ class AgentLoop:
             # Krátka pauza medzi úlohami
             await asyncio.sleep(1)
 
+    @staticmethod
+    def _is_programming_task(description: str) -> bool:
+        """Detect if work item needs file system access (programming task)."""
+        import re
+        _PROGRAMMING_SIGNALS = [
+            r"(napíš|napís|uprav|vytvor|oprav|refaktor|implementuj)\w*\s+.*(kód|súbor|subor|funkci|modul|test)",
+            r"\b(commit|push|pull|git|deploy)\b",
+            r"\b(python|javascript|typescript|bash|docker)\b",
+            r"(spusti|spust|run)\s+test",
+            r"(otestuj|skontroluj)\s+\w+\.(py|js|ts|sh)",
+            r"\b(pip|npm|apt)\s+install\b",
+        ]
+        text = description.lower()
+        return any(re.search(p, text) for p in _PROGRAMMING_SIGNALS)
+
     async def _execute_item(self, item: WorkItem) -> str:
         """Vykonaj jednu úlohu cez Claude CLI."""
         env = os.environ.copy()
@@ -193,16 +208,21 @@ class AgentLoop:
         from agent.core.models import get_model
         model = get_model("work_queue")
 
+        cli_args = [
+            claude_bin,
+            "--print",
+            "--output-format", "json",
+            "--model", model.model_id,
+            "--max-turns", str(model.max_turns),
+        ]
+        # --dangerously-skip-permissions LEN pre programming tasky
+        # Inak Claude beží bez file/shell prístupu
+        if self._is_programming_task(item.description):
+            cli_args.append("--dangerously-skip-permissions")
+
         result = await asyncio.to_thread(
             subprocess.run,
-            [
-                claude_bin,
-                "--print",
-                "--output-format", "json",
-                "--model", model.model_id,
-                "--max-turns", str(model.max_turns),
-                "--dangerously-skip-permissions",
-            ],
+            cli_args,
             input=prompt,
             capture_output=True,
             text=True,
