@@ -106,6 +106,15 @@ async def run_agent(data_dir: str = "agent") -> None:
                     logger.warning("preload_failed", error=str(e))
             asyncio.create_task(_preload_models())
 
+            # Start Agent-to-Agent API
+            from agent.social.agent_api import AgentAPI
+            agent_api = AgentAPI(
+                handler_callback=handler.handle,
+                agent=agent,
+            )
+            agent_api_task = asyncio.create_task(agent_api.start())
+            logger.info("agent_api_enabled", port=8420)
+
             # Start cron (John's initiative)
             from agent.core.cron import AgentCron
             cron = AgentCron(agent, telegram_bot=bot, owner_chat_id=owner_id)
@@ -116,6 +125,8 @@ async def run_agent(data_dir: str = "agent") -> None:
             work_loop_task = None
             cron = None
             cron_task = None
+            agent_api = None
+            agent_api_task = None
             logger.info("telegram_bot_disabled", reason="no TELEGRAM_BOT_TOKEN")
 
         # Wait for shutdown signal
@@ -131,6 +142,11 @@ async def run_agent(data_dir: str = "agent") -> None:
             await cron.stop()
             if cron_task:
                 cron_task.cancel()
+
+        if agent_api:
+            await agent_api.stop()
+            if agent_api_task:
+                agent_api_task.cancel()
 
         if telegram_task:
             await bot.stop()
