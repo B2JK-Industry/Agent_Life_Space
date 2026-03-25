@@ -379,6 +379,68 @@ class FinanceTracker:
             )
             await self._db.commit()
 
+    async def check_stale_proposals(
+        self,
+        max_age_days: int = 7,
+    ) -> list[dict[str, Any]]:
+        """
+        Dead man switch — nájdi proposals ktoré čakajú príliš dlho.
+
+        Neauto-approvuje! Len identifikuje a notifikuje.
+        Politika:
+            - 3 dni: warning (pripomienka)
+            - 7 dní: escalation (urgentná notifikácia)
+            - 14 dní: auto-cancel (Daniel evidentne nechce)
+        """
+        now = datetime.now(timezone.utc)
+        stale: list[dict[str, Any]] = []
+
+        for tx in self._transactions.values():
+            if tx.status != TransactionStatus.PROPOSED:
+                continue
+
+            try:
+                created = datetime.fromisoformat(tx.created_at)
+                age_days = (now - created).days
+            except (ValueError, TypeError):
+                continue
+
+            if age_days >= 14:
+                # Auto-cancel — príliš staré
+                tx.status = TransactionStatus.CANCELLED
+                tx.metadata["auto_cancelled"] = True
+                tx.metadata["cancel_reason"] = f"Stale proposal ({age_days} dní bez odpovede)"
+                await self._persist(tx)
+                stale.append({
+                    "id": tx.id,
+                    "description": tx.description,
+                    "amount": tx.amount_usd,
+                    "age_days": age_days,
+                    "action": "auto_cancelled",
+                })
+                logger.info("proposal_auto_cancelled", id=tx.id, age_days=age_days)
+            elif age_days >= max_age_days:
+                stale.append({
+                    "id": tx.id,
+                    "description": tx.description,
+                    "amount": tx.amount_usd,
+                    "age_days": age_days,
+                    "action": "escalation",
+                })
+            elif age_days >= 3:
+                stale.append({
+                    "id": tx.id,
+                    "description": tx.description,
+                    "amount": tx.amount_usd,
+                    "age_days": age_days,
+                    "action": "warning",
+                })
+
+        if stale:
+            logger.info("stale_proposals_found", count=len(stale))
+
+        return stale
+
     def get_stats(self) -> dict[str, Any]:
         budget = self.check_budget()
         return {

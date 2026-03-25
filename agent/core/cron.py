@@ -51,7 +51,8 @@ class AgentCron:
         self._tasks.append(asyncio.create_task(self._server_maintenance_loop()))
 
         self._tasks.append(asyncio.create_task(self._consolidation_loop()))
-        logger.info("cron_started", jobs=6)
+        self._tasks.append(asyncio.create_task(self._dead_man_switch_loop()))
+        logger.info("cron_started", jobs=7)
 
     async def stop(self) -> None:
         self._running = False
@@ -77,14 +78,28 @@ class AgentCron:
 
         # Alert Daniel if something is wrong
         if health.alerts and self._bot and self._owner_chat_id:
-            alert_text = (
-                "⚠️ *John — Health Alert*\n\n"
-                + "\n".join(health.alerts)
-                + f"\n\nCPU: {health.cpu_percent:.0f}%, "
-                f"RAM: {health.memory_percent:.0f}%"
-            )
+            # Rozlíš severity
+            unresponsive = [a for a in health.alerts if "unresponsive" in a.lower()]
+            other_alerts = [a for a in health.alerts if "unresponsive" not in a.lower()]
+
+            if unresponsive:
+                alert_text = (
+                    "🔴 *John — CRITICAL: Modul UNRESPONSIVE*\n\n"
+                    + "\n".join(unresponsive)
+                    + f"\n\nCPU: {health.cpu_percent:.0f}%, "
+                    f"RAM: {health.memory_percent:.0f}%\n"
+                    f"Watchdog sa pokúša reštartovať."
+                )
+            else:
+                alert_text = (
+                    "⚠️ *John — Health Alert*\n\n"
+                    + "\n".join(other_alerts)
+                    + f"\n\nCPU: {health.cpu_percent:.0f}%, "
+                    f"RAM: {health.memory_percent:.0f}%"
+                )
             await self._bot.send_message(self._owner_chat_id, alert_text)
-            logger.info("cron_health_alert_sent", alerts=len(health.alerts))
+            logger.info("cron_health_alert_sent", alerts=len(health.alerts),
+                        critical=len(unresponsive))
 
         logger.info(
             "cron_health_check",
@@ -250,4 +265,69 @@ class AgentCron:
             new_entries=report["new_semantic_procedural"],
             deduplicated=report["deduplicated"],
         )
+
+    # --- Dead Man Switch (every 12 hours) ---
+
+    async def _dead_man_switch_loop(self) -> None:
+        """
+        Kontroluj stale proposals a notifikuj Daniela.
+
+        Politika:
+            3 dni → warning (pripomienka)
+            7 dní → escalation (urgentné)
+            14 dní → auto-cancel
+        """
+        await asyncio.sleep(3600)  # First run after 1 hour
+        while self._running:
+            try:
+                await self._do_dead_man_switch()
+                await asyncio.sleep(43200)  # 12 hours
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("cron_dead_man_switch_error")
+
+    async def _do_dead_man_switch(self) -> None:
+        stale = await self._agent.finance.check_stale_proposals()
+
+        if not stale:
+            logger.info("dead_man_switch_ok", stale_proposals=0)
+            return
+
+        if not self._bot or not self._owner_chat_id:
+            return
+
+        # Group by action
+        warnings = [s for s in stale if s["action"] == "warning"]
+        escalations = [s for s in stale if s["action"] == "escalation"]
+        cancelled = [s for s in stale if s["action"] == "auto_cancelled"]
+
+        lines = []
+        if cancelled:
+            lines.append("🚫 *Auto-zrušené (14+ dní):*")
+            for s in cancelled:
+                lines.append(f"  • {s['description']} (${s['amount']:.2f}, {s['age_days']}d)")
+
+        if escalations:
+            lines.append("🔴 *Urgentné (7+ dní):*")
+            for s in escalations:
+                lines.append(f"  • {s['description']} (${s['amount']:.2f}, {s['age_days']}d)")
+
+        if warnings:
+            lines.append("🟡 *Čakajúce (3+ dní):*")
+            for s in warnings:
+                lines.append(f"  • {s['description']} (${s['amount']:.2f}, {s['age_days']}d)")
+
+        if lines:
+            message = (
+                "⏰ *John — Dead Man Switch*\n\n"
+                f"Mám {len(stale)} nevybavených proposals:\n\n"
+                + "\n".join(lines)
+                + "\n\nPouži /budget na detail."
+            )
+            await self._bot.send_message(self._owner_chat_id, message)
+            logger.info("dead_man_switch_notification",
+                        warnings=len(warnings),
+                        escalations=len(escalations),
+                        cancelled=len(cancelled))
 
