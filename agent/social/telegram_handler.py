@@ -690,6 +690,43 @@ class TelegramHandler:
         except Exception as e:
             logger.error("persistent_conv_error", error=str(e))
 
+        # === STEP 3.7: Auto-inject runtime stav pri otázkach o sebe ===
+        # Zabraňuje konfabulácii — John dostane fakty, nie generuje čísla
+        runtime_context = ""
+        import re as _re_self
+        _SELF_PATTERNS = [
+            r"koľko.*(?:cron|job|task|loop|thread|async)",
+            r"(?:čo|aké).*(?:beží|bežíš|robíš|funguje)",
+            r"(?:tvoj|tvoje).*(?:stav|runtime|uptime|ram|cpu|pamäť)",
+            r"(?:máš|vieš).*(?:cron|sandbox|docker|watchdog|api)",
+            r"(?:konfabul|klameš|vymýšľaš)",
+        ]
+        if any(_re_self.search(p, text.lower()) for p in _SELF_PATTERNS):
+            try:
+                import asyncio as _aio_rt
+                import os as _os_rt
+                import psutil as _ps_rt
+                proc = _ps_rt.Process(_os_rt.getpid())
+                uptime_s = int(_ps_rt.time.time() - proc.create_time())
+                hours, mins = divmod(uptime_s, 3600)
+                mins = mins // 60
+                all_tasks = [t for t in _aio_rt.all_tasks() if not t.done()]
+                health = self._agent.watchdog.get_system_health()
+                mem_stats = self._agent.memory.get_stats()
+                runtime_context = (
+                    f"FAKTICKÝ RUNTIME STAV (nie generovaný, overený z procesu):\n"
+                    f"  Uptime: {hours}h {mins}m, PID: {proc.pid}\n"
+                    f"  RAM: {proc.memory_info().rss / 1024 / 1024:.0f} MB, Threads: {proc.num_threads()}\n"
+                    f"  Async tasks: {len(all_tasks)}\n"
+                    f"  Moduly: {', '.join(f'{n}={s}' for n,s in health.modules.items())}\n"
+                    f"  Spomienky: {mem_stats['total_memories']}\n"
+                    f"  CPU: {health.cpu_percent:.0f}%, RAM: {health.memory_percent:.0f}%\n"
+                    f"DÔLEŽITÉ: Použi TIETO čísla, nekonfabuluj vlastné.\n"
+                )
+                logger.info("runtime_auto_injected")
+            except Exception as e:
+                logger.error("runtime_inject_error", error=str(e))
+
         # === STEP 4: Classify task → select model ===
         from agent.core.models import classify_task, get_model
         task_type = classify_task(text)
@@ -808,6 +845,8 @@ class TelegramHandler:
         else:
             # Chat/analysis — full context
             prompt = f"{active_prompt}\n"
+            if runtime_context:
+                prompt += f"{runtime_context}\n"
             prompt += tool_context
             if persistent_context:
                 prompt += f"{persistent_context}\n\n"
