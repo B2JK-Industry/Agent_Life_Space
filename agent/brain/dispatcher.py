@@ -119,9 +119,9 @@ class InternalDispatcher:
 
     @staticmethod
     def _is_budget_query(text: str) -> bool:
-        if len(text.split()) > 6:
-            return False
-        return bool(re.search(r"\b(rozpočet|budget|financ|peniaze)\b", text))
+        if len(text.split()) > 4:
+            return False  # Len veľmi krátke priame dotazy
+        return bool(re.search(r"\b(rozpočet|budget|peniaze)\b", text))
 
     @staticmethod
     def _is_identity_query(text: str) -> bool:
