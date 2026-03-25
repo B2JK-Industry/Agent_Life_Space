@@ -112,8 +112,11 @@ class AgentAPI:
                 {"error": "Invalid JSON"}, status=400
             )
 
+        # Štruktúrované správy — podporuj aj jednoduché aj rozšírené
         text = data.get("message", "").strip()
         sender = data.get("sender", "unknown_agent")
+        intent = data.get("intent", "")  # optional: "question", "collaboration", "ping"
+        metadata = data.get("metadata", {})  # optional: extra context
 
         if not text:
             return web.json_response(
@@ -125,19 +128,36 @@ class AgentAPI:
                 {"error": f"Message too long (max {_MAX_MESSAGE_LENGTH})"}, status=400
             )
 
-        logger.info("agent_api_message", sender=sender, length=len(text), ip=ip)
+        logger.info("agent_api_message", sender=sender, intent=intent,
+                     length=len(text), ip=ip)
 
         # Spracuj správu cez handler (rovnaký ako Telegram)
         try:
             if self._handler:
-                response = await self._handler(
-                    text, 0, 0,
-                    username=sender, chat_type="agent_api",
-                )
+                # Timeout — ak CLI trvá príliš dlho, vráť partial response
+                try:
+                    import asyncio as _aio
+                    response = await _aio.wait_for(
+                        self._handler(
+                            text, 0, 0,
+                            username=sender, chat_type="agent_api",
+                        ),
+                        timeout=90,  # 90s max pre agent-to-agent
+                    )
+                except (TimeoutError, _aio.TimeoutError):
+                    logger.warning("agent_api_timeout", sender=sender)
+                    return web.json_response({
+                        "reply": "Premýšľam príliš dlho. Skús jednoduchšiu otázku.",
+                        "agent": "john-b2jk",
+                        "sender": sender,
+                        "timeout": True,
+                    }, status=200)  # 200 nie 504 — partial response
+
                 return web.json_response({
                     "reply": response,
                     "agent": "john-b2jk",
                     "sender": sender,
+                    "intent": intent,
                 })
             else:
                 return web.json_response(

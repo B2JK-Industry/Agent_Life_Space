@@ -72,9 +72,12 @@ class TelegramHandler:
         # Semantic cache and RAG (lazy init)
         self._semantic_cache = None
         self._rag_index = None
-        # Conversation buffer — posledných N výmen pre kontext
-        self._conversation: list[dict[str, str]] = []  # [{role, content}]
-        self._max_conversation = 10  # 5 výmen (user+assistant)
+        # Conversation buffer — RAM (pre rýchly prístup)
+        self._conversation: list[dict[str, str]] = []
+        self._max_conversation = 10
+        # Persistent conversation — SQLite (prežije reštart)
+        self._persistent_conv: Any = None
+        self._conversation_id = ""
 
     async def handle(
         self, text: str, user_id: int, chat_id: int,
@@ -668,6 +671,25 @@ class TelegramHandler:
         except Exception:
             pass  # RAG not available — continue
 
+        # === STEP 3.5: Persistent conversation — load context from DB ===
+        persistent_context = ""
+        try:
+            if self._persistent_conv is None:
+                from agent.memory.persistent_conversation import PersistentConversation
+                self._persistent_conv = PersistentConversation(
+                    db_path=str(self._agent._data_dir / "memory" / "conversations.db")
+                )
+                await self._persistent_conv.initialize()
+                # Conversation ID = dátum (jedna konverzácia za deň)
+                from datetime import datetime, timezone
+                self._conversation_id = f"session-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+
+            persistent_context = await self._persistent_conv.build_context(
+                self._conversation_id, query=text,
+            )
+        except Exception as e:
+            logger.error("persistent_conv_error", error=str(e))
+
         # === STEP 4: Classify task → select model ===
         from agent.core.models import classify_task, get_model
         task_type = classify_task(text)
@@ -787,7 +809,9 @@ class TelegramHandler:
             # Chat/analysis — full context
             prompt = f"{active_prompt}\n"
             prompt += tool_context
-            if conv_context:
+            if persistent_context:
+                prompt += f"{persistent_context}\n\n"
+            elif conv_context:
                 prompt += f"Predchádzajúca konverzácia:\n{conv_context}\n\n"
             if rag_context:
                 prompt += f"Relevantný kontext z knowledge base:\n{rag_context}\n\n"
@@ -933,6 +957,18 @@ class TelegramHandler:
             self._conversation.append({"role": "assistant", "content": clean_reply[:300]})
             if len(self._conversation) > self._max_conversation:
                 self._conversation.pop(0)
+
+            # Persist exchange do SQLite (prežije reštart)
+            try:
+                if self._persistent_conv:
+                    await self._persistent_conv.save_exchange(
+                        self._conversation_id,
+                        text,
+                        clean_reply[:500],
+                        sender=self._current_sender,
+                    )
+            except Exception as e:
+                logger.error("persistent_save_error", error=str(e))
 
             # === POST-ROUTING: Confidence-based escalation ===
             # Ak Haiku odpovedal nekvalitne → eskaluj na Sonnet
