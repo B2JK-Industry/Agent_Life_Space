@@ -56,8 +56,13 @@ class ReviewService:
     Channel-independent — Telegram/API/CLI are just adapters.
     """
 
-    def __init__(self, storage: ReviewStorage | None = None) -> None:
+    def __init__(
+        self,
+        storage: ReviewStorage | None = None,
+        workspace_manager: Any = None,
+    ) -> None:
         self._storage = storage or ReviewStorage()
+        self._workspace_manager = workspace_manager
         self._initialized = False
 
     def initialize(self) -> None:
@@ -89,6 +94,21 @@ class ReviewService:
         t_validate.complete(f"input valid: {intake.review_type.value}")
         job.status = ReviewJobStatus.VALIDATING
         self._storage.save_job(job)
+
+        # ── Step 1b: Workspace ──
+        if self._workspace_manager is not None:
+            t_ws = job.trace("workspace")
+            try:
+                ws = self._workspace_manager.create(
+                    name=f"review-{job.id[:8]}",
+                    task_id=job.id,
+                )
+                self._workspace_manager.activate(ws.id)
+                job.workspace_id = ws.id
+                t_ws.complete(f"workspace {ws.id}")
+            except Exception as e:
+                t_ws.fail(str(e))
+                logger.warning("review_workspace_failed", error=str(e))
 
         # ── Step 2: Analyze ──
         job.status = ReviewJobStatus.ANALYZING

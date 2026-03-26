@@ -3,15 +3,13 @@ Tests for /review Telegram command.
 
 Covers:
 - No arguments → usage help
-- Nonexistent file → error
-- Valid Python file → structured review output
-- File with known issues → warnings/info shown
-- Clean file → OK message
+- Nonexistent path → error
+- Valid file/dir → structured review output via ReviewService
+- Review response format for Telegram
 """
 
 from __future__ import annotations
 
-import textwrap
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -24,6 +22,10 @@ def mock_agent():
     agent = MagicMock()
     agent.memory = MagicMock()
     agent.memory.store = AsyncMock()
+    # ReviewService mock
+    agent.review = MagicMock()
+    agent.review.initialize = MagicMock()
+    agent.review._initialized = True
     return agent
 
 
@@ -38,7 +40,6 @@ class TestReviewCommand:
     async def test_no_args_shows_usage(self, handler):
         result = await handler.handle("/review", user_id=1, chat_id=1)
         assert "/review" in result
-        assert "súbor" in result.lower()
 
     @pytest.mark.asyncio
     async def test_no_args_with_space(self, handler):
@@ -48,65 +49,64 @@ class TestReviewCommand:
     @pytest.mark.asyncio
     async def test_nonexistent_file_shows_error(self, handler):
         result = await handler.handle("/review no/such/file.py", user_id=1, chat_id=1)
-        assert "FAILED" in result
-        assert "not found" in result.lower() or "Not found" in result
+        assert "neexistuje" in result.lower() or "error" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_valid_file_returns_review(self, handler, tmp_path):
-        # Create a real file to review
-        py_file = tmp_path / "test_module.py"
-        py_file.write_text('"""Module."""\n\ndef foo():\n    return 42\n')
-        result = await handler.handle(
-            f"/review {py_file}", user_id=1, chat_id=1
+    async def test_valid_dir_returns_review(self, handler, mock_agent, tmp_path):
+        """Valid directory triggers ReviewService.run_review()."""
+        from agent.review.models import ReviewJob, ReviewJobStatus, ReviewReport
+
+        mock_job = ReviewJob(status=ReviewJobStatus.COMPLETED)
+        mock_job.report = ReviewReport(
+            executive_summary="Test",
+            verdict="pass",
+            files_analyzed=3,
+            total_lines=100,
         )
-        assert "Code Review" in result or "Review" in result
+        mock_agent.review.run_review = AsyncMock(return_value=mock_job)
+
+        result = await handler.handle(f"/review {tmp_path}", user_id=1, chat_id=1)
+        assert "Review Report" in result
+        assert "pass" in result
+        mock_agent.review.run_review.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_review_shows_line_count(self, handler, tmp_path):
-        py_file = tmp_path / "lines.py"
-        py_file.write_text('"""Mod."""\n\nx = 1\ny = 2\n')
-        result = await handler.handle(
-            f"/review {py_file}", user_id=1, chat_id=1
+    async def test_review_with_findings(self, handler, mock_agent, tmp_path):
+        """Review with findings shows severity counts and finding titles."""
+        from agent.review.models import (
+            ReviewFinding,
+            ReviewJob,
+            ReviewJobStatus,
+            ReviewReport,
+            Severity,
         )
-        assert "riadkov" in result or "lines" in result.lower() or "4" in result
+
+        mock_job = ReviewJob(status=ReviewJobStatus.COMPLETED)
+        mock_job.report = ReviewReport(
+            executive_summary="Found issues",
+            verdict="pass_with_findings",
+            files_analyzed=5,
+            total_lines=200,
+            findings=[
+                ReviewFinding(severity=Severity.HIGH, title="eval() usage",
+                              file_path="app.py", line_start=10, recommendation="Remove eval"),
+                ReviewFinding(severity=Severity.LOW, title="No README"),
+            ],
+        )
+        mock_agent.review.run_review = AsyncMock(return_value=mock_job)
+
+        result = await handler.handle(f"/review {tmp_path}", user_id=1, chat_id=1)
+        assert "1H" in result  # 1 high
+        assert "1L" in result  # 1 low
+        assert "eval() usage" in result
+        assert "Remove eval" in result
 
     @pytest.mark.asyncio
-    async def test_review_file_with_issues(self, handler, tmp_path):
-        """File with TODO and bare except should produce warnings/info."""
-        bad_file = tmp_path / "bad.py"
-        bad_file.write_text(textwrap.dedent("""\
-            import os
-            import sys
-
-            # TODO: fix this later
-            def foo():
-                try:
-                    pass
-                except:
-                    pass
-        """))
-
-        result = await handler.handle(f"/review {bad_file}", user_id=1, chat_id=1)
-        assert "Code Review" in result
-        # Should find TODO
-        assert "TODO" in result or "Info" in result
-
-    @pytest.mark.asyncio
-    async def test_review_clean_file(self, handler, tmp_path):
-        """Clean file with no issues returns OK."""
-        clean_file = tmp_path / "clean.py"
-        clean_file.write_text(textwrap.dedent('''\
-            """A clean module."""
-
-            def add(a: int, b: int) -> int:
-                return a + b
-        '''))
-
-        result = await handler.handle(f"/review {clean_file}", user_id=1, chat_id=1)
-        assert "OK" in result or "čisto" in result.lower()
-
-    @pytest.mark.asyncio
-    async def test_review_not_unknown_command(self, handler):
+    async def test_review_not_unknown_command(self, handler, mock_agent, tmp_path):
         """Ensure /review is registered, not treated as unknown."""
-        result = await handler.handle("/review agent/core/agent.py", user_id=1, chat_id=1)
+        from agent.review.models import ReviewJob, ReviewJobStatus, ReviewReport
+        mock_job = ReviewJob(status=ReviewJobStatus.COMPLETED)
+        mock_job.report = ReviewReport(verdict="pass", files_analyzed=1, total_lines=10)
+        mock_agent.review.run_review = AsyncMock(return_value=mock_job)
+        result = await handler.handle(f"/review {tmp_path}", user_id=1, chat_id=1)
         assert "Neznámy príkaz" not in result

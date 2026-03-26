@@ -19,7 +19,6 @@ import asyncio
 import os
 from dataclasses import dataclass
 from datetime import UTC
-from pathlib import Path
 from typing import Any
 
 import structlog
@@ -411,52 +410,69 @@ class TelegramHandler:
         )
 
     async def _cmd_review(self, args: str) -> str:
-        """Code review Python súboru cez Programmer.review_file()."""
-        filepath = args.strip()
-        if not filepath:
-            return "Použi: /review [súbor]\nNapr: /review agent/core/router.py"
+        """Code review cez ReviewService (job-centric, artifact-first)."""
+        args_stripped = args.strip()
+        if not args_stripped:
+            return (
+                "Použi: /review [cesta alebo repo]\n"
+                "Napr: /review agent/core/router.py\n"
+                "      /review .   (celý repo)\n"
+                "      /review agent/review/  (adresár)"
+            )
 
-        from agent.brain.programmer import Programmer
+        from agent.review.models import ReviewIntake, ReviewJobType
 
-        prog = Programmer()
-        review = prog.review_file(filepath)
+        # Determine review type and path
+        repo_path = args_stripped
+        review_type = ReviewJobType.REPO_AUDIT
 
-        # File not found or unreadable
-        if not review.passed:
-            error_msgs = [i["message"] for i in review.issues if i["type"] == "error"]
-            return f"*Review FAILED*\n`{filepath}`\n\n" + "\n".join(f"• {m}" for m in error_msgs)
+        # If path is a single file, use the parent dir and focus on it
+        from pathlib import Path as _Path
+        target = _Path(get_project_root()) / repo_path if not _Path(repo_path).is_absolute() else _Path(repo_path)
+        include_patterns: list[str] = []
+        if target.is_file():
+            include_patterns = [target.name]
+            repo_path = str(target.parent)
+        elif target.is_dir():
+            repo_path = str(target)
+        else:
+            return f"Cesta `{args_stripped}` neexistuje."
 
-        # Count lines for context
-        path = prog._root / filepath if not Path(filepath).is_absolute() else Path(filepath)
-        line_count = len(path.read_text(encoding="utf-8").splitlines()) if path.exists() else 0
+        intake = ReviewIntake(
+            repo_path=repo_path,
+            review_type=review_type,
+            requester=self._current_sender or "telegram",
+            include_patterns=include_patterns,
+        )
 
-        # Build response
-        warnings = [i for i in review.issues if i["type"] == "warning"]
-        infos = [i for i in review.issues if i["type"] == "info"]
+        # Run review via service
+        job = await self._agent.review.run_review(intake)
 
-        header = "*Code Review*"
-        if not review.issues and not review.suggestions:
-            header += " — OK ✓"
-        lines = [header, f"`{filepath}` ({line_count} riadkov)\n"]
+        # Format for Telegram (channel adapter — just display, no business logic)
+        if job.error:
+            return f"*Review FAILED*\n{job.error}"
 
-        if warnings:
-            lines.append(f"*Warnings ({len(warnings)}):*")
-            for w in warnings:
-                lines.append(f"  ⚠️ {w['message']}")
+        report = job.report
+        counts = report.finding_counts
+        lines = [
+            f"*Review Report* — {report.verdict}",
+            f"`{args_stripped}` ({report.files_analyzed} súborov, {report.total_lines} riadkov)\n",
+        ]
 
-        if infos:
-            lines.append(f"*Info ({len(infos)}):*")
-            for info in infos:
-                lines.append(f"  ℹ️ {info['message']}")
+        if sum(counts.values()) == 0:
+            lines.append("Žiadne problémy nájdené. ✓")
+        else:
+            lines.append(f"Nálezy: {counts['critical']}C {counts['high']}H {counts['medium']}M {counts['low']}L\n")
+            for f in report.findings[:10]:  # Cap at 10 for Telegram
+                severity_icon = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "⚪"}.get(f.severity.value, "")
+                loc = f" `{f.location}`" if f.location else ""
+                lines.append(f"{severity_icon} *{f.title}*{loc}")
+                if f.recommendation:
+                    lines.append(f"  → {f.recommendation}")
+            if len(report.findings) > 10:
+                lines.append(f"\n... a ďalších {len(report.findings) - 10} nálezov.")
 
-        if review.suggestions:
-            lines.append(f"*Návrhy ({len(review.suggestions)}):*")
-            for s in review.suggestions:
-                lines.append(f"  💡 {s}")
-
-        if not review.issues and not review.suggestions:
-            lines.append("Žiadne problémy nájdené. Kód vyzerá čisto.")
-
+        lines.append(f"\n_Job {job.id} | {len(job.artifacts)} artifacts_")
         return "\n".join(lines)
 
     async def _cmd_wallet(self, args: str) -> str:
