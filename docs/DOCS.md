@@ -24,6 +24,8 @@ Tento súbor je len rozcestník. Detailná dokumentácia je na wiki stránkach:
 | [Product Identity](./PRODUCT_IDENTITY.md) | Rozhodnutie: personal sovereign operator |
 | [Release Checklist](./RELEASE_CHECKLIST.md) | Checklist pre každý release |
 | [Strategy Docs](./strategy/README.md) | Source of truth pre dlhodobú produktovú a architektonickú stratégiu |
+| [Backlog Progress](./strategy/BACKLOG_PROGRESS.md) | Snapshot progresu proti stratégii a backlogu |
+| [Backlog Review Against Masterplan](./strategy/BACKLOG_REVIEW_AGAINST_MASTERPLAN.md) | Gap analysis backlogu proti masterplanu |
 
 ## Rýchly štart
 

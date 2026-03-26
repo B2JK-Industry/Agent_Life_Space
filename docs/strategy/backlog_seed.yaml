@@ -1,5 +1,19 @@
 version: 1
 source_of_truth: docs/strategy/MASTER_SOURCE_OF_TRUTH.md
+seed_note: "Machine-friendly backlog seed. Story IDs may be sparse because this file is a curated subset plus corrective additions."
+progress_snapshot:
+  assessed_pr: 44
+  assessed_commit: "8537f26"
+  assessed_state_note: "Snapshot reflects audited PR state, not necessarily main."
+  theme_status:
+    T1: in_progress
+    T2: in_progress
+    T3: not_started
+    T4: not_started
+    T5: in_progress
+    T6: started
+    T7: not_started
+    T8: started
 themes:
   - id: T1
     name: Platform Foundation
@@ -14,6 +28,8 @@ themes:
             name: Add Job lifecycle states and recovery rules
           - id: T1-E1-S3
             name: Persist job history, artifacts, and cost
+          - id: T1-E1-S5
+            name: Reconcile ReviewJob with JobRunner Task and AgentLoop coexistence
       - id: T1-E2
         name: Artifact-First Execution
         stories:
@@ -23,6 +39,8 @@ themes:
             name: Link artifacts to jobs and traces
           - id: T1-E2-S3
             name: Export artifacts to Markdown and JSON
+          - id: T1-E2-S5
+            name: Persist full intake report and artifact payloads for recovery-safe reload
       - id: T1-E3
         name: Workspace And Execution Discipline
         stories:
@@ -32,6 +50,8 @@ themes:
             name: Make workspace recovery robust
           - id: T1-E3-S3
             name: Link workspaces to jobs and approvals
+          - id: T1-E3-S5
+            name: Bind reviewer jobs to workspace discipline or explicit read-only execution mode
 
   - id: T2
     name: Reviewer Product
@@ -69,6 +89,8 @@ themes:
             name: Produce PR comment packs
           - id: T2-E4-S2
             name: Gate external delivery with approvals
+          - id: T2-E4-S5
+            name: Route Telegram and API review requests through ReviewService
 
   - id: T3
     name: Builder Product
@@ -133,6 +155,8 @@ themes:
             name: Extend policy decisions across jobs and delivery
           - id: T5-E1-S2
             name: Preserve deny-by-default everywhere
+          - id: T5-E1-S5
+            name: Bring repository and diff analysis under shared execution and policy boundaries
       - id: T5-E2
         name: Approval Model
         stories:
@@ -204,6 +228,8 @@ themes:
             name: Define contracts between major planes
           - id: T8-E1-S2
             name: Add architecture invariants for module boundaries
+          - id: T8-E1-S5
+            name: Remove duplicated reviewer flows and hidden channel-to-product coupling
       - id: T8-E2
         name: Deployment And Environment Profiles
         stories:

@@ -14,8 +14,13 @@ Recommended usage:
 1. `MASTER_SOURCE_OF_TRUTH.md` is the canonical strategy and architecture
    document.
 2. `THEMES_EPICS_STORIES.md` is the human backlog decomposition.
-3. `backlog_seed.yaml` is the machine-friendly seed for future backlog
+3. `BACKLOG_PROGRESS.md` is the current execution snapshot against the strategy.
+4. `BACKLOG_REVIEW_AGAINST_MASTERPLAN.md` is the gap analysis between backlog
+   and masterplan.
+5. `backlog_seed.yaml` is the machine-friendly seed for future backlog
    generation, ticket import, or automation.
+6. `prompts/` contains durable Claude Code task prompts derived from current
+   architectural findings.
 
 Recommended governance:
 - Keep these files on `main`.

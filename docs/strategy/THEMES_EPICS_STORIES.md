@@ -9,6 +9,24 @@ Use it for:
 - Claude Code task generation
 - architecture conversations
 
+## Current Progress Snapshot
+
+This backlog is currently assessed against PR `#44` at commit `8537f26`.
+
+Important:
+- this is a strategy progress snapshot, not a merge-state indicator
+- `main` may still lag behind this assessed implementation state
+
+Status summary:
+- T1 Platform Foundation: `in_progress`
+- T2 Reviewer Product: `in_progress`
+- T3 Builder Product: `not_started`
+- T4 Operator Product: `not_started`
+- T5 Security, Governance, And Policy: `in_progress`
+- T6 Cost, Usage, And Observability: `started`
+- T7 External Capability Gateway: `not_started`
+- T8 Enterprise Hardening: `started`
+
 ## Theme T1: Platform Foundation
 
 Goal: unify the core job, state, artifact, and execution foundation so the
@@ -22,6 +40,8 @@ Stories:
 - T1-E1-S2: Add Job lifecycle states and recovery rules.
 - T1-E1-S3: Persist job metadata, execution history, artifacts, and cost data.
 - T1-E1-S4: Add job queries for operator inspection and automation.
+- T1-E1-S5: Reconcile coexistence rules between `ReviewJob`, `JobRunner`,
+  `Task`, and `AgentLoop`.
 
 ### Epic T1-E2: Artifact-First Execution
 
@@ -30,6 +50,8 @@ Stories:
 - T1-E2-S2: Link artifacts to jobs and execution traces.
 - T1-E2-S3: Add export support for Markdown, JSON, and delivery bundles.
 - T1-E2-S4: Add artifact retention and recovery rules.
+- T1-E2-S5: Persist full intake, report payloads, and artifact payloads for
+  recovery-safe reload.
 
 ### Epic T1-E3: Workspace And Execution Discipline
 
@@ -38,6 +60,8 @@ Stories:
 - T1-E3-S2: Make workspace lifecycle, audit, and recovery robust.
 - T1-E3-S3: Link workspace records to jobs, artifacts, and approvals.
 - T1-E3-S4: Add environment profiles for safe execution modes.
+- T1-E3-S5: Bind reviewer jobs to workspace discipline or define explicit
+  read-only review execution mode.
 
 ## Theme T2: Reviewer Product
 
@@ -74,6 +98,8 @@ Stories:
 - T2-E4-S2: Add delivery approval before external send.
 - T2-E4-S3: Add client-safe output mode with redaction.
 - T2-E4-S4: Add report packaging for operator handoff.
+- T2-E4-S5: Route Telegram and API review entrypoints through `ReviewService`
+  instead of legacy reviewer paths.
 
 ## Theme T3: Builder Product
 
@@ -146,6 +172,8 @@ Stories:
 - T5-E1-S2: Keep policy deny-by-default across execution modes.
 - T5-E1-S3: Add structured denial reasons everywhere.
 - T5-E1-S4: Ensure policy is deterministic and separately testable.
+- T5-E1-S5: Bring repository and diff analysis under the shared execution and
+  policy boundary.
 
 ### Epic T5-E2: Approval Model
 
@@ -224,6 +252,8 @@ Stories:
 - T8-E1-S2: Remove hidden coupling and implicit shared state.
 - T8-E1-S3: Add architecture invariants for contracts and boundaries.
 - T8-E1-S4: Make future service extraction obvious from module boundaries.
+- T8-E1-S5: Remove duplicated reviewer flows and hidden channel-to-product
+  coupling.
 
 ### Epic T8-E2: Deployment And Environment Profiles
 
