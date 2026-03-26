@@ -7,12 +7,13 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 ## What it does
 
 - **7-layer cascade** — 5 layers of local processing before calling LLM (saves tokens)
-- **Docker sandbox** — code runs in isolated containers (256MB, no network, read-only FS)
+- **Docker sandbox** — `/sandbox` code runs in isolated containers (256MB, no network, read-only FS)
 - **Encrypted vault** — API keys, wallet keys (ETH/BTC) encrypted with Fernet AES-128
 - **Memory** — 4 types (episodic, semantic, procedural, working), consolidation, decay
 - **Persistent conversation** — SQLite-backed context, survives restarts
 - **Agent-to-Agent API** — HTTP endpoint for inter-agent communication
 - **Learning system** — skill outcome tracking, model escalation, prompt augmentation
+- **Multi-provider LLM** — Claude CLI, Anthropic API, OpenAI, Ollama (any backend)
 - **Automated security** — 50-test security audit suite replaces manual reviews
 - **652+ tests** — unit + integration + e2e + security audit, $0.00 token cost
 
