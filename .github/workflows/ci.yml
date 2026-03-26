@@ -55,11 +55,18 @@ jobs:
         run: pytest tests/test_security_audit.py -v --tb=short
 
       - name: Performance budget
+        timeout-minutes: 3
         run: |
-          # Test suite must complete under 60 seconds
-          timeout 60 pytest tests/ -q --tb=no
-          # Count tests — must be above 1000 (hard gate)
-          TEST_COUNT=$(pytest tests/ -q --tb=no 2>&1 | tail -1 | grep -oP '\d+ passed' | grep -oP '\d+')
+          # Single run: capture output, check time + count
+          OUTPUT=$(timeout 60 pytest tests/ -q --tb=no 2>&1) || {
+            EXIT=$?
+            if [ "$EXIT" -eq 124 ]; then
+              echo "FAIL: Tests exceeded 60s budget" && exit 1
+            fi
+            echo "$OUTPUT" && exit $EXIT
+          }
+          echo "$OUTPUT" | tail -3
+          TEST_COUNT=$(echo "$OUTPUT" | grep -oP '\d+ passed' | grep -oP '\d+')
           echo "Test count: $TEST_COUNT"
           if [ "$TEST_COUNT" -lt 1000 ]; then
             echo "FAIL: Test count below 1000 (got $TEST_COUNT)" && exit 1
