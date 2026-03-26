@@ -51,7 +51,7 @@ ignore = [
 # S = security checks (bandit), B = bugbear, A = builtins, C4 = comprehensions
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106", "S108", "B017"]  # assert, passwords, /tmp, assertRaises — OK in tests
+"tests/**" = ["S101", "S105", "S106", "S108", "S607", "B017"]  # assert, passwords, /tmp, partial path, assertRaises — OK in tests
 "agent/core/agent_loop.py" = ["S603", "S607"]  # subprocess — intentional, sanitized
 "agent/core/sandbox.py" = ["S603", "S607"]  # subprocess — Docker sandbox, controlled
 "agent/core/maintenance.py" = ["S603", "S607"]  # subprocess — system maintenance
@@ -75,6 +75,6 @@ filterwarnings = [
     "error",
     # Mock coroutine warning from unittest.mock internals — not our code
     "ignore::RuntimeWarning:unittest.mock",
-    # SQLite Connection.__del__ GC cleanup — harmless, not our resource leak
-    "ignore::pytest.PytestUnraisableExceptionWarning",
+    # sqlite3 Connection.__del__ fires during GC between test modules — not a real leak
+    "ignore:Exception ignored in.*Connection.__del__:pytest.PytestUnraisableExceptionWarning",
 ]

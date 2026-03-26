@@ -17,7 +17,6 @@ Persistence:
 
 from __future__ import annotations
 
-import os
 import shutil
 import sqlite3
 import uuid
@@ -29,12 +28,12 @@ from typing import Any
 
 import structlog
 
+from agent.core.paths import get_project_root
+
 logger = structlog.get_logger(__name__)
 
 # Workspaces root — mimo hlavného kódu
-_WORKSPACES_ROOT = Path(
-    os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
-) / "workspaces"
+_WORKSPACES_ROOT = Path(get_project_root()) / "workspaces"
 
 
 class WorkspaceStatus(str, Enum):

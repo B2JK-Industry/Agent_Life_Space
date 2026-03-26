@@ -149,14 +149,14 @@ class TestExecutorPipeline:
         assert record["safe_mode"] is True
 
     @pytest.mark.asyncio
-    async def test_unknown_tool_records_failure(self, executor):
+    async def test_unknown_tool_records_blocked(self, executor):
+        """Unknown tools are denied by policy (deny-by-default), recorded as blocked."""
         await executor.execute("nonexistent_tool", {})
 
         log = executor.action_log
         assert log.total == 1
         record = log.get_recent(1)[0]
-        assert record["phase"] == "failed"
-        assert "Unknown tool" in record["error"]
+        assert record["phase"] == "blocked"
 
     @pytest.mark.asyncio
     async def test_multiple_calls_build_action_log(self, executor):

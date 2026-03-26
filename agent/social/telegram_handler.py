@@ -25,6 +25,7 @@ from typing import Any
 import structlog
 
 from agent.core.agent import AgentOrchestrator
+from agent.core.paths import get_project_root
 
 logger = structlog.get_logger(__name__)
 
@@ -426,7 +427,6 @@ class TelegramHandler:
             return f"*Review FAILED*\n`{filepath}`\n\n" + "\n".join(f"• {m}" for m in error_msgs)
 
         # Count lines for context
-        from pathlib import Path
         path = prog._root / filepath if not Path(filepath).is_absolute() else Path(filepath)
         line_count = len(path.read_text(encoding="utf-8").splitlines()) if path.exists() else 0
 
@@ -463,8 +463,9 @@ class TelegramHandler:
         """Show wallet addresses and balances. NEVER show private keys."""
         try:
 
+            from agent.core.paths import get_project_root
             from agent.vault.secrets import SecretsManager
-            _root = os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
+            _root = get_project_root()
             vault_dir = os.path.join(_root, "agent", "vault")
             master_key = os.environ.get("AGENT_VAULT_KEY", "")
             if not master_key:
@@ -937,7 +938,7 @@ class TelegramHandler:
             prompt = (
                 f"{active_prompt}\n"
                 f"{tool_context}"
-                f"Si programátor. Pracuješ v {os.environ.get('AGENT_PROJECT_ROOT', str(Path.home() / 'agent-life-space'))}.\n\n"
+                f"Si programátor. Pracuješ v {get_project_root()}.\n\n"
                 f"ÚLOHA: {text}\n\n"
             )
             if url_context:
@@ -1188,11 +1189,10 @@ class TelegramHandler:
         If Claude successfully used curl, git, docker etc. — record it.
         """
         try:
-            from pathlib import Path
 
             from agent.brain.skills import SkillRegistry
 
-            base = os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
+            base = get_project_root()
             registry = SkillRegistry(f"{base}/agent/brain/skills.json")
 
             reply_lower = reply.lower()

@@ -21,7 +21,6 @@ Security:
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +55,8 @@ class TelegramBot:
         self._owner_name = owner_name
         self._session: aiohttp.ClientSession | None = None
         self._running = False
-        _project_root = os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
+        from agent.core.paths import get_project_root
+        _project_root = get_project_root()
         self._update_id_file = Path(_project_root) / ".last_update_id"
         self._last_update_id = self._load_last_update_id()
         self._handlers: dict[str, Any] = {}

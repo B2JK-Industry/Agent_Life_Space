@@ -59,10 +59,9 @@ jobs:
         run: |
           # No duplicate persona definitions — prompts must come from persona.py
           ! grep -rn "Som John\. Autonómna bytosť" agent/ --include="*.py" | grep -v persona.py | grep -v "# noqa"
-          # No hardcoded ~/agent-life-space paths (both shell ~ and Path.home() forms)
+          # No hardcoded ~/agent-life-space paths
           ! grep -rn "~/agent-life-space" agent/ --include="*.py"
-          # Path.home() / "agent-life-space" is OK only inside env-var fallback pattern
-          # (AGENT_PROJECT_ROOT with fallback). Direct usage without env var is not.
-          ! grep -rn 'Path.home().*agent-life-space' agent/ --include="*.py" | grep -v AGENT_PROJECT_ROOT | grep -v "# noqa"
+          # Path.home() / "agent-life-space" only allowed in paths.py (centralized resolver)
+          ! grep -rn 'Path.home().*agent-life-space' agent/ --include="*.py" | grep -v paths.py
           # AGENT_SANDBOX_ONLY default must be "1" (safe)
           grep -q 'AGENT_SANDBOX_ONLY.*"1"' agent/core/llm_provider.py

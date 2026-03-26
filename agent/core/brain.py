@@ -110,10 +110,13 @@ class AgentBrain:
         try:
             return await self._process_inner(message)
         finally:
-            # ALWAYS reset status to IDLE — no stuck states
+            # Reset status to IDLE unless in a meaningful terminal state
+            # (BLOCKED, WAITING_APPROVAL should persist for operator visibility)
             if self._status:
                 from agent.core.status import AgentState
-                self._status.transition(AgentState.IDLE, "process complete")
+                terminal_states = {AgentState.BLOCKED, AgentState.WAITING_APPROVAL}
+                if self._status._state not in terminal_states:
+                    self._status.transition(AgentState.IDLE, "process complete")
 
     async def _process_inner(self, message: IncomingMessage) -> str:
         """Inner processing — separated so try/finally in process() always resets status."""
@@ -526,13 +529,12 @@ class AgentBrain:
     async def _auto_update_skills(self, reply: str) -> None:
         """Scan reply for evidence of skill usage and auto-update skills.json."""
         try:
-            from pathlib import Path
 
             from agent.brain.skills import SkillRegistry
-
-            project_dir = os.environ.get(
-                "AGENT_PROJECT_ROOT",
-                str(self._agent._data_dir.parent) if hasattr(self._agent, "_data_dir") else str(Path.home() / "agent-life-space"),
+            from agent.core.paths import get_project_root
+            project_dir = (
+                str(self._agent._data_dir.parent) if hasattr(self._agent, "_data_dir")
+                else get_project_root()
             )
             registry = SkillRegistry(f"{project_dir}/agent/brain/skills.json")
             reply_lower = reply.lower()
