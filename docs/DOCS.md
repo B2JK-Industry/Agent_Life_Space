@@ -28,11 +28,11 @@ source .venv/bin/activate
 python -m agent              # Spusti agenta
 python -m agent --status     # Stav
 python -m agent --health     # Zdravie
-python -m pytest tests/ -q   # Testy (830+ testov)
+python -m pytest tests/ -q   # Testy (974+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.0.0** — Prvý stabilný release. Provider-agnostic LLM, Tool use, Sandbox executor, Channel abstraction.
+Aktuálna: **v1.1.0** — Breakthrough architecture: epistemic memory, tool governance, approval queue, operator controls.
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.
