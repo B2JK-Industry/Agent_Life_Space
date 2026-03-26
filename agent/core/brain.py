@@ -75,6 +75,14 @@ class AgentBrain:
         except ImportError:
             pass
 
+        # Explanation log (optional)
+        self._explanation_log: Any = None
+        try:
+            from agent.core.explanation import ExplanationLog
+            self._explanation_log = ExplanationLog()
+        except ImportError:
+            pass
+
     async def process(self, message: IncomingMessage) -> str:
         """
         Process an incoming message from any channel.
@@ -261,6 +269,36 @@ class AgentBrain:
 
         # Persist exchange
         await self._save_exchange(conv_id, text, clean_reply, message.sender_name)
+
+        # Channel policy — filter response based on channel trust level
+        from agent.social.channel_policy import (
+            can_send_response,
+            classify_response,
+            get_channel_capabilities,
+        )
+        channel_caps = get_channel_capabilities(
+            message.channel_type, is_owner=message.is_owner, is_group=message.is_group,
+        )
+        response_class = classify_response(reply)
+        if not can_send_response(response_class, channel_caps):
+            reply = "Táto informácia nie je dostupná na tomto kanáli."
+            logger.warning("response_filtered",
+                           response_class=response_class.value,
+                           channel=message.channel_type)
+
+        # Record explanation
+        if self._explanation_log is not None:
+            from agent.core.explanation import DecisionExplanation
+            from agent.core.models import classify_task_detailed
+            classification = classify_task_detailed(text)
+            self._explanation_log.record(DecisionExplanation(
+                action_type="message_response",
+                action_summary=f"Odpovedal na '{text[:50]}'",
+                routing_task_type=classification.task_type,
+                routing_score=classification.score,
+                routing_signals=classification.signals,
+                model_used=model.model_id,
+            ))
 
         # Usage info
         model_short = model.model_id.split("-")[1] if "-" in model.model_id else model.model_id

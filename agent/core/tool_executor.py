@@ -42,11 +42,13 @@ class ToolExecutor:
         agent: AgentOrchestrator,
         sandbox: SandboxExecutor | None = None,
         policy: ToolPolicy | None = None,
+        operator_controls: Any = None,
     ) -> None:
         self._agent = agent
         self._sandbox = sandbox or SandboxExecutor()
         self._policy = policy or ToolPolicy()
         self._action_log = ActionLog()
+        self._operator = operator_controls  # Optional OperatorControls
         self._handlers: dict[str, Any] = {
             "store_memory": self._store_memory,
             "query_memory": self._query_memory,
@@ -85,6 +87,20 @@ class ToolExecutor:
             safe_mode=ctx.safe_mode,
             channel_type=ctx.channel_type,
         )
+
+        # ── Operator override check (before handler lookup) ──
+        if self._operator and self._operator.is_disabled(tool_name):
+            self._blocked_count += 1
+            reason = self._operator.get_disabled_reason(tool_name)
+            action.phase = ActionPhase.BLOCKED
+            action.error = f"Operator disabled: {reason}"
+            action.completed_at = time.time()
+            self._action_log.record(action)
+            return {
+                "error": f"Tool '{tool_name}' is disabled by operator: {reason}",
+                "blocked": True,
+                "operator_disabled": True,
+            }
 
         handler = self._handlers.get(tool_name)
         if not handler:
