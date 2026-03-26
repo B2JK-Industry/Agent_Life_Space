@@ -51,6 +51,7 @@ class Workspace:
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     name: str = ""
+    owner_id: str = ""    # Kto vytvoril / vlastní workspace
     project_id: str = ""  # Referencia na Project
     task_id: str = ""     # Referencia na Task
     status: WorkspaceStatus = WorkspaceStatus.CREATED
@@ -70,6 +71,7 @@ class Workspace:
         return {
             "id": self.id,
             "name": self.name,
+            "owner_id": self.owner_id,
             "project_id": self.project_id,
             "task_id": self.task_id,
             "status": self.status.value,
@@ -88,6 +90,7 @@ class Workspace:
         return cls(
             id=data.get("id", ""),
             name=data.get("name", ""),
+            owner_id=data.get("owner_id", ""),
             project_id=data.get("project_id", ""),
             task_id=data.get("task_id", ""),
             status=WorkspaceStatus(data.get("status", "created")),
@@ -147,9 +150,20 @@ class WorkspaceManager:
                 event_type TEXT NOT NULL,
                 detail TEXT DEFAULT '',
                 timestamp TEXT NOT NULL,
+                entry_hash TEXT DEFAULT '',
                 FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
             )
         """)
+        # Migration: add entry_hash column if missing
+        try:
+            self._db.execute("ALTER TABLE workspace_audit ADD COLUMN entry_hash TEXT DEFAULT ''")
+        except Exception:
+            pass
+        # Migration: add owner_id to workspaces if missing
+        try:
+            self._db.execute("ALTER TABLE workspaces ADD COLUMN owner_id TEXT DEFAULT ''")
+        except Exception:
+            pass
         self._db.commit()
         self._load_from_db()
         logger.info("workspace_manager_initialized", root=str(self._root),
@@ -189,29 +203,49 @@ class WorkspaceManager:
             return
         self._db.execute(
             """INSERT OR REPLACE INTO workspaces
-            (id, name, project_id, task_id, status, path,
+            (id, name, owner_id, project_id, task_id, status, path,
              created_at, started_at, completed_at, output, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (ws.id, ws.name, ws.project_id, ws.task_id,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (ws.id, ws.name, ws.owner_id, ws.project_id, ws.task_id,
              ws.status.value, ws.path, ws.created_at,
              ws.started_at, ws.completed_at, ws.output, ws.error),
         )
         self._db.commit()
 
     def _audit(self, workspace_id: str, event_type: str, detail: str = "") -> None:
-        """Record audit event."""
+        """Record audit event with hash chain for tamper evidence."""
         if not self._db:
             return
+        import hashlib
+        timestamp = datetime.now(UTC).isoformat()
+        # Hash chain: each entry's hash includes the previous entry's hash
+        prev_hash = self._get_last_audit_hash(workspace_id)
+        payload = f"{workspace_id}:{event_type}:{detail}:{timestamp}:{prev_hash}"
+        entry_hash = hashlib.sha256(payload.encode()).hexdigest()[:16]
+
         self._db.execute(
-            "INSERT INTO workspace_audit (workspace_id, event_type, detail, timestamp) "
-            "VALUES (?, ?, ?, ?)",
-            (workspace_id, event_type, detail, datetime.now(UTC).isoformat()),
+            "INSERT INTO workspace_audit (workspace_id, event_type, detail, timestamp, entry_hash) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (workspace_id, event_type, detail, timestamp, entry_hash),
         )
         self._db.commit()
+
+    def _get_last_audit_hash(self, workspace_id: str) -> str:
+        """Get hash of last audit entry for chain."""
+        if not self._db:
+            return "genesis"
+        cursor = self._db.execute(
+            "SELECT entry_hash FROM workspace_audit "
+            "WHERE workspace_id = ? ORDER BY id DESC LIMIT 1",
+            (workspace_id,),
+        )
+        row = cursor.fetchone()
+        return row[0] if row else "genesis"
 
     def create(
         self,
         name: str,
+        owner_id: str = "",
         project_id: str = "",
         task_id: str = "",
     ) -> Workspace:
@@ -229,6 +263,7 @@ class WorkspaceManager:
 
         ws = Workspace(
             name=name,
+            owner_id=owner_id,
             project_id=project_id,
             task_id=task_id,
         )
@@ -316,16 +351,21 @@ class WorkspaceManager:
             return False
 
     def get_audit_trail(self, workspace_id: str) -> list[dict[str, str]]:
-        """Return full audit trail for a workspace."""
+        """Return full audit trail for a workspace (immutable, hash-chained)."""
         if not self._db:
             return []
         cursor = self._db.execute(
-            "SELECT event_type, detail, timestamp FROM workspace_audit "
+            "SELECT event_type, detail, timestamp, entry_hash FROM workspace_audit "
             "WHERE workspace_id = ? ORDER BY id",
             (workspace_id,),
         )
         return [
-            {"event_type": row[0], "detail": row[1], "timestamp": row[2]}
+            {
+                "event_type": row[0],
+                "detail": row[1],
+                "timestamp": row[2],
+                "hash": row[3] if len(row) > 3 else "",
+            }
             for row in cursor
         ]
 
