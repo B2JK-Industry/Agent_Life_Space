@@ -198,25 +198,49 @@ class AgentBrain:
         )
 
         provider = get_provider()
-        response = await provider.generate(GenerateRequest(
-            messages=[{"role": "user", "content": prompt}],
-            model=model.model_id,
-            timeout=model.timeout,
-            max_turns=model.max_turns,
-            allow_file_access=task_type == "programming",
-            cwd=project_root,
-        ))
+        backend = os.environ.get("LLM_BACKEND", "cli")
 
-        if not response.success:
-            return f"Chyba: {response.error[:200]}"
+        # API backend: use ToolUseLoop (multi-turn with function calling)
+        if backend == "api" and provider.supports_tools() and hasattr(self, "_tool_executor") and self._tool_executor:
+            from agent.core.tool_loop import ToolUseLoop
+            from agent.core.tools import AGENT_TOOLS
 
-        reply = response.text or "Prepáč, nepodarilo sa mi odpovedať."
+            tool_loop = ToolUseLoop(provider, self._tool_executor, max_turns=10)
+            loop_result = await tool_loop.run(
+                messages=[{"role": "user", "content": prompt}],
+                system=active_prompt,
+                model=model.model_id,
+                tools=AGENT_TOOLS,
+                timeout=model.timeout,
+            )
 
-        # Track usage
-        self._total_cost_usd += response.cost_usd
-        self._total_input_tokens += response.input_tokens
-        self._total_output_tokens += response.output_tokens
-        self._total_requests += 1
+            reply = loop_result.text or "Prepáč, nepodarilo sa mi odpovedať."
+            self._total_cost_usd += loop_result.total_cost
+            self._total_input_tokens += loop_result.total_tokens
+            self._total_requests += 1
+
+            if loop_result.tool_calls:
+                logger.info("brain_tool_use", tools_called=len(loop_result.tool_calls),
+                            turns=loop_result.turns)
+        else:
+            # CLI backend or no tools: direct generate
+            response = await provider.generate(GenerateRequest(
+                messages=[{"role": "user", "content": prompt}],
+                model=model.model_id,
+                timeout=model.timeout,
+                max_turns=model.max_turns,
+                allow_file_access=task_type == "programming",
+                cwd=project_root,
+            ))
+
+            if not response.success:
+                return f"Chyba: {response.error[:200]}"
+
+            reply = response.text or "Prepáč, nepodarilo sa mi odpovedať."
+            self._total_cost_usd += response.cost_usd
+            self._total_input_tokens += response.input_tokens
+            self._total_output_tokens += response.output_tokens
+            self._total_requests += 1
 
         # Store response in conversation buffer
         clean_reply = reply.split("\n\n_💰")[0] if "_💰" in reply else reply

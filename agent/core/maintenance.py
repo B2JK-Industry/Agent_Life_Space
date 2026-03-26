@@ -31,8 +31,9 @@ class ServerMaintenance:
     John's server housekeeping. All methods return dicts (JSON-friendly).
     """
 
-    def __init__(self, home_dir: str = "~/agent-life-space") -> None:
-        self._home = Path(os.path.expanduser(home_dir))
+    def __init__(self, home_dir: str = "") -> None:
+        default = os.environ.get("AGENT_PROJECT_ROOT", os.path.expanduser("~/agent-life-space"))
+        self._home = Path(os.path.expanduser(home_dir or default))
 
     async def find_and_kill_stale_processes(
         self,

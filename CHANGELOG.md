@@ -19,9 +19,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - **Provider-agnostic LLM layer** — ClaudeCliProvider, AnthropicProvider, OpenAiProvider
 - **ModelTier system** — FAST/BALANCED/POWERFUL mapped per provider (Anthropic, OpenAI, local)
-- **RequestContext** — per-request context prevents race conditions between concurrent messages
+- **RequestContext** — per-request context dataclass; production path (AgentBrain) uses no shared instance state
 - **Per-chat conversation** — buffer + session ID per chat_id (no cross-chat leaking)
-- `AGENT_SANDBOX_ONLY` env var — blocks host file access when set
+- `AGENT_SANDBOX_ONLY` env var — blocks host file access (default: enabled)
 - `AGENT_PROJECT_ROOT` env var — configurable project root (no hardcoded paths)
 
 ### Changed
@@ -29,7 +29,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - LLMRouter uses request.model instead of hardcoded Opus (cost savings)
 
 ### Security
-- Race conditions fixed — shared instance vars replaced with RequestContext dataclass
+- Race conditions fixed — AgentBrain (production path) has zero shared state; legacy TelegramHandler._handle_text still uses instance vars but is deprecated fallback
 - Safe mode check moved before command dispatch (was bypassed on first call)
 - SQL injection fix in persistent_conversation (parameterized LIKE queries)
 - Vault fail-fast when encrypted secrets exist but key is missing
