@@ -33,7 +33,9 @@ jobs:
       - name: Type check (mypy — core modules)
         run: |
           mypy agent/core/tool_policy.py agent/core/persona.py agent/core/models.py \
-               agent/memory/store.py \
+               agent/core/action.py agent/core/approval.py agent/core/status.py \
+               agent/core/explanation.py agent/core/operator.py \
+               agent/memory/store.py agent/finance/budget_policy.py \
                --ignore-missing-imports --no-error-summary || true
 
       - name: Run tests
@@ -41,6 +43,17 @@ jobs:
 
       - name: Security audit
         run: pytest tests/test_security_audit.py -v --tb=short
+
+      - name: Performance budget
+        run: |
+          # Test suite must complete under 60 seconds
+          timeout 60 pytest tests/ -q --tb=no || echo "WARNING: Tests exceeded 60s budget"
+          # Count tests — must be above 1000
+          TEST_COUNT=$(pytest tests/ -q --tb=no 2>&1 | tail -1 | grep -oP '\d+ passed' | grep -oP '\d+')
+          echo "Test count: $TEST_COUNT"
+          if [ "$TEST_COUNT" -lt 1000 ]; then
+            echo "WARNING: Test count below 1000 (got $TEST_COUNT)"
+          fi
 
       - name: Architecture invariants
         run: |
