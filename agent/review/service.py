@@ -344,7 +344,6 @@ class ReviewService:
         report = await self._run_repo_audit(job)
 
         t_release = job.trace("analyze:release")
-        intake = job.intake
 
         # Additional release checks
         from pathlib import Path
