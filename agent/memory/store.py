@@ -42,6 +42,16 @@ class MemoryType(str, Enum):
     PROCEDURAL = "procedural"  # How-to, procedures
 
 
+class ProvenanceStatus(str, Enum):
+    """Epistemic status of a memory — how much can we trust it."""
+
+    OBSERVED = "observed"        # Directly witnessed by agent (system events, tool results)
+    USER_ASSERTED = "user_asserted"  # User told us this (may or may not be true)
+    INFERRED = "inferred"        # Agent derived this from other data
+    VERIFIED = "verified"        # Cross-checked against authoritative source
+    STALE = "stale"              # Was valid, now outdated (time/event-based expiry)
+
+
 class MemoryEntry:
     """A single memory entry with metadata for intelligent retrieval."""
 
@@ -54,6 +64,8 @@ class MemoryEntry:
         confidence: float = 1.0,
         importance: float = 0.5,
         metadata: dict[str, Any] | None = None,
+        provenance: ProvenanceStatus = ProvenanceStatus.OBSERVED,
+        expires_at: str | None = None,
     ) -> None:
         self.id = uuid.uuid4().hex[:12]
         self.content = content
@@ -63,6 +75,8 @@ class MemoryEntry:
         self.confidence = max(0.0, min(1.0, confidence))
         self.importance = max(0.0, min(1.0, importance))
         self.metadata = metadata or {}
+        self.provenance = provenance
+        self.expires_at = expires_at  # ISO timestamp, None = no expiry
         self.created_at = datetime.now(UTC).isoformat()
         self.last_accessed = self.created_at
         self.access_count = 0
@@ -75,25 +89,54 @@ class MemoryEntry:
         # Reinforce: accessing a memory reduces its decay
         self.decay_factor = min(1.0, self.decay_factor + 0.1)
 
+    @property
+    def is_expired(self) -> bool:
+        """Check if memory has passed its expiry time."""
+        if not self.expires_at:
+            return False
+        try:
+            return datetime.now(UTC) > datetime.fromisoformat(self.expires_at)
+        except (ValueError, TypeError):
+            return False
+
+    def mark_stale(self, reason: str = "") -> None:
+        """Mark memory as stale — keeps content but flags it as unreliable."""
+        self.provenance = ProvenanceStatus.STALE
+        if reason:
+            self.metadata["stale_reason"] = reason
+
+    def verify(self, source: str = "") -> None:
+        """Promote memory to verified status."""
+        self.provenance = ProvenanceStatus.VERIFIED
+        if source:
+            self.metadata["verified_by"] = source
+        self.metadata["verified_at"] = datetime.now(UTC).isoformat()
+
     def compute_relevance(self, query_tags: list[str]) -> float:
         """
         Compute relevance score for a query. DETERMINISTIC algorithm.
         No LLM involved — pure math.
 
-        Score = tag_overlap * importance * confidence * decay_factor * recency_boost
+        Score = tag_overlap * importance * confidence * decay_factor
+                * recency_boost * provenance_weight
         """
-        if not query_tags:
-            return self.importance * self.confidence * self.decay_factor
+        # Expired memories score zero
+        if self.is_expired:
+            return 0.0
 
-        # Tag overlap (Jaccard-like)
-        query_set = {t.lower() for t in query_tags}
-        memory_set = {t.lower() for t in self.tags}
-        if not memory_set:
-            tag_score = 0.1  # Low but not zero for untagged memories
+        if not query_tags:
+            base = self.importance * self.confidence * self.decay_factor
         else:
-            overlap = len(query_set & memory_set)
-            union = len(query_set | memory_set)
-            tag_score = overlap / union if union > 0 else 0.0
+            # Tag overlap (Jaccard-like)
+            query_set = {t.lower() for t in query_tags}
+            memory_set = {t.lower() for t in self.tags}
+            if not memory_set:
+                tag_score = 0.1  # Low but not zero for untagged memories
+            else:
+                overlap = len(query_set & memory_set)
+                union = len(query_set | memory_set)
+                tag_score = overlap / union if union > 0 else 0.0
+            base = tag_score * self.importance * self.confidence * self.decay_factor
 
         # Recency boost (memories accessed recently score higher)
         try:
@@ -106,7 +149,17 @@ class MemoryEntry:
         # Frequency boost (frequently accessed = more important)
         freq_boost = min(2.0, 1.0 + self.access_count * 0.1)
 
-        return tag_score * self.importance * self.confidence * self.decay_factor * recency * freq_boost
+        # Provenance weight — verified facts rank highest, stale/inferred lowest
+        provenance_weights = {
+            ProvenanceStatus.VERIFIED: 1.3,
+            ProvenanceStatus.OBSERVED: 1.0,
+            ProvenanceStatus.USER_ASSERTED: 0.9,
+            ProvenanceStatus.INFERRED: 0.7,
+            ProvenanceStatus.STALE: 0.3,
+        }
+        provenance_w = provenance_weights.get(self.provenance, 0.7)
+
+        return base * recency * freq_boost * provenance_w
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -118,6 +171,8 @@ class MemoryEntry:
             "confidence": self.confidence,
             "importance": self.importance,
             "metadata": self.metadata,
+            "provenance": self.provenance.value,
+            "expires_at": self.expires_at,
             "created_at": self.created_at,
             "last_accessed": self.last_accessed,
             "access_count": self.access_count,
@@ -126,6 +181,12 @@ class MemoryEntry:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MemoryEntry:
+        provenance_val = data.get("provenance", "observed")
+        try:
+            provenance = ProvenanceStatus(provenance_val)
+        except ValueError:
+            provenance = ProvenanceStatus.OBSERVED
+
         entry = cls(
             content=data["content"],
             memory_type=MemoryType(data["memory_type"]),
@@ -134,6 +195,8 @@ class MemoryEntry:
             confidence=data.get("confidence", 1.0),
             importance=data.get("importance", 0.5),
             metadata=data.get("metadata", {}),
+            provenance=provenance,
+            expires_at=data.get("expires_at"),
         )
         entry.id = data["id"]
         entry.created_at = data.get("created_at", entry.created_at)
@@ -180,16 +243,35 @@ class MemoryStore:
                 confidence REAL DEFAULT 1.0,
                 importance REAL DEFAULT 0.5,
                 metadata TEXT DEFAULT '{}',
+                provenance TEXT DEFAULT 'observed',
+                expires_at TEXT DEFAULT NULL,
                 created_at TEXT NOT NULL,
                 last_accessed TEXT NOT NULL,
                 access_count INTEGER DEFAULT 0,
                 decay_factor REAL DEFAULT 1.0
             )
         """)
+        # Migration: add provenance/expires_at columns if missing (existing DBs)
+        try:
+            await self._db.execute(
+                "ALTER TABLE memories ADD COLUMN provenance TEXT DEFAULT 'observed'"
+            )
+        except Exception:
+            pass  # Column already exists
+        try:
+            await self._db.execute(
+                "ALTER TABLE memories ADD COLUMN expires_at TEXT DEFAULT NULL"
+            )
+        except Exception:
+            pass  # Column already exists
         await self._db.commit()
 
         # Load all memories into index
-        async with self._db.execute("SELECT * FROM memories") as cursor:
+        async with self._db.execute(
+            "SELECT id, content, memory_type, tags, source, confidence, "
+            "importance, metadata, provenance, expires_at, created_at, "
+            "last_accessed, access_count, decay_factor FROM memories"
+        ) as cursor:
             async for row in cursor:
                 data = {
                     "id": row[0],
@@ -200,10 +282,12 @@ class MemoryStore:
                     "confidence": row[5],
                     "importance": row[6],
                     "metadata": orjson.loads(row[7]),
-                    "created_at": row[8],
-                    "last_accessed": row[9],
-                    "access_count": row[10],
-                    "decay_factor": row[11],
+                    "provenance": row[8] or "observed",
+                    "expires_at": row[9],
+                    "created_at": row[10],
+                    "last_accessed": row[11],
+                    "access_count": row[12],
+                    "decay_factor": row[13],
                 }
                 entry = MemoryEntry.from_dict(data)
                 self._index[entry.id] = entry
@@ -230,9 +314,9 @@ class MemoryStore:
             await self._db.execute(
                 """INSERT OR REPLACE INTO memories
                 (id, content, memory_type, tags, source, confidence,
-                 importance, metadata, created_at, last_accessed,
-                 access_count, decay_factor)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 importance, metadata, provenance, expires_at,
+                 created_at, last_accessed, access_count, decay_factor)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry.id,
                     entry.content,
@@ -242,6 +326,8 @@ class MemoryStore:
                     entry.confidence,
                     entry.importance,
                     orjson.dumps(entry.metadata).decode(),
+                    entry.provenance.value,
+                    entry.expires_at,
                     entry.created_at,
                     entry.last_accessed,
                     entry.access_count,
@@ -265,6 +351,8 @@ class MemoryStore:
         min_relevance: float = 0.0,
         limit: int = 10,
         keyword: str | None = None,
+        provenance: ProvenanceStatus | None = None,
+        exclude_stale: bool = False,
     ) -> list[MemoryEntry]:
         """
         Query memories by relevance. DETERMINISTIC scoring algorithm.
@@ -283,6 +371,16 @@ class MemoryStore:
         for entry in self._index.values():
             # Filter by type
             if memory_type is not None and entry.memory_type != memory_type:
+                continue
+
+            # Filter by provenance
+            if provenance is not None and entry.provenance != provenance:
+                continue
+            if exclude_stale and entry.provenance == ProvenanceStatus.STALE:
+                continue
+
+            # Skip expired memories
+            if entry.is_expired:
                 continue
 
             # Filter by keyword (simple substring match — deterministic)
@@ -341,6 +439,10 @@ class MemoryStore:
         to_delete = []
 
         for entry in self._index.values():
+            # Auto-mark expired memories as stale
+            if entry.is_expired and entry.provenance != ProvenanceStatus.STALE:
+                entry.mark_stale(reason="expired")
+
             if entry.memory_type == MemoryType.WORKING:
                 # Working memory decays faster
                 entry.decay_factor = max(0.0, entry.decay_factor - decay_rate * 5)

@@ -9,22 +9,17 @@ Riešenie: Každá práca má vlastný workspace (adresár) s lifecycle.
 Workspace lifecycle:
     CREATED → ACTIVE → COMPLETED | FAILED → CLEANED
 
-Čo workspace obsahuje:
-    - Vlastný adresár (~/agent-life-space/workspaces/<id>/)
-    - Git repo (ak treba)
-    - Výstupné súbory
-    - Log čo sa robilo
-
-Bezpečnosť:
-    - Workspace je mimo hlavného kódu agenta
-    - Docker sandbox pre spúšťanie cudzieho kódu
-    - Automatický cleanup po dokončení
+Persistence:
+    - Workspace metadata sú uložené v SQLite
+    - Audit trail: commands, files, outputs, failures
+    - Recovery po reštarte — aktívne workspaces sa obnovia
 """
 
 from __future__ import annotations
 
 import os
 import shutil
+import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -108,15 +103,100 @@ class Workspace:
 
 
 class WorkspaceManager:
-    """Spravuje izolované pracovné priestory."""
+    """Spravuje izolované pracovné priestory s SQLite persistence."""
 
-    def __init__(self, root: str | None = None) -> None:
+    def __init__(self, root: str | None = None, db_path: str | None = None) -> None:
         self._root = Path(root) if root else _WORKSPACES_ROOT
         self._workspaces: dict[str, Workspace] = {}
+        self._db_path = db_path or str(self._root / "workspaces.db")
+        self._db: sqlite3.Connection | None = None
 
     def initialize(self) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
-        logger.info("workspace_manager_initialized", root=str(self._root))
+        self._db = sqlite3.connect(self._db_path)
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS workspaces (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                project_id TEXT DEFAULT '',
+                task_id TEXT DEFAULT '',
+                status TEXT NOT NULL,
+                path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                output TEXT DEFAULT '',
+                error TEXT DEFAULT ''
+            )
+        """)
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS workspace_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                detail TEXT DEFAULT '',
+                timestamp TEXT NOT NULL,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+            )
+        """)
+        self._db.commit()
+        self._load_from_db()
+        logger.info("workspace_manager_initialized", root=str(self._root),
+                     recovered=len(self._workspaces))
+
+    def _load_from_db(self) -> None:
+        """Load workspaces from DB on startup — recovery."""
+        if not self._db:
+            return
+        cursor = self._db.execute(
+            "SELECT id, name, project_id, task_id, status, path, "
+            "created_at, started_at, completed_at, output, error FROM workspaces"
+        )
+        for row in cursor:
+            ws = Workspace(
+                id=row[0], name=row[1], project_id=row[2], task_id=row[3],
+                status=WorkspaceStatus(row[4]), path=row[5],
+                created_at=row[6], started_at=row[7], completed_at=row[8],
+                output=row[9] or "", error=row[10] or "",
+            )
+            # Load audit trail for commands/files
+            audit_cursor = self._db.execute(
+                "SELECT event_type, detail FROM workspace_audit "
+                "WHERE workspace_id = ? ORDER BY id",
+                (ws.id,),
+            )
+            for event_type, detail in audit_cursor:
+                if event_type == "command":
+                    ws.commands_run.append(detail)
+                elif event_type == "file":
+                    ws.files_created.append(detail)
+            self._workspaces[ws.id] = ws
+
+    def _persist(self, ws: Workspace) -> None:
+        """Save workspace state to DB."""
+        if not self._db:
+            return
+        self._db.execute(
+            """INSERT OR REPLACE INTO workspaces
+            (id, name, project_id, task_id, status, path,
+             created_at, started_at, completed_at, output, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (ws.id, ws.name, ws.project_id, ws.task_id,
+             ws.status.value, ws.path, ws.created_at,
+             ws.started_at, ws.completed_at, ws.output, ws.error),
+        )
+        self._db.commit()
+
+    def _audit(self, workspace_id: str, event_type: str, detail: str = "") -> None:
+        """Record audit event."""
+        if not self._db:
+            return
+        self._db.execute(
+            "INSERT INTO workspace_audit (workspace_id, event_type, detail, timestamp) "
+            "VALUES (?, ?, ?, ?)",
+            (workspace_id, event_type, detail, datetime.now(UTC).isoformat()),
+        )
+        self._db.commit()
 
     def create(
         self,
@@ -134,6 +214,8 @@ class WorkspaceManager:
         ws_path.mkdir(parents=True, exist_ok=True)
         ws.path = str(ws_path)
         self._workspaces[ws.id] = ws
+        self._persist(ws)
+        self._audit(ws.id, "lifecycle", "created")
         logger.info("workspace_created", id=ws.id, name=name, path=str(ws_path))
         return ws
 
@@ -146,6 +228,8 @@ class WorkspaceManager:
             return None
         ws.status = WorkspaceStatus.ACTIVE
         ws.started_at = datetime.now(UTC).isoformat()
+        self._persist(ws)
+        self._audit(workspace_id, "lifecycle", "activated")
         logger.info("workspace_activated", id=workspace_id)
         return ws
 
@@ -156,6 +240,8 @@ class WorkspaceManager:
         ws.status = WorkspaceStatus.COMPLETED
         ws.completed_at = datetime.now(UTC).isoformat()
         ws.output = output
+        self._persist(ws)
+        self._audit(workspace_id, "lifecycle", "completed")
         logger.info("workspace_completed", id=workspace_id)
         return ws
 
@@ -166,6 +252,8 @@ class WorkspaceManager:
         ws.status = WorkspaceStatus.FAILED
         ws.completed_at = datetime.now(UTC).isoformat()
         ws.error = error
+        self._persist(ws)
+        self._audit(workspace_id, "lifecycle", f"failed: {error[:200]}")
         logger.info("workspace_failed", id=workspace_id, error=error[:100])
         return ws
 
@@ -174,12 +262,14 @@ class WorkspaceManager:
         ws = self._workspaces.get(workspace_id)
         if ws:
             ws.commands_run.append(command)
+            self._audit(workspace_id, "command", command)
 
     def record_file(self, workspace_id: str, filepath: str) -> None:
         """Zaznamenaj vytvorený súbor."""
         ws = self._workspaces.get(workspace_id)
         if ws:
             ws.files_created.append(filepath)
+            self._audit(workspace_id, "file", filepath)
 
     def cleanup(self, workspace_id: str) -> bool:
         """Vymaž workspace adresár. Volať len po complete/fail."""
@@ -195,11 +285,27 @@ class WorkspaceManager:
             if ws_path.exists() and str(ws_path).startswith(str(self._root)):
                 shutil.rmtree(ws_path)
             ws.status = WorkspaceStatus.CLEANED
+            self._persist(ws)
+            self._audit(workspace_id, "lifecycle", "cleaned")
             logger.info("workspace_cleaned", id=workspace_id)
             return True
         except Exception as e:
             logger.error("workspace_cleanup_error", id=workspace_id, error=str(e))
             return False
+
+    def get_audit_trail(self, workspace_id: str) -> list[dict[str, str]]:
+        """Return full audit trail for a workspace."""
+        if not self._db:
+            return []
+        cursor = self._db.execute(
+            "SELECT event_type, detail, timestamp FROM workspace_audit "
+            "WHERE workspace_id = ? ORDER BY id",
+            (workspace_id,),
+        )
+        return [
+            {"event_type": row[0], "detail": row[1], "timestamp": row[2]}
+            for row in cursor
+        ]
 
     def list_workspaces(
         self,
@@ -229,3 +335,8 @@ class WorkspaceManager:
             "active": self.get_active().name if self.get_active() else None,
             "root": str(self._root),
         }
+
+    def close(self) -> None:
+        if self._db:
+            self._db.close()
+            self._db = None

@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent.core.tools import AGENT_TOOLS, get_tool_names
 from agent.core.tool_policy import ToolExecutionContext
+from agent.core.tools import AGENT_TOOLS, get_tool_names
 
 
 class TestToolDefinitions:
