@@ -23,6 +23,7 @@ Tento súbor je len rozcestník. Detailná dokumentácia je na wiki stránkach:
 | [Operator Handbook](./OPERATOR_HANDBOOK.md) | Praktický sprievodca pre vlastníka |
 | [Product Identity](./PRODUCT_IDENTITY.md) | Rozhodnutie: personal sovereign operator |
 | [Release Checklist](./RELEASE_CHECKLIST.md) | Checklist pre každý release |
+| [Strategy Docs](./strategy/README.md) | Source of truth pre dlhodobú produktovú a architektonickú stratégiu |
 
 ## Rýchly štart
 
