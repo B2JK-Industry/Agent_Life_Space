@@ -4,6 +4,8 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 
 **[Wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki)** | **[Architecture](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Architecture)** | **[Security](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Security)** | **[API Reference](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/API-Reference)** | **[Roadmap](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Roadmap)**
 
+**Current version: v3.0.0** | [Changelog](CHANGELOG.md)
+
 ## What it does
 
 - **7-layer cascade** — 5 layers of local processing before calling LLM (saves tokens)
