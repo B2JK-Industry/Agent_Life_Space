@@ -20,7 +20,8 @@ Nie je to marketingový materiál — je to technický artefakt, ktorý kód mus
 - Žiadny prístup k host FS
 
 ### Host CLI (CONTROLLED — vyžaduje explicitný opt-in)
-- `AGENT_SANDBOX_ONLY=0` musí byť explicitne nastavené
+- Default: `AGENT_SANDBOX_ONLY=1` — host access BLOKOVANÝ
+- `AGENT_SANDBOX_ONLY=0` musí byť explicitne nastavené pre povolenie
 - `--dangerously-skip-permissions` flag
 - Logované s WARNING úrovňou
 - Nesmie sa použiť pre nedôveryhodný kód
