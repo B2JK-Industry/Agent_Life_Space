@@ -106,26 +106,26 @@ class TelegramHandler:
             return "Tento vstup bol zablokovaný bezpečnostným filtrom."
         text = sanitized
 
+        # SECURITY: V skupinách non-owner nemôže spúšťať programovacie úlohy
+        # ani work queue. Len konverzácia (chat/simple/greeting).
+        # Musí byť PRED command check aby _force_safe_mode bol nastavený.
+        owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
+        is_owner = self._current_sender == owner_name
+        is_group = chat_type in ("group", "supergroup")
+        if is_group and not is_owner:
+            self._force_safe_mode = True
+        else:
+            self._force_safe_mode = False
+
         if text.startswith("/"):
             # SECURITY: Non-owner v skupine nemá prístup k privilegovaným príkazom
-            if getattr(self, "_force_safe_mode", False):
+            if self._force_safe_mode:
                 _SAFE_COMMANDS = frozenset(["/start", "/help", "/status", "/health"])
                 cmd = text.split()[0].lower().split("@")[0]
                 if cmd not in _SAFE_COMMANDS:
                     logger.warning("command_blocked_non_owner", command=cmd, sender=self._current_sender)
                     return f"Príkaz {cmd} je dostupný len pre ownera."
             return await self._handle_command(text)
-
-        # SECURITY: V skupinách non-owner nemôže spúšťať programovacie úlohy
-        # ani work queue. Len konverzácia (chat/simple/greeting).
-        owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
-        is_owner = self._current_sender == owner_name
-        is_group = chat_type in ("group", "supergroup")
-        if is_group and not is_owner:
-            # Force non-programming task type pre non-owners
-            self._force_safe_mode = True
-        else:
-            self._force_safe_mode = False
 
         # Keep sending typing indicator while John thinks
         typing_task = None
