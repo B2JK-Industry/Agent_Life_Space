@@ -98,7 +98,12 @@ class ReviewService:
         job.status = ReviewJobStatus.VALIDATING
         self._storage.save_job(job)
 
-        # ── Step 1b: Execution mode + workspace ──
+        # ── Step 1b: Workspace + execution mode ──
+        # v1 analyzers always read from host via intake.repo_path.
+        # Execution mode must reflect reality — READ_ONLY_HOST until
+        # analyzers actually read from workspace path (v2 scope).
+        job.execution_mode = ExecutionMode.READ_ONLY_HOST
+
         if self._workspace_manager is not None:
             t_ws = job.trace("workspace")
             try:
@@ -108,19 +113,20 @@ class ReviewService:
                 )
                 self._workspace_manager.activate(ws.id)
                 job.workspace_id = ws.id
-                job.execution_mode = ExecutionMode.WORKSPACE_BOUND
-                t_ws.complete(f"workspace {ws.id}")
+                t_ws.complete(
+                    f"workspace {ws.id} (lifecycle only, "
+                    f"analysis reads host path)"
+                )
             except Exception as e:
                 t_ws.fail(str(e))
-                job.execution_mode = ExecutionMode.READ_ONLY_HOST
                 logger.warning("review_workspace_failed", error=str(e))
-        else:
-            job.execution_mode = ExecutionMode.READ_ONLY_HOST
 
         # ── Step 1c: Execution policy audit ──
         t_policy = job.trace("execution_policy")
+        analysis_path = self._get_analysis_path(job)
         t_policy.complete(
             f"mode={job.execution_mode.value}, "
+            f"analysis_path={analysis_path}, "
             f"source={job.source}, "
             f"host_access=read_only, "
             f"git_subprocess={'yes' if intake.diff_spec else 'no'}"
@@ -226,16 +232,26 @@ class ReviewService:
 
         return job
 
+    def _get_analysis_path(self, job: ReviewJob) -> str:
+        """Single source of truth for the path analyzers read from.
+
+        In v1, this is always intake.repo_path (host filesystem).
+        In v2/workspace-bound, this would resolve to the workspace
+        copy of the repo.
+        """
+        return job.intake.repo_path
+
     async def _run_repo_audit(self, job: ReviewJob) -> ReviewReport:
         """Full repository audit: structure + security + quality."""
         intake = job.intake
+        analysis_path = self._get_analysis_path(job)
         report = ReviewReport()
         all_findings: list = []
 
         # Structure analysis
         t_structure = job.trace("analyze:structure")
         metrics, structure_findings = analyze_repo_structure(
-            intake.repo_path,
+            analysis_path,
             max_files=intake.max_files,
             include_patterns=intake.include_patterns or None,
             exclude_patterns=intake.exclude_patterns or None,
@@ -248,7 +264,7 @@ class ReviewService:
         # Security analysis
         t_security = job.trace("analyze:security")
         security_findings = analyze_security(
-            intake.repo_path,
+            analysis_path,
             max_files=intake.max_files,
             include_patterns=intake.include_patterns or None,
         )
@@ -258,7 +274,7 @@ class ReviewService:
         # Build report
         report.findings = all_findings
         report.scope_description = (
-            f"Repo audit of {intake.repo_path}. "
+            f"Repo audit of {analysis_path}. "
             f"{metrics.total_files} files, {metrics.total_lines} lines. "
             f"Languages: {', '.join(list(metrics.languages.keys())[:5])}."
         )
@@ -280,13 +296,14 @@ class ReviewService:
     async def _run_pr_review(self, job: ReviewJob) -> ReviewReport:
         """PR/diff review: diff analysis + security check on changed files."""
         intake = job.intake
+        analysis_path = self._get_analysis_path(job)
         report = ReviewReport()
         all_findings: list = []
 
         # Diff analysis
         t_diff = job.trace("analyze:diff")
         diff_summary, diff_findings, raw_diff = analyze_diff(
-            intake.repo_path, intake.diff_spec,
+            analysis_path, intake.diff_spec,
         )
         all_findings.extend(diff_findings)
         report.files_analyzed = diff_summary.files_changed
@@ -300,7 +317,7 @@ class ReviewService:
         changed_paths = [f["path"] for f in diff_summary.changed_files]
         if changed_paths:
             security_findings = analyze_security(
-                intake.repo_path,
+                analysis_path,
                 max_files=len(changed_paths),
                 include_patterns=[f"*{p.strip()}" for p in changed_paths[:50]],
             )
@@ -335,11 +352,10 @@ class ReviewService:
         report = await self._run_repo_audit(job)
 
         t_release = job.trace("analyze:release")
-        intake = job.intake
 
         # Additional release checks
         from pathlib import Path
-        root = Path(intake.repo_path)
+        root = Path(self._get_analysis_path(job))
 
         if not (root / "CHANGELOG.md").exists():
             report.findings.append(ReviewFinding(
@@ -398,18 +414,13 @@ class ReviewService:
         return ReviewJob.from_dict(data)
 
     def get_delivery_bundle(self, job_id: str) -> dict[str, Any] | None:
-        """Assemble a delivery-ready bundle for a completed review job.
+        """Assemble a delivery bundle for a completed review job.
 
-        Returns dict with:
-            - job metadata (id, type, status, requester, verdict)
-            - markdown_report (full content)
-            - json_report (full structured data)
-            - findings_only (list of findings dicts)
-            - execution_trace (list of trace step dicts)
-            - delivery_ready: bool (true only if job completed successfully)
+        IMPORTANT: delivery_ready is always False here. Delivery requires
+        explicit approval via request_delivery_approval(). The bundle is
+        a preview — not a delivery authorization.
 
         Returns None if job not found.
-        Foundation for future approval-gated delivery flow.
         """
         self.initialize()
         job = self.load_job(job_id)
@@ -449,7 +460,9 @@ class ReviewService:
             "findings_only": findings_data or [f.to_dict() for f in job.report.findings],
             "execution_trace": trace_data or [t.to_dict() for t in job.execution_trace],
             "artifact_count": len(artifacts),
-            "delivery_ready": job.status == ReviewJobStatus.COMPLETED,
+            # Bundle is NEVER delivery-ready without explicit approval.
+            # Use request_delivery_approval() to gate delivery.
+            "delivery_ready": False,
             "created_at": job.created_at,
             "completed_at": job.completed_at,
         }

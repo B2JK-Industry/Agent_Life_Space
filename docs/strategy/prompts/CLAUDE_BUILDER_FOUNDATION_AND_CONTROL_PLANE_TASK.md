@@ -10,6 +10,24 @@ Najprv si načítaj:
 - `docs/strategy/BACKLOG_PROGRESS.md`
 - `docs/strategy/backlog_seed.yaml`
 
+## Aktuálny stav pred týmto kolom
+
+Reviewer v1 je `complete_for_phase`:
+- execution_mode vždy READ_ONLY_HOST (pravdivý)
+- _get_analysis_path() je single source of truth pre analyzéry
+- delivery_ready=False by default (vyžaduje explicit approval)
+- redaction pipeline na všetkých textových poliach (description, impact, recommendation, evidence)
+- requester, source, execution_mode, execution_trace stripnuté z client-safe exportu
+- ReviewArtifact.from_dict() hydratuje metadata graf
+- operator má mock-driven TS skeleton s CI typecheck (bez live backendu)
+- ADR-001 definuje execution sidecar contract (Go)
+
+Čo ešte neexistuje:
+- žiadny shared control-plane job model (ReviewJob, JobRunner, Task, AgentLoop koexistujú)
+- žiadny builder bounded context
+- žiadna acceptance criteria model
+- žiadny builder verification loop
+
 ## Cieľ tohto kola
 
 Neotváraj nový chaos. Urob ďalší vysokoleverage krok po Reviewer v1:

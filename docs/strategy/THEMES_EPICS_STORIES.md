@@ -14,8 +14,7 @@ Use it for:
 This file is now assessed against current `main`, not an older PR snapshot.
 
 Assessment basis:
-- branch: `main`
-- commit: `ccfd969`
+- branch: `main` (after final-polish-strategy-sync pass)
 - interpretation date: 2026-03-26
 
 Important:
@@ -35,14 +34,14 @@ Status legend:
 
 | Theme | Status | Approx Progress | What Exists On `main` | Main Remaining Gap |
 |------|--------|-----------------|------------------------|--------------------|
-| T1 Platform Foundation | in_progress | 45% | ReviewJob, artifact storage, workspace subsystem, execution trace | No canonical cross-system job model yet |
-| T2 Reviewer Product | mostly_complete | 80% | Reviewer bounded context, verifier, delivery bundle, approval hook, Telegram path | Delivery is not fully operator/API complete and reviewer execution truth still leaks |
+| T1 Platform Foundation | in_progress | 50% | ReviewJob with recovery + artifact metadata hydration, workspace subsystem, execution trace, _get_analysis_path() | No canonical cross-system job model yet |
+| T2 Reviewer Product | complete_for_phase | 85% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode | LLM analysis, API entrypoint, PR comment packs are v2 |
 | T3 Builder Product | not_started | 5% | Generic workspace/test foundations only | No first-class builder slice |
-| T4 Operator Product | not_started | 5% | Partial approval and delivery foundations only | No intake, planning, or delivery control plane |
-| T5 Security, Governance, And Policy | in_progress | 40% | Tool policy, reviewer execution trace, approval queue, client-safe export foundation | Review repo/diff execution is still outside a unified policy boundary |
-| T6 Cost, Usage, And Observability | started | 20% | Status, usage fields, broad test discipline | No real per-job cost ledger or operator-facing observability surface |
+| T4 Operator Product | started | 10% | Mock-driven TS skeleton with CI typecheck. No live backend. | No intake, planning, or delivery control plane |
+| T5 Security, Governance, And Policy | in_progress | 50% | Tool policy deny-by-default, strict delivery approval, full redaction pipeline, execution trace with analysis_path | Review execution outside unified policy boundary |
+| T6 Cost, Usage, And Observability | started | 20% | Status, usage fields, broad test discipline | No real per-job cost ledger or operator-facing observability |
 | T7 External Capability Gateway | not_started | 0% | Nothing first-class yet | No gateway contract or provider integration |
-| T8 Enterprise Hardening | started | 25% | Review bounded context, some invariants, project-root discipline | No true control-plane contract layer or extraction-ready boundaries yet |
+| T8 Enterprise Hardening | in_progress | 30% | Review bounded context, ADR-001 sidecar, TS operator contracts + skeleton, policy-driven redaction, CI typecheck | No shared control-plane contract layer yet |
 
 ## Theme T1: Platform Foundation
 
@@ -50,7 +49,7 @@ Goal: unify the core job, state, artifact, and execution foundation so the
 system can support reviewer, builder, and operator modes without fragmenting.
 
 Status: `in_progress`
-Approx progress: `45%`
+Approx progress: `50%`
 Main gap: `the system still has multiple parallel work models instead of one canonical Job layer`
 
 ### Epic T1-E1: Canonical Job Model
@@ -85,7 +84,7 @@ Stories:
 
 Status: `mostly_complete`
 Approx progress: `70%`
-Remaining gap: `artifact persistence is strong, but artifact hydration is not yet the single source of truth`
+Remaining gap: `artifact metadata hydrates via from_dict(), but content loads separately via storage. Not yet shared across domains.`
 
 Stories:
 - T1-E2-S1: Define artifact types and storage layout.
@@ -106,14 +105,14 @@ Stories:
   Missing: explicit retention policy, export policy, and replay policy.
 - T1-E2-S5: Persist full intake, report payloads, and artifact payloads for recovery-safe reload.
   Status: `mostly_complete`
-  Current state: intake/report payloads persist; artifact payloads are retrievable.
-  Missing: fully hydrated artifact graph on `ReviewJob` reload.
+  Current state: Intake/report payloads persist. ReviewArtifact.from_dict() hydrates metadata graph. Full content via storage.get_artifacts().
+  Missing: Artifact content not inline in ReviewJob — loaded via storage side path.
 
 ### Epic T1-E3: Workspace And Execution Discipline
 
 Status: `in_progress`
 Approx progress: `40%`
-Remaining gap: `reviewer execution mode is explicit, but not fully truthful`
+Remaining gap: `execution mode is now honest (always READ_ONLY_HOST in v1), but WORKSPACE_BOUND is deferred to v2`
 
 Stories:
 - T1-E3-S1: Ensure all mutable engineering work happens in isolated workspaces.
@@ -133,17 +132,17 @@ Stories:
   Current state: sandbox and project-root discipline exist.
   Missing: explicit profile matrix for local/operator/enterprise modes.
 - T1-E3-S5: Bind reviewer jobs to workspace discipline or define explicit read-only review execution mode.
-  Status: `in_progress`
-  Current state: `ExecutionMode` exists.
-  Missing: `WORKSPACE_BOUND` review is still not fully truthful because analyzers use host repo paths.
+  Status: `complete_for_phase`
+  Current state: ExecutionMode always READ_ONLY_HOST in v1. `_get_analysis_path()` is single source of truth. Execution trace includes actual analysis path.
+  Missing: WORKSPACE_BOUND requires analyzers to read from workspace path (v2 scope).
 
 ## Theme T2: Reviewer Product
 
 Goal: make review a first-class client-ready workflow.
 
-Status: `mostly_complete`
-Approx progress: `80%`
-Main gap: `Reviewer v1 is strong, but delivery, entrypoints, and execution truth are not fully closed at system level`
+Status: `complete_for_phase`
+Approx progress: `85%`
+Main gap: `LLM-augmented analysis, API entrypoint, PR comment packs are Reviewer v2 scope`
 
 ### Epic T2-E1: Review Job Types
 
@@ -219,9 +218,9 @@ Stories:
 
 ### Epic T2-E4: Review Delivery
 
-Status: `in_progress`
-Approx progress: `70%`
-Remaining gap: `delivery foundations exist, but API path, PR comment packs, and harder delivery governance are still open`
+Status: `mostly_complete`
+Approx progress: `80%`
+Remaining gap: `API entrypoint, PR comment packs are v2. Delivery governance is strict.`
 
 Stories:
 - T2-E4-S1: Prepare copy-paste-ready PR comments and summary review artifacts.
@@ -229,13 +228,13 @@ Stories:
   Current state: no dedicated PR comment pack artifact.
   Missing: PR-comment-ready delivery format.
 - T2-E4-S2: Add delivery approval before external send.
-  Status: `in_progress`
-  Current state: approval request hook exists.
-  Missing: no-bypass production-safe enforcement and external send workflow.
+  Status: `complete_for_phase`
+  Current state: Strict approval gating. delivery_ready=False by default. Blocked without queue. DEV_MODE bypass only.
+  Missing: External send workflow (Operator scope).
 - T2-E4-S3: Add client-safe output mode with redaction.
-  Status: `mostly_complete`
-  Current state: client-safe bundle exists.
-  Missing: stronger redaction policy and metadata minimization.
+  Status: `complete_for_phase`
+  Current state: Full redaction pipeline on all text fields. Strips requester, source, execution_mode, trace.
+  Missing: Wider system outputs beyond reviewer.
 - T2-E4-S4: Add report packaging for operator handoff.
   Status: `mostly_complete`
   Current state: delivery bundle exists.
@@ -381,8 +380,8 @@ Stories:
 Goal: ensure all valuable workflows remain controlled and auditable.
 
 Status: `in_progress`
-Approx progress: `40%`
-Main gap: `policy is strong for tools, but reviewer host execution still sits outside one unified control boundary`
+Approx progress: `50%`
+Main gap: `policy is strong for tools and delivery, but reviewer host execution still outside unified policy boundary`
 
 ### Epic T5-E1: Policy Control Plane
 
@@ -434,9 +433,9 @@ Stories:
 
 ### Epic T5-E3: Client-Safe And Secret-Safe Output
 
-Status: `in_progress`
-Approx progress: `55%`
-Remaining gap: `redaction exists, but it is still narrow and reviewer-specific`
+Status: `mostly_complete`
+Approx progress: `70%`
+Remaining gap: `redaction covers all reviewer text fields and strips internal metadata, but not yet system-wide`
 
 Stories:
 - T5-E3-S1: Enforce redaction on reports and logs.
@@ -444,13 +443,13 @@ Stories:
   Current state: reviewer bundle redaction exists.
   Missing: logs and wider system outputs.
 - T5-E3-S2: Prevent sensitive internal data in client output.
-  Status: `started`
-  Current state: paths and some evidence are redacted.
-  Missing: stronger metadata minimization and stricter policy.
+  Status: `complete_for_phase`
+  Current state: requester, source, execution_mode, execution_trace stripped. All text fields through full redaction.
+  Missing: Wider system outputs beyond reviewer.
 - T5-E3-S3: Add client-safe review mode.
-  Status: `mostly_complete`
-  Current state: client-safe bundle exists.
-  Missing: broader contract and stronger enforcement.
+  Status: `complete_for_phase`
+  Current state: Client-safe bundle with full pipeline. Error field redacted.
+  Missing: Broader contract beyond reviewer.
 - T5-E3-S4: Add security regression tests around redaction and delivery.
   Status: `started`
   Current state: reviewer redaction tests exist.
@@ -565,8 +564,8 @@ Stories:
 Goal: prepare the system to evolve into enterprise-grade architecture without
 premature fragmentation.
 
-Status: `started`
-Approx progress: `25%`
+Status: `in_progress`
+Approx progress: `30%`
 Main gap: `bounded contexts are emerging, but there is still no shared control-plane contract layer`
 
 ### Epic T8-E1: Contract-First Boundaries
@@ -644,8 +643,9 @@ Stories:
 ## Bottom Line
 
 Current `main` is best described as:
-- a strong reviewer-first product slice
-- plus good governance and workspace foundations
+- a strong reviewer-first product slice with honest execution and strict delivery
+- plus meaningful governance, redaction, and workspace foundations
+- plus a mock-driven operator skeleton (no live backend)
 - plus a still-unfinished platform convergence story
 
 It is not yet:
@@ -654,7 +654,5 @@ It is not yet:
 - a gateway-enabled capability fabric
 - an enterprise-ready system in operational reality
 
-The next most leveraged strategic move is:
-- stop polishing Reviewer v1 semantics in isolation
-- refresh strategy/progress docs everywhere to match `main`
-- then start the first real Builder foundation slice
+Reviewer v1 is `complete_for_phase`. The next chunk is:
+**Builder Foundation + Control-Plane Convergence**

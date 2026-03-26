@@ -7,25 +7,24 @@ seed_note: >
 
 progress_snapshot:
   assessed_branch: main
-  assessed_commit: "ccfd969"
   interpretation_date: "2026-03-26"
-  assessed_state_note: "Snapshot reflects current main, not older PR audit state."
+  assessed_state_note: "Snapshot after final-polish-strategy-sync pass."
   theme_status:
     T1:
       status: in_progress
-      approx_progress: 45
+      approx_progress: 50
     T2:
-      status: mostly_complete
-      approx_progress: 80
+      status: complete_for_phase
+      approx_progress: 85
     T3:
       status: not_started
       approx_progress: 5
     T4:
-      status: not_started
-      approx_progress: 5
+      status: started
+      approx_progress: 10
     T5:
       status: in_progress
-      approx_progress: 40
+      approx_progress: 50
     T6:
       status: started
       approx_progress: 20
@@ -33,15 +32,15 @@ progress_snapshot:
       status: not_started
       approx_progress: 0
     T8:
-      status: started
-      approx_progress: 25
+      status: in_progress
+      approx_progress: 30
 
 themes:
   - id: T1
     name: Platform Foundation
     goal: Unify the core job, state, artifact, and execution foundation.
     status: in_progress
-    approx_progress: 45
+    approx_progress: 50
     current_state: ReviewJob, artifact storage, workspace subsystem, and execution trace exist.
     main_gap: No canonical cross-system job model exists yet.
     epics:
@@ -81,7 +80,7 @@ themes:
         name: Artifact-First Execution
         status: mostly_complete
         approx_progress: 70
-        remaining_gap: Artifact persistence is strong, but artifact hydration is not yet the single source of truth.
+        remaining_gap: Artifact persistence is strong, but from_dict() hydration does not yet restore the full artifact graph.
         stories:
           - id: T1-E2-S1
             name: Define artifact types and storage layout
@@ -113,7 +112,7 @@ themes:
         name: Workspace And Execution Discipline
         status: in_progress
         approx_progress: 40
-        remaining_gap: Reviewer execution mode is explicit, but not fully truthful.
+        remaining_gap: Reviewer execution mode is explicit and honest about READ_ONLY_HOST.
         stories:
           - id: T1-E3-S1
             name: Ensure all mutable engineering work happens in isolated workspaces
@@ -137,15 +136,15 @@ themes:
             missing: Explicit profile matrix for local, operator, and enterprise modes.
           - id: T1-E3-S5
             name: Bind reviewer jobs to workspace discipline or define explicit read-only review execution mode
-            status: in_progress
-            current_state: ExecutionMode exists.
-            missing: WORKSPACE_BOUND review is still not fully truthful because analyzers use host repo paths.
+            status: complete_for_phase
+            current_state: ExecutionMode always READ_ONLY_HOST, _get_analysis_path() single source of truth.
+            missing: Future WORKSPACE_BOUND mode if builder needs mutable workspaces.
 
   - id: T2
     name: Reviewer Product
     goal: Make review a first-class client-ready workflow.
-    status: mostly_complete
-    approx_progress: 80
+    status: complete_for_phase
+    approx_progress: 85
     current_state: Reviewer bounded context, verifier, delivery bundle, approval hook, and Telegram runtime path exist.
     main_gap: Delivery is not fully operator/API complete and reviewer execution truth still leaks.
     epics:
@@ -232,8 +231,8 @@ themes:
 
       - id: T2-E4
         name: Review Delivery
-        status: in_progress
-        approx_progress: 70
+        status: mostly_complete
+        approx_progress: 80
         remaining_gap: Delivery foundations exist, but API path, PR comment packs, and harder delivery governance are still open.
         stories:
           - id: T2-E4-S1
@@ -243,14 +242,14 @@ themes:
             missing: PR-comment-ready delivery format.
           - id: T2-E4-S2
             name: Add delivery approval before external send
-            status: in_progress
-            current_state: Approval request hook exists.
-            missing: No-bypass production-safe enforcement and external send workflow.
+            status: complete_for_phase
+            current_state: Strict approval enforced, delivery_ready=False until approved, no bypass path.
+            missing: External send workflow for non-Telegram channels.
           - id: T2-E4-S3
             name: Add client-safe output mode with redaction
-            status: mostly_complete
-            current_state: Client-safe bundle exists.
-            missing: Stronger redaction policy and metadata minimization.
+            status: complete_for_phase
+            current_state: Full redaction pipeline with path, secret, and metadata stripping.
+            missing: Broader redaction policy for non-reviewer outputs.
           - id: T2-E4-S4
             name: Add report packaging for operator handoff
             status: mostly_complete
@@ -338,8 +337,8 @@ themes:
   - id: T4
     name: Operator Product
     goal: Coordinate work end-to-end and support repeatable client delivery.
-    status: not_started
-    approx_progress: 5
+    status: started
+    approx_progress: 10
     current_state: Partial approval and delivery foundations exist.
     main_gap: No first-class operator control plane exists yet.
     epics:
@@ -416,7 +415,7 @@ themes:
     name: Security, Governance, And Policy
     goal: Ensure all valuable workflows remain controlled and auditable.
     status: in_progress
-    approx_progress: 40
+    approx_progress: 50
     current_state: Tool policy, reviewer execution trace, approval queue, and client-safe export foundation exist.
     main_gap: Review repo/diff execution is still outside a unified policy boundary.
     epics:
@@ -477,8 +476,8 @@ themes:
 
       - id: T5-E3
         name: Client-Safe And Secret-Safe Output
-        status: in_progress
-        approx_progress: 55
+        status: mostly_complete
+        approx_progress: 70
         remaining_gap: Redaction exists, but it is still narrow and reviewer-specific.
         stories:
           - id: T5-E3-S1
@@ -488,14 +487,14 @@ themes:
             missing: Logs and wider system outputs.
           - id: T5-E3-S2
             name: Prevent sensitive internal data in client output
-            status: started
-            current_state: Paths and some evidence are redacted.
-            missing: Stronger metadata minimization and stricter policy.
+            status: complete_for_phase
+            current_state: Requester/source stripping plus path and evidence redaction active.
+            missing: Broader metadata minimization for non-reviewer outputs.
           - id: T5-E3-S3
             name: Add client-safe review mode
-            status: mostly_complete
-            current_state: Client-safe bundle exists.
-            missing: Broader contract and stronger enforcement.
+            status: complete_for_phase
+            current_state: Client-safe bundle with full redaction pipeline enforced.
+            missing: Broader contract for non-reviewer client-safe modes.
           - id: T5-E3-S4
             name: Add security regression tests around redaction and delivery
             status: started
@@ -626,8 +625,8 @@ themes:
   - id: T8
     name: Enterprise Hardening
     goal: Prepare the system to evolve into enterprise-grade architecture without premature fragmentation.
-    status: started
-    approx_progress: 25
+    status: in_progress
+    approx_progress: 30
     current_state: Review bounded context, some invariants, and project-root discipline exist.
     main_gap: No true control-plane contract layer or extraction-ready boundaries exist yet.
     epics:
