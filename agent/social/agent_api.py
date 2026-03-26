@@ -175,31 +175,21 @@ class AgentAPI:
             )
 
     async def _handle_status(self, request: web.Request) -> web.Response:
-        """GET /api/status — verejný stav agenta."""
-        if not self._agent:
-            return web.json_response({"status": "running"})
-
-        status = self._agent.get_status()
+        """GET /api/status — minimal public status (no internal details)."""
         return web.json_response({
             "agent": "john-b2jk",
-            "status": "running" if status.get("running") else "stopped",
-            "memories": status.get("memory", {}).get("total_memories", 0),
-            "tasks": status.get("tasks", {}).get("total_tasks", 0),
-            "uptime": "active",
+            "status": "running",
         })
 
     async def _handle_health(self, request: web.Request) -> web.Response:
-        """GET /api/health — zdravie agenta."""
+        """GET /api/health — minimal health check (no internal metrics exposed)."""
         if not self._agent:
             return web.json_response({"health": "ok"})
 
         health = self._agent.watchdog.get_system_health()
+        # SECURITY: Only expose ok/degraded — no CPU, RAM, module names, or alerts
         return web.json_response({
             "health": "ok" if not health.alerts else "degraded",
-            "cpu_percent": health.cpu_percent,
-            "memory_percent": health.memory_percent,
-            "modules": health.modules,
-            "alerts": health.alerts,
         })
 
     async def start(self) -> None:

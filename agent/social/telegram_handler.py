@@ -74,11 +74,13 @@ class TelegramHandler:
         bot: Any = None,
         work_loop: Any = None,
         owner_chat_id: int = 0,
+        brain: Any = None,
     ) -> None:
         self._agent = agent
         self._bot = bot
         self._work_loop = work_loop
         self._owner_chat_id = owner_chat_id
+        self._brain = brain  # AgentBrain instance (channel-agnostic processing)
         # Usage tracking
         self._total_cost_usd: float = 0.0
         self._total_input_tokens: int = 0
@@ -135,7 +137,9 @@ class TelegramHandler:
             force_safe_mode=is_group and not is_owner,
         )
 
-        # DEPRECATED: keep for backward compat (tests that check these attrs)
+        # DEPRECATED (v2.0): kept ONLY for backward compat with legacy _handle_text path.
+        # Production path uses AgentBrain which has NO shared state.
+        # These are write-only from handle() perspective — reads happen only in legacy fallback.
         self._current_sender = ctx.sender
         self._current_chat_type = ctx.chat_type
         self._force_safe_mode = ctx.force_safe_mode
@@ -167,6 +171,21 @@ class TelegramHandler:
             typing_task = asyncio.create_task(keep_typing())
 
         try:
+            # Delegate to AgentBrain if available (v3.0 path)
+            if self._brain is not None:
+                from agent.social.channel import IncomingMessage
+                incoming = IncomingMessage(
+                    text=text,
+                    sender_id=str(user_id),
+                    sender_name=ctx.sender,
+                    channel_type=ctx.chat_type,
+                    chat_id=str(chat_id),
+                    is_owner=ctx.is_owner,
+                    is_group=ctx.chat_type in ("group", "supergroup"),
+                )
+                return await self._brain.process(incoming)
+
+            # Fallback to legacy _handle_text (backward compat)
             return await self._handle_text(text, ctx)
         finally:
             if typing_task:
@@ -464,7 +483,8 @@ class TelegramHandler:
         try:
 
             from agent.vault.secrets import SecretsManager
-            vault_dir = os.path.expanduser("~/agent-life-space/agent/vault")
+            _root = os.environ.get("AGENT_PROJECT_ROOT", os.path.expanduser("~/agent-life-space"))
+            vault_dir = os.path.join(_root, "agent", "vault")
             master_key = os.environ.get("AGENT_VAULT_KEY", "")
             if not master_key:
                 return "Vault nie je nakonfigurovaný. Spusti scripts/setup_vault.py."

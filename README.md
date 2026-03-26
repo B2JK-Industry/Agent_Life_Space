@@ -15,7 +15,7 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Learning system** — skill outcome tracking, model escalation, prompt augmentation
 - **Multi-provider LLM** — Claude CLI, Anthropic API, OpenAI, Ollama (any backend)
 - **Automated security** — 50-test security audit suite replaces manual reviews
-- **696+ tests** — unit + integration + e2e + security audit, $0.00 token cost
+- **705+ tests** — unit + integration + e2e + security audit, $0.00 token cost
 
 ## Quick Start
 
@@ -85,7 +85,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 696 passed, ~19s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 705 passed, ~19s, $0.00
 ```
 
 | Layer | Tests | What |

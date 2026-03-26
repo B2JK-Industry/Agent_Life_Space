@@ -103,8 +103,15 @@ async def run_agent(data_dir: str = "agent") -> None:
                 error=docker_status.get("error", "unknown"),
                 hint="Docker je povinný pre sandbox. Programovacie úlohy budú odmietnuté.",
             )
-        # Store docker status for runtime checks (using .update to avoid bracket access)
+        # Store docker status for runtime checks
         os.environ.update({"_DOCKER_AVAILABLE": "1" if docker_available else "0"})
+        # SECURITY: Sandbox-only mode is DEFAULT. Host file access blocked unless
+        # explicitly overridden with AGENT_SANDBOX_ONLY=0.
+        if os.environ.get("AGENT_SANDBOX_ONLY") is None:
+            os.environ.update({"AGENT_SANDBOX_ONLY": "1"})
+            logger.info("sandbox_only_mode", status="enabled (default)")
+        elif os.environ.get("AGENT_SANDBOX_ONLY") == "0":
+            logger.warning("sandbox_only_disabled", hint="Host file access enabled. CLI has full FS access.")
 
         # Start agent in background
         agent_task = asyncio.create_task(agent.start())
@@ -127,7 +134,20 @@ async def run_agent(data_dir: str = "agent") -> None:
             work_loop = AgentLoop(telegram_bot=bot)
             work_loop_task = asyncio.create_task(work_loop.start())
 
-            handler = TelegramHandler(agent, bot=bot, work_loop=work_loop, owner_chat_id=owner_id)
+            # Initialize AgentBrain (channel-agnostic) + ToolExecutor
+            from agent.core.brain import AgentBrain
+            from agent.core.sandbox_executor import SandboxExecutor
+            from agent.core.tool_executor import ToolExecutor
+
+            sandbox_executor = SandboxExecutor()
+            tool_executor = ToolExecutor(agent=agent, sandbox=sandbox_executor)
+            brain = AgentBrain(agent=agent, work_loop=work_loop, owner_chat_id=owner_id)
+            brain._tool_executor = tool_executor  # Available for tool use loop
+
+            handler = TelegramHandler(
+                agent, bot=bot, work_loop=work_loop, owner_chat_id=owner_id,
+                brain=brain,
+            )
             bot.on_message(handler.handle)
             telegram_task = asyncio.create_task(bot.start())
             logger.info("telegram_bot_enabled")

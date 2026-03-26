@@ -2,7 +2,8 @@ node_modules/
 .env
 .env.*
 !.env.example
-agent/vault/
+agent/vault/*.enc
+agent/vault/*.key
 agent/finance/*.key
 agent/finance/*.secret
 *.pem
