@@ -8,6 +8,25 @@ This project follows [Semantic Versioning](https://semver.org/):
 - MINOR (1.x.0) — nové features, spätne kompatibilné
 - MAJOR (x.0.0) — breaking changes (len so schválením)
 
+## [1.4.0] — 2026-03-26
+
+Backlog zero release. All items from master backlog implemented.
+
+### Governance
+- **Multi-step approval** — required_approvals, PARTIALLY_APPROVED status, same-person dedup
+
+### Testing
+- **Routing confusion analysis** — systematic confusion detection + fallback hierarchy
+- **Workspace recovery** — 4 crash-recovery test scenarios
+- **Finance proposal lifecycle** — end-to-end propose → approve → complete
+
+### Documentation
+- **Product identity** — decision: personal sovereign operator, not platform
+- **Release checklist** — standardized process
+
+### Fixes
+- **setup_vault.py** — graceful handling when eth_account/bit not installed
+
 ## [1.3.0] — 2026-03-26
 
 Completeness release. Remaining backlog items implemented.
