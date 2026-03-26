@@ -59,10 +59,68 @@ _SKILL_TESTS: dict[str, str] = {
 }
 
 
+class LearningEvent:
+    """A single auditable learning event."""
+
+    def __init__(
+        self,
+        event_type: str,
+        skill: str = "",
+        detail: str = "",
+        source: str = "",
+    ) -> None:
+        import time
+        self.event_type = event_type  # skill_update, model_escalation, prompt_augment, fact_learned
+        self.skill = skill
+        self.detail = detail
+        self.source = source  # what triggered this learning
+        self.timestamp = time.time()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.event_type,
+            "skill": self.skill,
+            "detail": self.detail,
+            "source": self.source,
+            "timestamp": self.timestamp,
+        }
+
+
+class LearningAuditLog:
+    """Ring buffer of learning events for audit trail."""
+
+    def __init__(self, max_entries: int = 500) -> None:
+        self._entries: list[LearningEvent] = []
+        self._max = max_entries
+
+    def record(self, event: LearningEvent) -> None:
+        self._entries.append(event)
+        if len(self._entries) > self._max:
+            self._entries.pop(0)
+
+    def get_recent(self, limit: int = 50) -> list[dict[str, Any]]:
+        return [e.to_dict() for e in self._entries[-limit:]]
+
+    def get_by_type(self, event_type: str, limit: int = 50) -> list[dict[str, Any]]:
+        return [e.to_dict() for e in self._entries if e.event_type == event_type][-limit:]
+
+    @property
+    def total(self) -> int:
+        return len(self._entries)
+
+    def get_stats(self) -> dict[str, Any]:
+        by_type: dict[str, int] = {}
+        for e in self._entries:
+            by_type[e.event_type] = by_type.get(e.event_type, 0) + 1
+        return {"total": self.total, "by_type": by_type}
+
+
 class LearningSystem:
     """
     Prepája skills, knowledge, a pamäť.
     John sa učí z toho čo robí.
+
+    Every learning decision is recorded in the audit log.
     """
 
     def __init__(
@@ -72,6 +130,7 @@ class LearningSystem:
     ) -> None:
         self.skills = SkillRegistry(skills_path)
         self.knowledge = KnowledgeBase(knowledge_dir)
+        self.audit_log = LearningAuditLog()
 
     def can_i_do(self, skill_name: str, auto_test: bool = False) -> dict[str, Any]:
         """
@@ -199,6 +258,13 @@ class LearningSystem:
         else:
             self.skills.record_failure(skill_name, error)
             action = "failure"
+
+        self.audit_log.record(LearningEvent(
+            event_type="skill_update",
+            skill=skill_name,
+            detail=f"{action}: {error[:100]}" if error else action,
+            source="i_did_it",
+        ))
 
         # Ak sa naučil niečo nové, zapíš do knowledge base
         if what_i_learned:
@@ -355,6 +421,21 @@ class LearningSystem:
                 )
                 knowledge_saved = True
 
+        for skill_name in detected_skills:
+            self.audit_log.record(LearningEvent(
+                event_type="skill_update",
+                skill=skill_name,
+                detail=f"outcome: {'success' if success else 'failure'}",
+                source="process_outcome",
+            ))
+
+        if knowledge_saved:
+            self.audit_log.record(LearningEvent(
+                event_type="fact_learned",
+                detail=f"error recorded for: {', '.join(detected_skills)}",
+                source="process_outcome",
+            ))
+
         if updates:
             logger.info("learning_feedback", updates=updates,
                         success=success, knowledge_saved=knowledge_saved)
@@ -386,6 +467,12 @@ class LearningSystem:
                 if failed_model:
                     escalation = self._escalate_model(failed_model)
                     if escalation:
+                        self.audit_log.record(LearningEvent(
+                            event_type="model_escalation",
+                            skill=skill["name"],
+                            detail=f"{failed_model} → {escalation}",
+                            source="adapt_model",
+                        ))
                         logger.info(
                             "learning_model_escalation",
                             skill=skill["name"],
