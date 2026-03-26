@@ -124,6 +124,7 @@ class FinanceTracker:
         db_path: str = "agent/finance/finance.db",
         daily_budget_usd: float = 50.0,
         monthly_budget_usd: float = 500.0,
+        approval_queue: Any = None,
     ) -> None:
         if not db_path:
             msg = "db_path cannot be empty"
@@ -141,6 +142,7 @@ class FinanceTracker:
         self._transactions: dict[str, Transaction] = {}
         self._db: aiosqlite.Connection | None = None
         self._initialized = False
+        self._approval_queue = approval_queue  # Optional ApprovalQueue integration
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -213,6 +215,22 @@ class FinanceTracker:
 
         self._transactions[tx.id] = tx
         await self._persist(tx)
+
+        # Wire to approval queue if available
+        if self._approval_queue is not None:
+            from agent.core.approval import ApprovalCategory
+            self._approval_queue.propose(
+                category=ApprovalCategory.FINANCE,
+                description=f"${amount_usd:.2f} — {description}",
+                risk_level=risk_level.value,
+                reason=rationale or f"Expense proposal: {description}",
+                context={
+                    "transaction_id": tx.id,
+                    "amount_usd": amount_usd,
+                    "category": category,
+                    "within_budget": budget_check["within_budget"],
+                },
+            )
 
         logger.info(
             "expense_proposed",
