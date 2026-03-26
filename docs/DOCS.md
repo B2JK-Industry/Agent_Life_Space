@@ -36,6 +36,6 @@ python -m pytest tests/ -q   # Testy (974+ testov)
 
 ## Verzia
 
-Aktuálna: **v1.3.0** — Completeness: memory separation, learning rollback, immutable audit, risk templates.
+Aktuálna: **v1.4.0** — Backlog zero: multi-step approval, confusion analysis, recovery tests, product identity.
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.
