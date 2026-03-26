@@ -1,0 +1,220 @@
+version: 1
+source_of_truth: docs/strategy/MASTER_SOURCE_OF_TRUTH.md
+themes:
+  - id: T1
+    name: Platform Foundation
+    goal: Unify job, artifact, state, and workspace foundations.
+    epics:
+      - id: T1-E1
+        name: Canonical Job Model
+        stories:
+          - id: T1-E1-S1
+            name: Define canonical Job schema
+          - id: T1-E1-S2
+            name: Add Job lifecycle states and recovery rules
+          - id: T1-E1-S3
+            name: Persist job history, artifacts, and cost
+      - id: T1-E2
+        name: Artifact-First Execution
+        stories:
+          - id: T1-E2-S1
+            name: Define artifact types and storage layout
+          - id: T1-E2-S2
+            name: Link artifacts to jobs and traces
+          - id: T1-E2-S3
+            name: Export artifacts to Markdown and JSON
+      - id: T1-E3
+        name: Workspace And Execution Discipline
+        stories:
+          - id: T1-E3-S1
+            name: Enforce workspace isolation for mutable work
+          - id: T1-E3-S2
+            name: Make workspace recovery robust
+          - id: T1-E3-S3
+            name: Link workspaces to jobs and approvals
+
+  - id: T2
+    name: Reviewer Product
+    goal: Make review a first-class client-ready workflow.
+    epics:
+      - id: T2-E1
+        name: Review Job Types
+        stories:
+          - id: T2-E1-S1
+            name: Implement repo audit jobs
+          - id: T2-E1-S2
+            name: Implement PR review jobs
+          - id: T2-E1-S3
+            name: Implement release readiness review jobs
+      - id: T2-E2
+        name: Review Output Standardization
+        stories:
+          - id: T2-E2-S1
+            name: Define canonical review report structure
+          - id: T2-E2-S2
+            name: Standardize severity and file refs
+          - id: T2-E2-S3
+            name: Export reports to Markdown and JSON
+      - id: T2-E3
+        name: Review Verification
+        stories:
+          - id: T2-E3-S1
+            name: Add verifier pass for findings
+          - id: T2-E3-S2
+            name: Record review confidence and verification results
+      - id: T2-E4
+        name: Review Delivery
+        stories:
+          - id: T2-E4-S1
+            name: Produce PR comment packs
+          - id: T2-E4-S2
+            name: Gate external delivery with approvals
+
+  - id: T3
+    name: Builder Product
+    goal: Make implementation controlled, testable, and acceptance-driven.
+    epics:
+      - id: T3-E1
+        name: Capability-Based Build Execution
+        stories:
+          - id: T3-E1-S1
+            name: Define implementation capability catalog
+          - id: T3-E1-S2
+            name: Route build jobs to capabilities
+      - id: T3-E2
+        name: Build Verification Loop
+        stories:
+          - id: T3-E2-S1
+            name: Add test, lint, and type-check loop
+          - id: T3-E2-S2
+            name: Add review-after-build pass
+      - id: T3-E3
+        name: Acceptance Criteria Engine
+        stories:
+          - id: T3-E3-S1
+            name: Define acceptance criteria object model
+          - id: T3-E3-S2
+            name: Validate acceptance on completion
+
+  - id: T4
+    name: Operator Product
+    goal: Coordinate end-to-end work and delivery.
+    epics:
+      - id: T4-E1
+        name: Intake And Qualification
+        stories:
+          - id: T4-E1-S1
+            name: Build intake model for repo and diff work
+          - id: T4-E1-S2
+            name: Add scope, risk, and budget qualification
+      - id: T4-E2
+        name: Job Planning And Routing
+        stories:
+          - id: T4-E2-S1
+            name: Create JobPlan model
+          - id: T4-E2-S2
+            name: Split work into review, build, verify, deliver phases
+      - id: T4-E3
+        name: Delivery Workflow
+        stories:
+          - id: T4-E3-S1
+            name: Define delivery package model
+          - id: T4-E3-S2
+            name: Assemble reports, artifacts, and acceptance results
+
+  - id: T5
+    name: Security Governance And Policy
+    goal: Keep all valuable workflows controlled and auditable.
+    epics:
+      - id: T5-E1
+        name: Policy Control Plane
+        stories:
+          - id: T5-E1-S1
+            name: Extend policy decisions across jobs and delivery
+          - id: T5-E1-S2
+            name: Preserve deny-by-default everywhere
+      - id: T5-E2
+        name: Approval Model
+        stories:
+          - id: T5-E2-S1
+            name: Make approval requests persistent
+          - id: T5-E2-S2
+            name: Support approvals for risky execution and delivery
+      - id: T5-E3
+        name: Client-Safe Output
+        stories:
+          - id: T5-E3-S1
+            name: Enforce redaction in reports and logs
+          - id: T5-E3-S2
+            name: Add client-safe review mode
+
+  - id: T6
+    name: Cost Usage And Observability
+    goal: Make the system measurable, operable, and cost-aware.
+    epics:
+      - id: T6-E1
+        name: Cost Ledger
+        stories:
+          - id: T6-E1-S1
+            name: Record per-job model and token cost
+          - id: T6-E1-S2
+            name: Add hard budget, soft budget, and stop-loss behavior
+      - id: T6-E2
+        name: Runtime Observability
+        stories:
+          - id: T6-E2-S1
+            name: Track job status, retries, and failures
+          - id: T6-E2-S2
+            name: Add operator-facing status surface
+      - id: T6-E3
+        name: Quality Evals
+        stories:
+          - id: T6-E3-S1
+            name: Create golden review cases
+          - id: T6-E3-S2
+            name: Measure false positives and regressions
+
+  - id: T7
+    name: External Capability Gateway
+    goal: Integrate external capability providers through a safe gateway.
+    epics:
+      - id: T7-E1
+        name: Gateway Foundation
+        stories:
+          - id: T7-E1-S1
+            name: Define gateway contract
+          - id: T7-E1-S2
+            name: Add auth, retry, timeout, and rate limits
+      - id: T7-E2
+        name: obolos.tech Integration
+        stories:
+          - id: T7-E2-S1
+            name: Model obolos.tech as external capabilities
+          - id: T7-E2-S2
+            name: Add routing and fallback rules
+
+  - id: T8
+    name: Enterprise Hardening
+    goal: Prepare for future enterprise-grade architecture without premature fragmentation.
+    epics:
+      - id: T8-E1
+        name: Contract-First Boundaries
+        stories:
+          - id: T8-E1-S1
+            name: Define contracts between major planes
+          - id: T8-E1-S2
+            name: Add architecture invariants for module boundaries
+      - id: T8-E2
+        name: Deployment And Environment Profiles
+        stories:
+          - id: T8-E2-S1
+            name: Define local, operator, and enterprise environment profiles
+          - id: T8-E2-S2
+            name: Standardize config and project-root resolution
+      - id: T8-E3
+        name: Compliance-Friendly Foundations
+        stories:
+          - id: T8-E3-S1
+            name: Improve audit export and traceability
+          - id: T8-E3-S2
+            name: Improve retention and client-safe evidence packaging
