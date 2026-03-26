@@ -150,6 +150,29 @@ class ReviewService:
         job.artifacts.append(json_artifact)
         self._storage.save_artifact(json_artifact)
 
+        # Execution trace artifact
+        trace_artifact = ReviewArtifact(
+            artifact_type=ArtifactType.EXECUTION_TRACE,
+            job_id=job.id,
+            content="",
+            content_json={"trace": [t.to_dict() for t in job.execution_trace]},
+            format="json",
+        )
+        job.artifacts.append(trace_artifact)
+        self._storage.save_artifact(trace_artifact)
+
+        # Findings-only export (if there are findings)
+        if report.findings:
+            findings_artifact = ReviewArtifact(
+                artifact_type=ArtifactType.FINDING_LIST,
+                job_id=job.id,
+                content="",
+                content_json={"findings": [f.to_dict() for f in report.findings]},
+                format="json",
+            )
+            job.artifacts.append(findings_artifact)
+            self._storage.save_artifact(findings_artifact)
+
         t_artifacts.complete(f"{len(job.artifacts)} artifacts created")
 
         # ── Step 6: Complete ──

@@ -55,6 +55,7 @@ class ArtifactType(str, Enum):
     """Types of artifacts produced by review."""
     REVIEW_REPORT = "review_report"
     FINDING_LIST = "finding_list"
+    EXECUTION_TRACE = "execution_trace"
     DIFF_ANALYSIS = "diff_analysis"
     SECURITY_REPORT = "security_report"
     EXECUTIVE_SUMMARY = "executive_summary"
@@ -117,6 +118,7 @@ class ReviewFinding:
     severity: Severity = Severity.MEDIUM
     title: str = ""
     description: str = ""
+    impact: str = ""                    # Business/security impact of this finding
     file_path: str = ""
     line_start: int = 0
     line_end: int = 0
@@ -132,6 +134,7 @@ class ReviewFinding:
             "severity": self.severity.value,
             "title": self.title,
             "description": self.description,
+            "impact": self.impact,
             "file_path": self.file_path,
             "line_start": self.line_start,
             "line_end": self.line_end,
@@ -303,6 +306,8 @@ class ReviewReport:
                     lines.append(f"**Category:** {f.category}")
                 lines.append(f"**Confidence:** {f.confidence.value}\n")
                 lines.append(f"{f.description}\n")
+                if f.impact:
+                    lines.append(f"**Impact:** {f.impact}\n")
                 if f.evidence:
                     lines.append(f"**Evidence:**\n```\n{f.evidence}\n```\n")
                 if f.recommendation:

@@ -396,7 +396,7 @@ class TestReviewService:
         assert job.report.verdict in ("pass", "pass_with_findings")
         assert job.report.executive_summary
         assert job.report.files_analyzed > 0
-        assert len(job.artifacts) == 2  # Markdown + JSON
+        assert len(job.artifacts) >= 3  # Markdown + JSON + trace (+ findings-only if findings exist)
         assert len(job.execution_trace) >= 3  # validate + structure + security + verify + verdict + artifacts
 
         # Markdown artifact
@@ -446,3 +446,27 @@ class TestReviewService:
         job = await service.run_review(intake)
         assert job.status == ReviewJobStatus.COMPLETED
         assert any("security" in a for a in job.report.assumptions)
+
+    async def test_execution_trace_artifact_created(self, service, sample_repo):
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        trace_artifacts = [a for a in job.artifacts if a.artifact_type == ArtifactType.EXECUTION_TRACE]
+        assert len(trace_artifacts) == 1
+        assert "trace" in trace_artifacts[0].content_json
+        assert len(trace_artifacts[0].content_json["trace"]) >= 3
+
+    async def test_artifacts_linked_to_job(self, service, sample_repo):
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        for artifact in job.artifacts:
+            assert artifact.job_id == job.id
+
+    async def test_finding_has_impact_field(self, service):
+        """Findings with security issues should be exportable with impact."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "bad.py").write_text('API_KEY = "sk-real-secret-value-here"\n')
+            intake = ReviewIntake(repo_path=tmpdir)
+            job = await service.run_review(intake)
+            if job.report.findings:
+                d = job.report.findings[0].to_dict()
+                assert "impact" in d  # Field exists even if empty
