@@ -268,6 +268,22 @@ class ReviewArtifact:
             "format": self.format,
         }
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ReviewArtifact:
+        """Reconstruct artifact metadata from persisted dict.
+
+        Content is stored separately in artifact storage — this
+        reconstructs the metadata graph only (id, type, job_id, format).
+        """
+        return cls(
+            id=d.get("id", ""),
+            artifact_type=ArtifactType(d.get("artifact_type", "review_report")),
+            job_id=d.get("job_id", ""),
+            content="",  # Content loaded via storage.get_artifacts()
+            created_at=d.get("created_at", ""),
+            format=d.get("format", "markdown"),
+        )
+
 
 # ─────────────────────────────────────────────
 # Review Report
@@ -496,6 +512,11 @@ class ReviewJob:
             )
             for t in d.get("execution_trace", [])
         ]
+        # Hydrate artifact metadata graph (content loaded via storage)
+        artifacts = [
+            ReviewArtifact.from_dict(a)
+            for a in d.get("artifacts", [])
+        ]
         return cls(
             id=d.get("id", ""),
             job_type=ReviewJobType(d.get("job_type", "repo_audit")),
@@ -510,6 +531,7 @@ class ReviewJob:
             started_at=d.get("started_at", ""),
             completed_at=d.get("completed_at", ""),
             report=report,
+            artifacts=artifacts,
             execution_trace=traces,
             total_tokens=d.get("total_tokens", 0),
             total_cost_usd=d.get("total_cost_usd", 0.0),

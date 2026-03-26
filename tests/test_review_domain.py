@@ -687,7 +687,8 @@ class TestDeliveryBundle:
         job = await service.run_review(intake)
         bundle = service.get_delivery_bundle(job.id)
         assert bundle is not None
-        assert bundle["delivery_ready"] is True
+        # Bundle is never delivery-ready without explicit approval
+        assert bundle["delivery_ready"] is False
         assert bundle["job_id"] == job.id
 
     async def test_bundle_contains_markdown(self, service, sample_repo):
@@ -969,10 +970,14 @@ class TestRedactionPolicy:
             "json_report": {"scope_description": "/Users/daniel/project", "findings": []},
             "execution_trace": [{"step": "analyze"}],
             "execution_mode": "read_only_host",
+            "requester": "daniel",
+            "source": "telegram",
         }
         result = redact_bundle(bundle)
         assert "execution_trace" not in result
         assert "execution_mode" not in result
+        assert "requester" not in result
+        assert "source" not in result
         assert result["export_mode"] == "client_safe"
         assert "/Users/" not in result["markdown_report"]
 
@@ -983,6 +988,103 @@ class TestRedactionPolicy:
         assert "supersecret" not in redacted
         assert "/Users/" not in redacted
         assert "b2jk" not in redacted
+
+
+# ─────────────────────────────────────────────
+# Audit v4 Regression Tests
+# ─────────────────────────────────────────────
+
+class TestAuditV4Regressions:
+    """Tests for audit findings v4: execution truth, delivery gating,
+    client-safe completeness, artifact recovery."""
+
+    async def test_workspace_manager_does_not_set_workspace_bound(self):
+        """Even with workspace_manager, execution_mode must be READ_ONLY_HOST
+        because v1 analyzers read from host path, not workspace."""
+        from unittest.mock import MagicMock
+        from agent.review.models import ExecutionMode
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        ws_mgr = MagicMock()
+        ws_mgr.create.return_value = MagicMock(id="ws-123")
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        service = ReviewService(
+            storage=ReviewStorage(db_path=db_path),
+            workspace_manager=ws_mgr,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "main.py").write_text("x = 1\n")
+            intake = ReviewIntake(repo_path=tmpdir)
+            job = await service.run_review(intake)
+        assert job.execution_mode == ExecutionMode.READ_ONLY_HOST
+        assert job.workspace_id == "ws-123"
+
+    async def test_execution_policy_trace_includes_analysis_path(self):
+        """Trace must include actual analysis_path, not just mode."""
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        service = ReviewService(storage=ReviewStorage(db_path=db_path))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "main.py").write_text("x = 1\n")
+            intake = ReviewIntake(repo_path=tmpdir)
+            job = await service.run_review(intake)
+        policy_traces = [t for t in job.execution_trace if t.step == "execution_policy"]
+        assert "analysis_path=" in policy_traces[0].detail
+
+    async def test_delivery_bundle_never_ready_without_approval(self):
+        """get_delivery_bundle() must return delivery_ready=False always.
+        Delivery requires explicit approval."""
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        service = ReviewService(storage=ReviewStorage(db_path=db_path))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "main.py").write_text("x = 1\n")
+            intake = ReviewIntake(repo_path=tmpdir)
+            job = await service.run_review(intake)
+        bundle = service.get_delivery_bundle(job.id)
+        assert bundle["delivery_ready"] is False
+
+    def test_client_safe_strips_requester_and_source(self):
+        """Client-safe bundle must not contain requester or source."""
+        from agent.review.redaction import redact_bundle
+        bundle = {
+            "requester": "daniel",
+            "source": "telegram",
+            "execution_mode": "read_only_host",
+            "execution_trace": [{"step": "test"}],
+            "markdown_report": "",
+            "findings_only": [],
+            "json_report": {},
+        }
+        result = redact_bundle(bundle)
+        assert "requester" not in result
+        assert "source" not in result
+
+    def test_from_dict_hydrates_artifacts(self):
+        """ReviewJob.from_dict() must reconstruct artifact metadata."""
+        from agent.review.models import ReviewJob
+        data = {
+            "id": "test-123",
+            "job_type": "repo_audit",
+            "intake": {"repo_path": "/tmp/test", "review_type": "repo_audit"},
+            "artifacts": [
+                {"id": "art-1", "artifact_type": "review_report",
+                 "job_id": "test-123", "format": "markdown", "created_at": ""},
+                {"id": "art-2", "artifact_type": "execution_trace",
+                 "job_id": "test-123", "format": "json", "created_at": ""},
+            ],
+            "execution_trace": [],
+            "report": {},
+        }
+        job = ReviewJob.from_dict(data)
+        assert len(job.artifacts) == 2
+        assert job.artifacts[0].id == "art-1"
+        assert job.artifacts[1].artifact_type.value == "execution_trace"
 
 
 # ─────────────────────────────────────────────

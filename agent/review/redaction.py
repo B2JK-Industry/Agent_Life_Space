@@ -108,6 +108,12 @@ def redact_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
     # Strip internal-only fields
     result.pop("execution_trace", None)
     result.pop("execution_mode", None)
+    result.pop("requester", None)       # Internal identity
+    result.pop("source", None)          # Internal channel (telegram/api/manual)
+
+    # Redact error field if present (may leak paths/traces)
+    if result.get("error"):
+        result["error"] = apply_client_redaction(result["error"])
 
     result["export_mode"] = "client_safe"
     return result
