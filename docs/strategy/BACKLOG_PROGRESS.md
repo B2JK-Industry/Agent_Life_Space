@@ -46,8 +46,8 @@ Status legend:
 | Epic | Status | Notes |
 |------|--------|-------|
 | T1-E1 Canonical Job Model | in_progress | `ReviewJob` with from_dict() recovery exists, but system still also has `JobRunner`, `Task`, and `AgentLoop` models |
-| T1-E2 Artifact-First Execution | mostly_complete | Full payload persistence + recovery. Artifacts contain content, not just metadata. T1-E2-S5 closed. |
-| T1-E3 Workspace And Execution Discipline | in_progress | ReviewService accepts WorkspaceManager, execution mode is explicit (READ_ONLY_HOST/WORKSPACE_BOUND). T1-E3-S5 partially closed. |
+| T1-E2 Artifact-First Execution | mostly_complete | Artifact persistence via storage. ReviewJob.from_dict() hydrates artifact metadata; full content via storage.get_artifacts(). |
+| T1-E3 Workspace And Execution Discipline | in_progress | ReviewService accepts WorkspaceManager, but v1 always READ_ONLY_HOST (analyzers read host path). WORKSPACE_BOUND deferred to v2. |
 
 ### T2 Reviewer Product
 
@@ -107,20 +107,22 @@ Status legend:
 
 ## Current Strategic Interpretation
 
-Reviewer v1 is now `mostly_complete`:
-- recovery-safe job storage with full from_dict() reconstruction
-- artifacts with full content payloads (not just metadata)
-- explicit execution mode (READ_ONLY_HOST / WORKSPACE_BOUND)
-- Telegram /review routes through ReviewService
-- execution policy audit trace on every review job
+Reviewer v1 status: `complete_for_phase`
 
-Reviewer v1 is now `complete_for_phase`:
-- delivery approval gating: request_delivery_approval() creates approval request
-- client-safe export: get_client_safe_bundle() redacts paths, strips trace
-- PR review: tested with real git repo fixture (init + commits + diff)
+What is closed:
+- recovery-safe job storage with from_dict() reconstruction (including artifact metadata)
+- execution mode always READ_ONLY_HOST (honest — v1 reads host path, not workspace)
+- delivery approval is strict: bundle.delivery_ready=False by default, requires
+  request_delivery_approval() with approval queue
+- client-safe export: redact_bundle() strips requester, source, execution_mode,
+  execution_trace, and applies path/hostname/secret redaction
+- PR review: tested with real git repo fixture
 - legacy Programmer.review_file() deprecated with DeprecationWarning
+- Telegram /review routes through ReviewService
+- execution policy audit trace includes actual analysis path
 
 Remaining for Reviewer v2:
 - LLM-augmented analysis (deterministic-only in v1)
+- workspace-bound execution (analyzers reading from workspace, not host)
 - external delivery send workflow (Operator scope)
 - Programmer.review_file() full removal
