@@ -8,25 +8,55 @@ This project follows [Semantic Versioning](https://semver.org/):
 - MINOR (1.x.0) — nové features, spätne kompatibilné
 - MAJOR (x.0.0) — breaking changes (len so schválením)
 
-## [Unreleased]
+## [1.1.0] — 2026-03-26
 
-### Added
-- **Memory provenance model** — epistemic status (observed/user_asserted/inferred/verified/stale) for all memory entries
-- **Memory expiry** — entries can have expires_at, auto-mark stale
-- **FTS5 retrieval** — full-text search for conversation memory (replaces LIKE)
-- **Tool capability manifest** — risk_level, side_effect_class, owner_only, approval, audit_label per tool
-- **Policy audit trail** — ring buffer of all policy decisions, queryable
-- **Workspace persistence** — SQLite-backed workspace lifecycle, audit trail, recovery after restart
-- **Centralized persona** — agent/core/persona.py, single source of truth for prompts
-- **Explainable routing** — classify_task_detailed returns signal breakdown
-- **Routing eval tests** — parametrized test suite for classification quality
-- **CI architecture invariants** — automated checks for persona duplication, hardcoded paths, sandbox default
+Breakthrough architecture release. 19 PR, 974+ tests, ~8000 lines added.
 
-### Changed
-- **Host file access blocked by default** — AGENT_SANDBOX_ONLY default changed from "0" to "1"
-- **Routing scoring** — multi-signal with explicit weights instead of implicit thresholds
-- **Tool policy** — capability-driven decisions instead of flat risk bucket
-- **CI** — added mypy type check step, DeprecationWarning as error
+### Epistemic Memory
+- **Provenance model** — observed/user_asserted/inferred/verified/stale status per memory
+- **MemoryKind** — fact/belief/claim/procedure distinction
+- **Memory expiry** — entries with expires_at, auto-mark stale
+- **FTS5 retrieval** — full-text search replaces LIKE in conversation memory
+- **Conflict detection** — finds contradicting memories about same topic
+- **Audit report** — epistemic health of knowledge base
+- **Consolidation pipeline** — inferred → verified promotion, stale detection
+
+### Tool Governance
+- **Capability manifest** — risk_level, side_effect_class, owner_only, approval, audit_label per tool
+- **ActionEnvelope** — 4-step pipeline: request → policy → execute → result
+- **Structured denial codes** — SAFE_MODE, OWNER_ONLY, UNKNOWN_TOOL, APPROVAL_REQUIRED
+- **Policy simulation** — simulate() shows what WOULD happen without logging
+- **Policy audit trail** — ring buffer with denial codes
+
+### Approval & Controls
+- **Approval queue** — propose → approve/deny → execute for risk-sensitive actions
+- **Finance integration** — propose_expense() auto-creates approval request
+- **Operator controls** — runtime disable/enable tools, lockdown/unlock
+- **Agent status model** — IDLE/THINKING/EXECUTING/WAITING_APPROVAL/BLOCKED/DEGRADED
+
+### Security
+- **Host access blocked by default** — AGENT_SANDBOX_ONLY=1 is default
+- **Security model document** — docs/SECURITY_MODEL.md as code artefact
+- **Security invariant tests** — CI-enforced safety checks
+- **Red-team test suite** — privilege escalation, rapid-fire, channel context
+- **Channel policy** — per-channel trust levels, response classification (SAFE/PRIVATE/INTERNAL)
+- **Replay protection** — nonce tracking, timestamp freshness, HMAC signing for API
+
+### Intelligence
+- **Explainable routing** — classify_task_detailed with signal breakdown
+- **Adversarial routing tests** — false positive prevention, accuracy benchmark ≥80%
+- **3 classification bug fixes** — "fix" keyword too generic, simple vs programming, backtick detection
+- **Explanation layer** — DecisionExplanation captures routing/policy/learning/memory context
+- **Learning model document** — docs/LEARNING_MODEL.md defining 4 learning types
+- **Learning audit trail** — LearningAuditLog for all learning decisions
+
+### Infrastructure
+- **Workspace limits** — max_active (default 3), TTL auto-cleanup
+- **Workspace persistence** — SQLite-backed lifecycle, audit trail, recovery
+- **Centralized persona** — single source of truth for prompts
+- **Smoke tests** — all modules import without errors
+- **CI** — mypy, architecture invariants, DeprecationWarning as error
+- **974+ tests** — from 708 to 974+, zero regressions
 
 ### Security
 - Host filesystem access via CLI now requires explicit AGENT_SANDBOX_ONLY=0
