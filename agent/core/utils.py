@@ -1,7 +1,6 @@
 """Utility functions for agent core."""
 
 from datetime import datetime
-import locale
 
 
 def get_slovak_time() -> str:

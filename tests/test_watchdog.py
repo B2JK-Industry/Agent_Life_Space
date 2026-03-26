@@ -154,7 +154,6 @@ class TestDoubleStart:
 
     @pytest.mark.asyncio
     async def test_double_start_guarded(self, watchdog: Watchdog) -> None:
-        import asyncio
 
         watchdog._running = True
         # Second start should return immediately (logged warning)

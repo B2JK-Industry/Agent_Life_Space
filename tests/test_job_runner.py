@@ -17,8 +17,7 @@ import asyncio
 
 import pytest
 
-from agent.core.job_runner import JobConfig, JobPriority, JobRunner, JobStatus
-
+from agent.core.job_runner import JobConfig, JobRunner, JobStatus
 
 # --- Test job functions ---
 
@@ -226,7 +225,7 @@ class TestJobCancel:
         job_id = await runner.schedule("slow", {"duration": 5.0}, config=config)
         await asyncio.sleep(0.05)
 
-        cancelled = await runner.cancel(job_id)
+        await runner.cancel(job_id)
         # Job might already be running, cancel removes from active
         # This is a best-effort cancel
         record = runner.get_job_status(job_id)

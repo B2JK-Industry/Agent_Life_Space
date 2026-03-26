@@ -17,14 +17,13 @@ from __future__ import annotations
 import pytest
 
 from agent.brain.decision_engine import (
+    _CATEGORY_METHOD,
     ALGORITHMIC_CATEGORIES,
     HYBRID_CATEGORIES,
     LLM_CATEGORIES,
-    Decision,
     DecisionCategory,
     DecisionEngine,
     DecisionMethod,
-    _CATEGORY_METHOD,
 )
 
 
@@ -159,7 +158,7 @@ class TestCache:
         assert d2.action == d1.action
 
     def test_different_inputs_not_cached(self, engine: DecisionEngine) -> None:
-        d1 = engine.should_use_llm("Write a blog post")
+        engine.should_use_llm("Write a blog post")
         d2 = engine.should_use_llm("Sort items by priority")
         assert d2.method != DecisionMethod.CACHED
 

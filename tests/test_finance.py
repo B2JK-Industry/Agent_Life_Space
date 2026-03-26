@@ -19,7 +19,6 @@ import pytest
 
 from agent.finance.tracker import (
     FinanceTracker,
-    RiskLevel,
     TransactionStatus,
     TransactionType,
 )

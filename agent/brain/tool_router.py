@@ -20,7 +20,7 @@ Rozšíriteľné: pridaj nový pattern do TOOL_PATTERNS.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -100,7 +100,7 @@ async def detect_and_fetch(text: str) -> dict[str, str]:
 
 def build_always_inject() -> str:
     """Kontext ktorý sa VŽDY pridá do promptu (zadarmo)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return (
         f"Aktuálny dátum a čas: {now.strftime('%Y-%m-%d %H:%M')} UTC\n"
     )
@@ -112,7 +112,7 @@ def format_tool_context(results: dict[str, str]) -> str:
         return ""
 
     lines = ["Aktuálne dáta (práve zistené):"]
-    for key, value in results.items():
+    for _key, value in results.items():
         lines.append(f"  {value}")
     return "\n".join(lines) + "\n"
 
@@ -178,7 +178,6 @@ async def _fetch_weather(location: str) -> str:
 
 def _get_datetime() -> str:
     """Aktuálny dátum a čas."""
-    import locale
     now = datetime.now()
     return f"Dátum: {now.strftime('%Y-%m-%d')}, Čas: {now.strftime('%H:%M:%S')}"
 

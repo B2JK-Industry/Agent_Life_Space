@@ -12,13 +12,11 @@ Pokrýva:
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from agent.core.agent_loop import AgentLoop, WorkItem
-
 
 # --- WorkItem ---
 
@@ -159,6 +157,7 @@ class TestCircuitBreaker:
         """Verify the threshold is 3 consecutive errors."""
         # Read the source to verify the constant
         import inspect
+
         from agent.core import agent_loop
         source = inspect.getsource(agent_loop.AgentLoop._worker)
         assert "self._consecutive_errors >= 3" in source
@@ -166,6 +165,7 @@ class TestCircuitBreaker:
     def test_circuit_breaker_pause_is_30s(self):
         """Verify the pause duration is 30 seconds."""
         import inspect
+
         from agent.core import agent_loop
         source = inspect.getsource(agent_loop.AgentLoop._worker)
         assert "asyncio.sleep(30)" in source

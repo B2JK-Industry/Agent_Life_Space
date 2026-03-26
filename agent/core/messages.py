@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -137,7 +137,7 @@ class Message(BaseModel):
     msg_type: MessageType
     priority: Priority = Priority.NORMAL
     timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     payload: dict[str, Any] = Field(default_factory=dict)
     status: MessageStatus = MessageStatus.PENDING

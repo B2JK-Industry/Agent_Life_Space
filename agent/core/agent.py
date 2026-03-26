@@ -27,7 +27,6 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
-import signal
 from pathlib import Path
 from typing import Any
 
@@ -36,13 +35,13 @@ import structlog
 from agent.brain.decision_engine import DecisionEngine
 from agent.core.job_runner import JobConfig, JobRunner
 from agent.core.llm_router import LLMRouter
-from agent.core.messages import Message, MessageType, ModuleID, Priority
+from agent.core.messages import Message, MessageType, ModuleID
 from agent.core.router import MessageRouter
 from agent.core.watchdog import Watchdog
-from agent.memory.store import MemoryEntry, MemoryStore, MemoryType
 from agent.finance.tracker import FinanceTracker
+from agent.memory.store import MemoryEntry, MemoryStore, MemoryType
 from agent.projects.manager import ProjectManager
-from agent.tasks.manager import TaskManager, TaskStatus
+from agent.tasks.manager import TaskManager
 from agent.work.workspace import WorkspaceManager
 
 logger = structlog.get_logger(__name__)

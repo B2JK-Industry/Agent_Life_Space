@@ -24,7 +24,7 @@ John vie:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -71,7 +71,7 @@ class KnowledgeBase:
             f"# {name}\n"
             f"_Kategória: {category} | "
             f"Tags: {tags_str} | "
-            f"Aktualizované: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}_\n\n"
+            f"Aktualizované: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}_\n\n"
         )
 
         filepath.write_text(header + content, encoding="utf-8")

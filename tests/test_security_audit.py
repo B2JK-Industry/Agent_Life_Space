@@ -24,14 +24,12 @@ Oblasti:
 from __future__ import annotations
 
 import ast
-import os
 import re
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
-
 
 AGENT_ROOT = Path(__file__).parent.parent / "agent"
 
@@ -91,7 +89,7 @@ class TestNoHardcodedSecrets:
                         f"{py_file.relative_to(AGENT_ROOT.parent)}:{line_num} — {match.group()[:30]}..."
                     )
 
-        assert not violations, f"Hardcoded secrets found:\n" + "\n".join(violations)
+        assert not violations, "Hardcoded secrets found:\n" + "\n".join(violations)
 
     def test_no_secrets_in_git_tracked_files(self) -> None:
         """Vault directory must be gitignored."""
@@ -141,7 +139,7 @@ class TestSQLSafety:
                         violations.append(f"{rel_path}:{i} — {stripped[:80]}")
 
         assert not violations, (
-            f"SQL queries with f-string interpolation (potential injection):\n"
+            "SQL queries with f-string interpolation (potential injection):\n"
             + "\n".join(violations)
         )
 
@@ -184,7 +182,7 @@ class TestNoEvalExec:
                             f"{py_file.relative_to(AGENT_ROOT.parent)}:{node.lineno}"
                         )
 
-        assert not violations, f"eval/exec calls found:\n" + "\n".join(violations)
+        assert not violations, "eval/exec calls found:\n" + "\n".join(violations)
 
     def test_no_compile_with_exec(self) -> None:
         """No compile() calls that could execute code."""
@@ -197,7 +195,7 @@ class TestNoEvalExec:
             if re.search(r'compile\([^)]*["\']exec["\']', source):
                 violations.append(str(py_file.relative_to(AGENT_ROOT.parent)))
 
-        assert not violations, f"compile() with exec found:\n" + "\n".join(violations)
+        assert not violations, "compile() with exec found:\n" + "\n".join(violations)
 
 
 # ─────────────────────────────────────────────
@@ -425,7 +423,7 @@ class TestSubprocessSafety:
                         f"{py_file.relative_to(AGENT_ROOT.parent)}:{i} — {line.strip()[:80]}"
                     )
 
-        assert not violations, f"shell=True found:\n" + "\n".join(violations)
+        assert not violations, "shell=True found:\n" + "\n".join(violations)
 
     def test_agent_loop_sanitizes_input(self) -> None:
         """AgentLoop sanitizes work descriptions."""
@@ -525,6 +523,7 @@ class TestMessageSecurity:
     def test_message_ttl_expiry(self) -> None:
         """Expired messages are detected."""
         import time
+
         from agent.core.messages import Message, MessageType, ModuleID
 
         msg = Message(
@@ -540,8 +539,9 @@ class TestMessageSecurity:
 
     def test_message_payload_must_be_serializable(self) -> None:
         """Message payload must be JSON-serializable."""
-        from agent.core.messages import Message, MessageType, ModuleID
         import orjson
+
+        from agent.core.messages import Message, MessageType, ModuleID
 
         msg = Message(
             source=ModuleID.BRAIN,
@@ -583,7 +583,7 @@ class TestEnvVarSecurity:
                 )
 
         assert not violations, (
-            f"os.environ[] without .get() (crashes if missing):\n"
+            "os.environ[] without .get() (crashes if missing):\n"
             + "\n".join(violations)
         )
 

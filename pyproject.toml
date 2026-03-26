@@ -41,7 +41,26 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "S", "B", "A", "C4", "UP"]
+ignore = [
+    "E501",   # line-too-long — ruff format handles this
+    "UP042",  # replace-str-enum — Pydantic requires str+Enum pattern
+    "S110",   # try-except-pass — intentional fallback pattern
+    "N806",   # non-lowercase-variable-in-function — used for constants in functions
+    "S108",   # hardcoded-temp-file — /tmp usage is intentional (PID file, Docker tmpfs)
+]
 # S = security checks (bandit), B = bugbear, A = builtins, C4 = comprehensions
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S108", "B017"]  # assert, passwords, /tmp, assertRaises — OK in tests
+"agent/core/agent_loop.py" = ["S603", "S607"]  # subprocess — intentional, sanitized
+"agent/core/sandbox.py" = ["S603", "S607"]  # subprocess — Docker sandbox, controlled
+"agent/core/maintenance.py" = ["S603", "S607"]  # subprocess — system maintenance
+"agent/brain/programmer.py" = ["S603", "S607"]  # subprocess — pytest/py_compile
+"agent/brain/learning.py" = ["S603", "S607"]  # subprocess — skill tests
+"agent/social/telegram_handler.py" = ["S603", "S607", "E741"]  # subprocess — Claude CLI; l=line in list comp
+"agent/**/__main__.py" = ["S603", "S607"]
+"agent/memory/persistent_conversation.py" = ["S101", "S608"]  # assert for DB preconditions; SQL built safely with params
+"agent/projects/manager.py" = ["S101"]  # assert for DB preconditions
 
 [tool.mypy]
 python_version = "3.11"

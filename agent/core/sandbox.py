@@ -250,7 +250,7 @@ class DockerSandbox:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     proc.communicate(input=stdin_bytes), timeout=timeout,
                 )
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 # Kill the Docker container directly (proc.kill() kills only sg wrapper)
                 kill_cmd = f"sg docker -c 'docker kill {container_name}'"
                 kill_proc = await asyncio.create_subprocess_shell(
@@ -266,7 +266,7 @@ class DockerSandbox:
                     pass
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=3)
-                except (asyncio.TimeoutError, TimeoutError):
+                except TimeoutError:
                     pass
                 logger.warning("sandbox_timeout", image=image, timeout=timeout,
                                container=container_name)

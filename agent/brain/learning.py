@@ -21,7 +21,6 @@ Toto je most medzi "myslím" a "viem".
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from typing import Any
 
 import structlog
@@ -561,7 +560,7 @@ class LearningSystem:
             names = ", ".join(s["name"] for s in risky)
             parts.append(f"Pozor na: {names} (nestabilné)")
         if past_errors:
-            parts.append(f"Minule sa vyskytli chyby v podobnej úlohe")
+            parts.append("Minule sa vyskytli chyby v podobnej úlohe")
         if not parts:
             parts.append("Nemám skúsenosti s touto témou")
         return ". ".join(parts) + "."

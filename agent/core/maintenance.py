@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -308,7 +308,7 @@ class ServerMaintenance:
             warnings.append(f"Network issues: {', '.join(failed)}")
 
         report = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "stale_processes": stale,
             "cache_cleanup": cache,
             "disk": disk,

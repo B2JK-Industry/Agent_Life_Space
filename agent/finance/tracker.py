@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -61,7 +61,7 @@ class Transaction:
     rationale: str = ""
     source: str = ""  # Where money comes from/goes to
     created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     approved_at: str | None = None
     completed_at: str | None = None
@@ -242,7 +242,7 @@ class FinanceTracker:
             description=description,
             category=category,
             source=source,
-            completed_at=datetime.now(timezone.utc).isoformat(),
+            completed_at=datetime.now(UTC).isoformat(),
         )
 
         self._transactions[tx.id] = tx
@@ -267,7 +267,7 @@ class FinanceTracker:
             raise ValueError(msg)
 
         tx.status = TransactionStatus.APPROVED
-        tx.approved_at = datetime.now(timezone.utc).isoformat()
+        tx.approved_at = datetime.now(UTC).isoformat()
         tx.approved_by = "human"  # Always human
         await self._persist(tx)
 
@@ -296,7 +296,7 @@ class FinanceTracker:
             raise ValueError(msg)
 
         tx.status = TransactionStatus.COMPLETED
-        tx.completed_at = datetime.now(timezone.utc).isoformat()
+        tx.completed_at = datetime.now(UTC).isoformat()
         await self._persist(tx)
         return tx
 
@@ -305,7 +305,7 @@ class FinanceTracker:
         Check budget status. DETERMINISTIC — no LLM.
         Returns remaining budget and whether proposed amount fits.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         today = now.date().isoformat()
         month = now.strftime("%Y-%m")
 
@@ -392,7 +392,7 @@ class FinanceTracker:
             - 7 dní: escalation (urgentná notifikácia)
             - 14 dní: auto-cancel (Daniel evidentne nechce)
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stale: list[dict[str, Any]] = []
 
         for tx in self._transactions.values():

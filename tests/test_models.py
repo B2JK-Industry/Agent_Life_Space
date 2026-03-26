@@ -112,5 +112,5 @@ class TestListModels:
 
     def test_model_ids_valid(self):
         models = list_models()
-        for task, model_id in models.items():
+        for _task, model_id in models.items():
             assert "claude" in model_id

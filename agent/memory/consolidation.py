@@ -24,7 +24,6 @@ Konsolidácia beží periodicky (cron) a:
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -131,7 +130,7 @@ class MemoryConsolidation:
 
         # 1. Pattern matching — hľadaj opakujúce sa témy
         for entry in episodic:
-            for pattern_name, pattern in PATTERN_EXTRACTORS.items():
+            for _pattern_name, pattern in PATTERN_EXTRACTORS.items():
                 content_lower = entry.content.lower()
                 if any(trigger in content_lower for trigger in pattern["triggers"]):
                     # Check if we already have this as semantic/procedural

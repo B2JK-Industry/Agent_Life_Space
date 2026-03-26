@@ -7,10 +7,10 @@ from __future__ import annotations
 import pytest
 
 from agent.brain.tool_router import (
+    _get_datetime,
     build_always_inject,
     detect_and_fetch,
     format_tool_context,
-    _get_datetime,
 )
 
 

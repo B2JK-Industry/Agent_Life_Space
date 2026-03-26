@@ -16,21 +16,19 @@ Docker nie je dostupný v CI → testujeme cez mock.
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agent.core.sandbox import (
-    DockerSandbox,
-    SandboxResult,
-    SandboxUnavailableError,
     _DEFAULT_CPUS,
     _DEFAULT_MEMORY,
     _DEFAULT_TIMEOUT,
     _MAX_TIMEOUT,
+    DockerSandbox,
+    SandboxResult,
+    SandboxUnavailableError,
 )
-
 
 # --- SandboxResult ---
 

@@ -1,6 +1,7 @@
 """Tests for agent.core.utils."""
 
 import re
+
 from agent.core.utils import get_slovak_time
 
 

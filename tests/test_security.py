@@ -12,11 +12,9 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # 1. Prompt injection blocking — TelegramHandler._sanitize_input
@@ -373,7 +371,7 @@ class TestOwnerIdentification:
         message = {
             "chat": {"id": 200, "type": "supergroup"},
             "from": {"id": 99999, "username": "stranger", "first_name": "Bob"},
-            "text": f"@test_bot ahoj",
+            "text": "@test_bot ahoj",
         }
 
         with patch.object(bot, "send_message", new_callable=AsyncMock):
@@ -396,7 +394,7 @@ class TestOwnerIdentification:
         message = {
             "chat": {"id": 200, "type": "supergroup"},
             "from": {"id": 99999, "username": "", "first_name": "Bob"},
-            "text": f"@test_bot ahoj",
+            "text": "@test_bot ahoj",
         }
 
         with patch.object(bot, "send_message", new_callable=AsyncMock):
@@ -596,7 +594,7 @@ class TestGroupChatSafeMode:
         h._handle_text = mock_handle_text
         h._bot = None
 
-        result = await h.handle(
+        await h.handle(
             text="ahoj",
             user_id=12345,
             chat_id=200,

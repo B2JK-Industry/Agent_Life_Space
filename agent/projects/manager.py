@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -58,7 +58,7 @@ class Project:
     tags: list[str] = field(default_factory=list)
     priority: float = 0.5
     created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     started_at: str | None = None
     completed_at: str | None = None
@@ -210,7 +210,7 @@ class ProjectManager:
         if not project:
             return None
         project.status = ProjectStatus.ACTIVE
-        project.started_at = datetime.now(timezone.utc).isoformat()
+        project.started_at = datetime.now(UTC).isoformat()
         await self.update(project)
         logger.info("project_started", id=project_id, name=project.name)
         return project
@@ -221,7 +221,7 @@ class ProjectManager:
         if not project:
             return None
         project.status = ProjectStatus.COMPLETED
-        project.completed_at = datetime.now(timezone.utc).isoformat()
+        project.completed_at = datetime.now(UTC).isoformat()
         project.result = result
         await self.update(project)
         logger.info("project_completed", id=project_id, name=project.name)

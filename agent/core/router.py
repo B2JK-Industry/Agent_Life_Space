@@ -23,8 +23,9 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import defaultdict
+from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 import aiosqlite
 import orjson
@@ -33,9 +34,7 @@ import structlog
 from agent.core.messages import (
     Message,
     MessageStatus,
-    MessageType,
     ModuleID,
-    Priority,
 )
 
 logger = structlog.get_logger(__name__)
@@ -255,7 +254,7 @@ class MessageRouter:
                     _priority, _seq, message = await asyncio.wait_for(
                         self._queue.get(), timeout=1.0
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
                 if message.is_expired():
@@ -312,7 +311,7 @@ class MessageRouter:
             if response is not None:
                 await self.send(response)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._metrics["delivery_timeout"] += 1
             await self._maybe_retry(
                 message, f"delivery_timeout_after_{self._delivery_timeout}s"

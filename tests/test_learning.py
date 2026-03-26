@@ -21,9 +21,8 @@ import tempfile
 
 import pytest
 
-from agent.brain.knowledge import KnowledgeBase
 from agent.brain.learning import LearningSystem
-from agent.brain.skills import Skill, SkillRegistry, SkillStatus, MASTERY_THRESHOLD
+from agent.brain.skills import MASTERY_THRESHOLD, Skill
 
 
 @pytest.fixture

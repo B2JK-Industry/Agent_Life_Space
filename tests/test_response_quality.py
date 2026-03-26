@@ -9,8 +9,6 @@ Pokrýva:
 
 from __future__ import annotations
 
-import pytest
-
 from agent.core.response_quality import QualityAssessment, assess_quality
 
 

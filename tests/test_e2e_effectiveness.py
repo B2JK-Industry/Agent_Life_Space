@@ -21,18 +21,17 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from agent.core.agent import AgentOrchestrator
-from agent.core.messages import Message, MessageType, ModuleID, Priority
-from agent.core.router import MessagePersistence, MessageRouter
-from agent.memory.store import MemoryEntry, MemoryStore, MemoryType
-from agent.memory.persistent_conversation import PersistentConversation
 from agent.core.agent_loop import AgentLoop, _sanitize_work_description
+from agent.core.messages import Message, MessageType, ModuleID
 from agent.core.models import classify_task, get_model
-
+from agent.core.router import MessagePersistence, MessageRouter
+from agent.memory.persistent_conversation import PersistentConversation
+from agent.memory.store import MemoryEntry, MemoryType
 
 # ─────────────────────────────────────────────
 # Fixtures
@@ -340,8 +339,8 @@ class TestTaskLifecycle:
     @pytest.mark.asyncio
     async def test_task_priority_ordering(self, agent: AgentOrchestrator) -> None:
         """Higher priority tasks are picked first."""
-        low = await agent.tasks.create_task(name="Low priority", priority=0.2)
-        high = await agent.tasks.create_task(name="High priority", priority=0.9)
+        await agent.tasks.create_task(name="Low priority", priority=0.2)
+        await agent.tasks.create_task(name="High priority", priority=0.9)
 
         next_task = agent.tasks.get_next_task()
         assert next_task is not None

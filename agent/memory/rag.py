@@ -57,7 +57,6 @@ class RAGIndex:
         if model is None:
             return 0
 
-        import numpy as np
 
         self._index.clear()
         count = 0

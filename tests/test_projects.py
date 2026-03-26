@@ -4,14 +4,12 @@ Tests pre agent/projects/manager.py a agent/work/workspace.py.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
 
 from agent.projects.manager import Project, ProjectManager, ProjectStatus
 from agent.work.workspace import Workspace, WorkspaceManager, WorkspaceStatus
-
 
 # --- Project ---
 

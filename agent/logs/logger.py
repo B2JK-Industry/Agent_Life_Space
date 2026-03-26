@@ -19,8 +19,7 @@ Security:
 
 from __future__ import annotations
 
-import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -119,7 +118,7 @@ class AgentLogger:
         Write a structured log entry. Returns the entry for testing.
         """
         entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": level.upper(),
             "event": event,
             "source": source,

@@ -14,8 +14,7 @@ Storage: skills.json — čitateľný, editovateľný, persistentný.
 
 from __future__ import annotations
 
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -91,7 +90,7 @@ class Skill:
 
     def record_success(self) -> None:
         """John used this skill successfully."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         self.success_count += 1
         self.last_used = now
         if not self.first_learned:
@@ -110,7 +109,7 @@ class Skill:
     def record_failure(self, error: str = "") -> None:
         """John tried but failed."""
         self.fail_count += 1
-        self.last_used = datetime.now(timezone.utc).isoformat()
+        self.last_used = datetime.now(UTC).isoformat()
         self.last_error = error
         if self.success_count == 0:
             self.status = SkillStatus.FAILED

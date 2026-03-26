@@ -15,7 +15,7 @@ import tempfile
 
 import pytest
 
-from agent.brain.programmer import CodeAnalysis, CodeReview, Programmer
+from agent.brain.programmer import Programmer
 
 
 @pytest.fixture

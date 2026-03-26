@@ -14,7 +14,7 @@ import asyncio
 import os
 import signal
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 
@@ -132,7 +132,7 @@ async def run_agent(data_dir: str = "agent") -> None:
             # Preload semantic models in background
             async def _preload_models():
                 try:
-                    from agent.brain.semantic_router import _load_model, _get_intent_embeddings
+                    from agent.brain.semantic_router import _get_intent_embeddings, _load_model
                     _load_model()
                     _get_intent_embeddings()
                     logger.info("semantic_router_preloaded")
@@ -223,7 +223,7 @@ async def run_agent(data_dir: str = "agent") -> None:
             crash_log.parent.mkdir(parents=True, exist_ok=True)
             import traceback
             crash_log.write_text(
-                f"Time: {datetime.now(timezone.utc).isoformat()}\n"
+                f"Time: {datetime.now(UTC).isoformat()}\n"
                 f"Error: {e}\n\n"
                 f"{traceback.format_exc()}"
             )

@@ -23,9 +23,8 @@ Index: In-memory for fast retrieval, rebuilt from DB on startup.
 
 from __future__ import annotations
 
-import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -64,7 +63,7 @@ class MemoryEntry:
         self.confidence = max(0.0, min(1.0, confidence))
         self.importance = max(0.0, min(1.0, importance))
         self.metadata = metadata or {}
-        self.created_at = datetime.now(timezone.utc).isoformat()
+        self.created_at = datetime.now(UTC).isoformat()
         self.last_accessed = self.created_at
         self.access_count = 0
         self.decay_factor = 1.0  # Starts at full relevance
@@ -72,7 +71,7 @@ class MemoryEntry:
     def access(self) -> None:
         """Record an access — reinforces the memory."""
         self.access_count += 1
-        self.last_accessed = datetime.now(timezone.utc).isoformat()
+        self.last_accessed = datetime.now(UTC).isoformat()
         # Reinforce: accessing a memory reduces its decay
         self.decay_factor = min(1.0, self.decay_factor + 0.1)
 
@@ -87,8 +86,8 @@ class MemoryEntry:
             return self.importance * self.confidence * self.decay_factor
 
         # Tag overlap (Jaccard-like)
-        query_set = set(t.lower() for t in query_tags)
-        memory_set = set(t.lower() for t in self.tags)
+        query_set = {t.lower() for t in query_tags}
+        memory_set = {t.lower() for t in self.tags}
         if not memory_set:
             tag_score = 0.1  # Low but not zero for untagged memories
         else:
@@ -99,7 +98,7 @@ class MemoryEntry:
         # Recency boost (memories accessed recently score higher)
         try:
             last = datetime.fromisoformat(self.last_accessed)
-            age_hours = (datetime.now(timezone.utc) - last).total_seconds() / 3600
+            age_hours = (datetime.now(UTC) - last).total_seconds() / 3600
             recency = 1.0 / (1.0 + age_hours / 24.0)  # Halves every 24h
         except (ValueError, TypeError):
             recency = 0.5

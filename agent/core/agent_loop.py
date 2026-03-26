@@ -18,13 +18,12 @@ Toto beží na pozadí — neblokuje Telegram polling.
 from __future__ import annotations
 
 import asyncio
-import subprocess
 import os
-from collections import deque
-from datetime import datetime, timezone
-from typing import Any
-
 import re
+import subprocess
+from collections import deque
+from datetime import UTC, datetime
+from typing import Any
 
 import orjson
 import structlog
@@ -62,7 +61,7 @@ class WorkItem:
         self.description = description
         self.callback_chat_id = callback_chat_id
         self.priority = priority
-        self.created_at = datetime.now(timezone.utc).isoformat()
+        self.created_at = datetime.now(UTC).isoformat()
         self.result: str | None = None
         self.success: bool = False
 
@@ -182,7 +181,7 @@ class AgentLoop:
                     if self._bot and item.callback_chat_id:
                         await self._bot.send_message(
                             item.callback_chat_id,
-                            f"⚠️ 3 chyby za sebou. Pauzujem na 30s.",
+                            "⚠️ 3 chyby za sebou. Pauzujem na 30s.",
                         )
                     await asyncio.sleep(30)
                     self._consecutive_errors = 0

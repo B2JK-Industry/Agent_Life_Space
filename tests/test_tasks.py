@@ -11,13 +11,12 @@ Test scenarios for Task Manager.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import tempfile
 
 import pytest
 
-from agent.tasks.manager import Task, TaskManager, TaskStatus, TaskType
+from agent.tasks.manager import Task, TaskManager, TaskStatus
 
 
 @pytest.fixture

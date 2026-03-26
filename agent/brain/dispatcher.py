@@ -170,6 +170,7 @@ class InternalDispatcher:
     async def _handle_skills(self) -> str:
         try:
             from pathlib import Path
+
             from agent.brain.skills import SkillRegistry
             base = str(Path.home() / "agent-life-space")
             registry = SkillRegistry(f"{base}/agent/brain/skills.json")

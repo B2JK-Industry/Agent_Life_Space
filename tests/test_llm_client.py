@@ -11,8 +11,7 @@ Pokrýva:
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -22,7 +21,6 @@ from agent.core.llm_client import (
     LLMCallResult,
     _estimate_cost,
 )
-
 
 # --- _estimate_cost ---
 

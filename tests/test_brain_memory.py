@@ -17,7 +17,6 @@ Practical scenarios:
 
 from __future__ import annotations
 
-import asyncio
 import os
 import tempfile
 
@@ -29,7 +28,7 @@ from agent.brain.decision_engine import (
     DecisionMethod,
 )
 from agent.brain.learning import LearningSystem
-from agent.brain.skills import MASTERY_THRESHOLD, SkillStatus
+from agent.brain.skills import MASTERY_THRESHOLD
 from agent.memory.consolidation import MemoryConsolidation
 from agent.memory.store import MemoryEntry, MemoryStore, MemoryType
 

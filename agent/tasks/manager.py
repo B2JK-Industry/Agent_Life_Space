@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -63,7 +63,7 @@ class Task:
     tags: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)  # Task IDs
     created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     scheduled_at: str | None = None
     started_at: str | None = None
@@ -256,7 +256,7 @@ class TaskManager:
             msg = f"Task '{task_id}' is blocked by dependencies"
             raise ValueError(msg)
         task.status = TaskStatus.RUNNING
-        task.started_at = datetime.now(timezone.utc).isoformat()
+        task.started_at = datetime.now(UTC).isoformat()
         await self._persist(task)
         return task
 
@@ -266,7 +266,7 @@ class TaskManager:
         """Mark a task as completed."""
         task = self._get_task(task_id)
         task.status = TaskStatus.COMPLETED
-        task.completed_at = datetime.now(timezone.utc).isoformat()
+        task.completed_at = datetime.now(UTC).isoformat()
         task.result = result
         await self._persist(task)
 
@@ -280,7 +280,7 @@ class TaskManager:
         """Mark a task as failed."""
         task = self._get_task(task_id)
         task.status = TaskStatus.FAILED
-        task.completed_at = datetime.now(timezone.utc).isoformat()
+        task.completed_at = datetime.now(UTC).isoformat()
         task.error = error
         await self._persist(task)
         logger.error("task_failed", id=task_id, name=task.name, error=error)
@@ -290,7 +290,7 @@ class TaskManager:
         """Cancel a task."""
         task = self._get_task(task_id)
         task.status = TaskStatus.CANCELLED
-        task.completed_at = datetime.now(timezone.utc).isoformat()
+        task.completed_at = datetime.now(UTC).isoformat()
         await self._persist(task)
         return task
 

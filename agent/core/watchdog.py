@@ -25,10 +25,11 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 import psutil
 import structlog
@@ -65,7 +66,7 @@ class SystemHealth:
     """System health snapshot. Created by snapshot_health(), read by get_last_health()."""
 
     timestamp: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
@@ -84,7 +85,7 @@ class Alert:
     module: str
     message: str
     timestamp: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     count: int = 1  # How many times this alert fired
 
@@ -286,7 +287,7 @@ class Watchdog:
         existing = self._alerts.get(key)
         if existing:
             existing.count += 1
-            existing.timestamp = datetime.now(timezone.utc).isoformat()
+            existing.timestamp = datetime.now(UTC).isoformat()
         else:
             if len(self._alerts) >= self._max_alerts:
                 # Evict oldest

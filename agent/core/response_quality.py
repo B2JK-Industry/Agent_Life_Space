@@ -108,8 +108,8 @@ def assess_quality(
     # --- Signal 5: Odpoveď je echo otázky ---
     # Ak >50% slov z otázky sa opakuje v odpovedi a odpoveď je krátka
     if question_words > 3 and answer_words < question_words * 3:
-        q_words = set(w for w in question_lower.split() if len(w) > 2)
-        a_words = set(w for w in answer_lower.split() if len(w) > 2)
+        q_words = {w for w in question_lower.split() if len(w) > 2}
+        a_words = {w for w in answer_lower.split() if len(w) > 2}
         if q_words:
             overlap = len(q_words & a_words) / len(q_words)
             if overlap > 0.5:

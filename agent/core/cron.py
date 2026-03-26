@@ -14,7 +14,7 @@ Joby:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -132,7 +132,7 @@ class AgentCron:
         while self._running:
             try:
                 # Wait until next 8:00 UTC
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 next_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
                 if now.hour >= 8:
                     # Already past 8am, wait until tomorrow

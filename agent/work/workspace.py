@@ -26,7 +26,7 @@ from __future__ import annotations
 import shutil
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -58,7 +58,7 @@ class Workspace:
     status: WorkspaceStatus = WorkspaceStatus.CREATED
     path: str = ""
     created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     started_at: str | None = None
     completed_at: str | None = None
@@ -142,7 +142,7 @@ class WorkspaceManager:
         if not ws:
             return None
         ws.status = WorkspaceStatus.ACTIVE
-        ws.started_at = datetime.now(timezone.utc).isoformat()
+        ws.started_at = datetime.now(UTC).isoformat()
         logger.info("workspace_activated", id=workspace_id)
         return ws
 
@@ -151,7 +151,7 @@ class WorkspaceManager:
         if not ws:
             return None
         ws.status = WorkspaceStatus.COMPLETED
-        ws.completed_at = datetime.now(timezone.utc).isoformat()
+        ws.completed_at = datetime.now(UTC).isoformat()
         ws.output = output
         logger.info("workspace_completed", id=workspace_id)
         return ws
@@ -161,7 +161,7 @@ class WorkspaceManager:
         if not ws:
             return None
         ws.status = WorkspaceStatus.FAILED
-        ws.completed_at = datetime.now(timezone.utc).isoformat()
+        ws.completed_at = datetime.now(UTC).isoformat()
         ws.error = error
         logger.info("workspace_failed", id=workspace_id, error=error[:100])
         return ws

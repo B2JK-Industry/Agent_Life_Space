@@ -13,7 +13,6 @@ Practical scenarios:
 
 from __future__ import annotations
 
-import asyncio
 import os
 import tempfile
 
@@ -91,7 +90,7 @@ class TestPatternExtraction:
             importance=0.5,
         ))
 
-        report = await consolidator.consolidate()
+        await consolidator.consolidate()
 
         semantic = await store.query(memory_type=MemoryType.SEMANTIC, limit=10)
         assert any("system_fact" in m.tags for m in semantic)
@@ -107,7 +106,7 @@ class TestPatternExtraction:
             importance=0.8,
         ))
 
-        report = await consolidator.consolidate()
+        await consolidator.consolidate()
 
         procedural = await store.query(memory_type=MemoryType.PROCEDURAL, limit=10)
         assert any("error_handling" in m.tags for m in procedural)
@@ -123,7 +122,7 @@ class TestPatternExtraction:
             importance=0.7,
         ))
 
-        report = await consolidator.consolidate()
+        await consolidator.consolidate()
 
         procedural = await store.query(memory_type=MemoryType.PROCEDURAL, limit=10)
         assert any("workflow" in m.tags for m in procedural)
@@ -139,7 +138,7 @@ class TestPatternExtraction:
             importance=0.6,
         ))
 
-        report1 = await consolidator.consolidate()
+        await consolidator.consolidate()
         report2 = await consolidator.consolidate()
 
         # Second run should find 0 new patterns (already consolidated)

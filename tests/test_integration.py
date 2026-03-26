@@ -86,7 +86,7 @@ class TestMessageIntegration:
         received: list[Message] = []
 
         # Override tasks handler to capture brain's response
-        original_handler = agent.router._handlers.get(ModuleID.TASKS)
+        agent.router._handlers.get(ModuleID.TASKS)
 
         async def capture_handler(msg: Message) -> None:
             received.append(msg)
@@ -440,7 +440,7 @@ class TestFinanceIntegration:
             amount_usd=100.0,
             description="Expensive thing",
         )
-        rejected = await agent.finance.reject(tx.id, reason="Too expensive")
+        await agent.finance.reject(tx.id, reason="Too expensive")
 
         stats = agent.finance.get_stats()
         # Rejected expense should not count
@@ -517,7 +517,7 @@ class TestConsolidationIntegration:
 
         before = agent.memory.get_stats()["total_memories"]
         # Aggressive decay
-        deleted = await agent.memory.apply_decay(decay_rate=0.99)
+        await agent.memory.apply_decay(decay_rate=0.99)
         after = agent.memory.get_stats()["total_memories"]
         assert after <= before
 

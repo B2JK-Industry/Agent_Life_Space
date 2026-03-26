@@ -20,7 +20,6 @@ Port: 8420 (default)
 
 from __future__ import annotations
 
-import asyncio
 import time
 from collections import defaultdict
 from typing import Any
@@ -121,7 +120,7 @@ class AgentAPI:
         text = data.get("message", "").strip()
         sender = data.get("sender", "unknown_agent")
         intent = data.get("intent", "")  # optional: "question", "collaboration", "ping"
-        metadata = data.get("metadata", {})  # optional: extra context
+        data.get("metadata", {})  # optional: extra context
 
         if not text:
             return web.json_response(
@@ -149,7 +148,7 @@ class AgentAPI:
                         ),
                         timeout=90,  # 90s max pre agent-to-agent
                     )
-                except (TimeoutError, _aio.TimeoutError):
+                except TimeoutError:
                     logger.warning("agent_api_timeout", sender=sender)
                     return web.json_response({
                         "reply": "Premýšľam príliš dlho. Skús jednoduchšiu otázku.",

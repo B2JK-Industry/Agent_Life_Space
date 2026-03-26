@@ -23,10 +23,11 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 import structlog
 
@@ -75,7 +76,7 @@ class JobRecord:
     status: JobStatus = JobStatus.SCHEDULED
     config: JobConfig = field(default_factory=JobConfig)
     created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     started_at: str | None = None
     completed_at: str | None = None
@@ -220,7 +221,7 @@ class JobRunner:
 
         for attempt in range(1 + record.config.max_retries):
             record.status = JobStatus.RUNNING
-            record.started_at = datetime.now(timezone.utc).isoformat()
+            record.started_at = datetime.now(UTC).isoformat()
             record.last_heartbeat = time.monotonic()
             record.retry_count = attempt
 
@@ -247,7 +248,7 @@ class JobRunner:
                 # Success
                 record.status = JobStatus.COMPLETED
                 record.result = result
-                record.completed_at = datetime.now(timezone.utc).isoformat()
+                record.completed_at = datetime.now(UTC).isoformat()
                 record.execution_time_ms = int(
                     (time.monotonic() - start_time) * 1000
                 )
@@ -265,7 +266,7 @@ class JobRunner:
                 )
                 return
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 record.error = (
                     f"Timeout after {record.config.timeout_seconds}s "
                     f"(attempt {attempt + 1}/{1 + record.config.max_retries})"
@@ -311,7 +312,7 @@ class JobRunner:
 
         # All retries exhausted — dead letter
         record.status = JobStatus.DEAD_LETTERED
-        record.completed_at = datetime.now(timezone.utc).isoformat()
+        record.completed_at = datetime.now(UTC).isoformat()
         self._active_jobs.pop(record.id, None)
         self._store_dead_letter(record)
         self._stats["total_dead_lettered"] += 1
@@ -360,7 +361,7 @@ class JobRunner:
         if job_id in self._active_jobs:
             record = self._active_jobs.pop(job_id)
             record.status = JobStatus.CANCELLED
-            record.completed_at = datetime.now(timezone.utc).isoformat()
+            record.completed_at = datetime.now(UTC).isoformat()
             self._store_completed(record)
             logger.info("job_cancelled", job_id=job_id, name=record.name)
             return True

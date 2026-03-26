@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import UTC
 from typing import Any
 
 import structlog
@@ -433,7 +434,7 @@ class TelegramHandler:
     async def _cmd_wallet(self, args: str) -> str:
         """Show wallet addresses and balances. NEVER show private keys."""
         try:
-            import os
+
             from agent.vault.secrets import SecretsManager
             vault_dir = os.path.expanduser("~/agent-life-space/agent/vault")
             master_key = os.environ.get("AGENT_VAULT_KEY", "")
@@ -492,7 +493,7 @@ class TelegramHandler:
 
     async def _cmd_runtime(self, args: str) -> str:
         """Show what's actually running — cron, API, watchdog, loops."""
-        import os
+
         import psutil
 
         lines = ["*Runtime stav:*\n"]
@@ -533,7 +534,7 @@ class TelegramHandler:
             )
 
         # Agent API
-        lines.append(f"\n*Agent API:* port 8420 (aktívny)")
+        lines.append("\n*Agent API:* port 8420 (aktívny)")
 
         # Conversation buffer
         lines.append(f"*Conversation buffer:* {len(self._conversation)} správ")
@@ -623,8 +624,10 @@ class TelegramHandler:
         Multi-task detection happens BEFORE Claude — goes straight to queue.
         """
         import re
-        from agent.memory.store import MemoryEntry, MemoryType
+
         import orjson
+
+        from agent.memory.store import MemoryEntry, MemoryType
 
         # Detect multi-task input BEFORE calling Claude
         # Patterns: "1. x, 2. y" or "x, y, z" separated by commas with action words
@@ -740,8 +743,8 @@ class TelegramHandler:
                 )
                 await self._persistent_conv.initialize()
                 # Conversation ID = dátum (jedna konverzácia za deň)
-                from datetime import datetime, timezone
-                self._conversation_id = f"session-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+                from datetime import datetime
+                self._conversation_id = f"session-{datetime.now(UTC).strftime('%Y-%m-%d')}"
 
             persistent_context = await self._persistent_conv.build_context(
                 self._conversation_id, query=text,
@@ -764,6 +767,7 @@ class TelegramHandler:
             try:
                 import asyncio as _aio_rt
                 import os as _os_rt
+
                 import psutil as _ps_rt
                 proc = _ps_rt.Process(_os_rt.getpid())
                 uptime_s = int(_ps_rt.time.time() - proc.create_time())
@@ -799,7 +803,7 @@ class TelegramHandler:
             # BEHAVIORAL CHANGE #1: Model escalation
             adaptation = learner.adapt_model(task_type, text)
             if adaptation["model_override"]:
-                from agent.core.models import SONNET, OPUS
+                from agent.core.models import OPUS, SONNET
                 override_map = {
                     "claude-sonnet-4-6": SONNET,
                     "claude-opus-4-6": OPUS,
@@ -819,7 +823,11 @@ class TelegramHandler:
         # === STEP 4.7: Tool pre-routing — auto-fetch dáta (počasie, čas, ceny) ===
         tool_context = ""
         try:
-            from agent.brain.tool_router import detect_and_fetch, build_always_inject, format_tool_context
+            from agent.brain.tool_router import (
+                build_always_inject,
+                detect_and_fetch,
+                format_tool_context,
+            )
             # Always inject — dátum/čas zadarmo
             tool_context = build_always_inject()
             # Pre-route — detekuj a fetchni externé dáta
@@ -899,8 +907,8 @@ class TelegramHandler:
             if url_context:
                 prompt += f"Obsah odkazov z úlohy:\n{url_context}\n\n"
             prompt += (
-                f"Prečítaj súbory, napíš/uprav kód, spusti testy, commitni.\n"
-                f"Na konci VŽDY napíš zhrnutie. Odpovedaj po slovensky."
+                "Prečítaj súbory, napíš/uprav kód, spusti testy, commitni.\n"
+                "Na konci VŽDY napíš zhrnutie. Odpovedaj po slovensky."
             )
         elif task_type in ("simple", "factual", "greeting") and not tool_context.count("\n") > 2:
             prompt = (
@@ -935,7 +943,6 @@ class TelegramHandler:
 
         try:
             import subprocess
-            import os
 
             env = os.environ.copy()
             oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
@@ -1224,6 +1231,7 @@ class TelegramHandler:
         """
         try:
             from pathlib import Path
+
             from agent.brain.skills import SkillRegistry
 
             base = str(Path.home() / "agent-life-space")

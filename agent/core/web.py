@@ -18,7 +18,6 @@ Rules:
 
 from __future__ import annotations
 
-import re
 import time
 from html.parser import HTMLParser
 from typing import Any
