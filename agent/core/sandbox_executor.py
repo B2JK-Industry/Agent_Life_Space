@@ -27,26 +27,34 @@ from agent.core.sandbox import DockerSandbox, SandboxResult
 logger = structlog.get_logger(__name__)
 
 
-async def create_workspace_for_task(task_name: str = "", task_id: str = "") -> str:
+async def create_workspace_for_task(
+    task_name: str = "",
+    task_id: str = "",
+    workspace_manager: Any = None,
+) -> str:
     """Create an isolated workspace directory for a programming task.
 
-    Returns the workspace path. Integrates with WorkspaceManager if available.
-    """
-    try:
-        from agent.work.workspace import WorkspaceManager
+    Returns the workspace path. Uses provided WorkspaceManager to avoid
+    hidden coupling (creating own instance).
 
-        wm = WorkspaceManager()
-        wm.initialize()
-        ws = wm.create(name=task_name or "sandbox-task", task_id=task_id)
-        wm.activate(ws.id)
-        logger.info("workspace_created", id=ws.id, path=ws.path)
-        return ws.path
-    except Exception as e:
-        # Fallback: create temp directory
-        import tempfile
-        path = tempfile.mkdtemp(prefix="agent-workspace-")
-        logger.warning("workspace_fallback_temp", path=path, error=str(e))
-        return path
+    Args:
+        workspace_manager: Shared WorkspaceManager instance. If None, falls back
+                          to temp directory (no persistence, no audit trail).
+    """
+    if workspace_manager is not None:
+        try:
+            ws = workspace_manager.create(name=task_name or "sandbox-task", task_id=task_id)
+            workspace_manager.activate(ws.id)
+            logger.info("workspace_created", id=ws.id, path=ws.path)
+            return ws.path
+        except Exception as e:
+            logger.warning("workspace_create_failed", error=str(e))
+
+    # Fallback: temp directory (no persistence)
+    import tempfile
+    path = tempfile.mkdtemp(prefix="agent-workspace-")
+    logger.warning("workspace_fallback_temp", path=path)
+    return path
 
 
 @dataclass

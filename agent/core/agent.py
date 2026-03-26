@@ -98,6 +98,15 @@ class AgentOrchestrator:
         )
         self.workspaces = WorkspaceManager()
 
+        # Review service
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        self.review = ReviewService(
+            storage=ReviewStorage(
+                db_path=str(self._data_dir / "review" / "reviews.db")
+            )
+        )
+
         # Background tasks
         self._background_tasks: list[asyncio.Task[Any]] = []
 
@@ -114,6 +123,7 @@ class AgentOrchestrator:
         (self._data_dir / "finance").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "projects").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "logs").mkdir(parents=True, exist_ok=True)
+        (self._data_dir / "review").mkdir(parents=True, exist_ok=True)
 
         # Initialize persistent stores
         await self.memory.initialize()
@@ -121,6 +131,7 @@ class AgentOrchestrator:
         await self.finance.initialize()
         await self.projects.initialize()
         self.workspaces.initialize()
+        self.review.initialize()
 
         # Register message handlers
         self.router.register_handler(ModuleID.BRAIN, self._handle_brain_message)
