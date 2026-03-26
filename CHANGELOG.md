@@ -3,214 +3,82 @@
 All notable changes to Agent Life Space are documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+This project follows [Semantic Versioning](https://semver.org/):
+- PATCH (1.0.x) — bug fixes, small opravy
+- MINOR (1.x.0) — nové features, spätne kompatibilné
+- MAJOR (x.0.0) — breaking changes (len so schválením)
 
-## [3.0.0] — 2026-03-26
+## [1.0.0] — 2026-03-26
 
-### Added
-- **SandboxExecutor** — high-level API: execute_python(), run_tests(), iterate() with auto-fix
-- **Tool use** — 10 tool definitions for LLM function calling (store_memory, query_memory, create_task, list_tasks, run_code, run_tests, web_fetch, check_health, get_status, search_knowledge)
-- **ToolExecutor** — maps tool calls to agent module methods, run_code ALWAYS through sandbox
-- **ToolUseLoop** — multi-turn conversation (LLM calls tools → execute → feed results back)
-- **Channel abstraction** — Channel ABC, IncomingMessage/OutgoingMessage, ChannelRegistry for multi-channel support
-- 44 new tests for tools, providers, channels
+First stable release. Všetko od 0.1-beta po predchádzajúce dev verzie zjednotené.
 
-## [2.0.0] — 2026-03-26
+### Core
+- **7-layer cascade** — 5 vrstiev lokálneho spracovania pred LLM (šetrí tokeny)
+- **Provider-agnostic LLM** — ClaudeCliProvider, AnthropicProvider, OpenAiProvider
+- **ModelTier system** — FAST/BALANCED/POWERFUL mapované per provider
+- **AgentBrain** — channel-agnostic message processing, zero shared state
+- **Tool use** — 10 nástrojov pre LLM function calling + ToolUseLoop (multi-turn)
+- **SandboxExecutor** — Docker sandbox (256MB, no network, read-only FS)
+- **Channel abstraction** — Channel ABC, IncomingMessage/OutgoingMessage, ChannelRegistry
 
-### Added
-- **Provider-agnostic LLM layer** — ClaudeCliProvider, AnthropicProvider, OpenAiProvider
-- **ModelTier system** — FAST/BALANCED/POWERFUL mapped per provider (Anthropic, OpenAI, local)
-- **RequestContext** — per-request context dataclass; production path (AgentBrain) uses no shared instance state
-- **Per-chat conversation** — buffer + session ID per chat_id (no cross-chat leaking)
-- `AGENT_SANDBOX_ONLY` env var — blocks host file access (default: enabled)
-- `AGENT_PROJECT_ROOT` env var — configurable project root (no hardcoded paths)
+### Memory & Knowledge
+- **4-type memory** — episodic, semantic, procedural, working + consolidation + decay
+- **Persistent conversation** — SQLite-backed, prežije reštart
+- **RAG** — knowledge base retrieval
+- **Semantic cache** — embedding-based response caching
 
-### Changed
-- Inline subprocess calls replaced with provider.generate() in agent_loop and telegram_handler
-- LLMRouter uses request.model instead of hardcoded Opus (cost savings)
+### Communication
+- **Telegram bot** — 15+ commands, typing indicators, group chat support
+- **Agent-to-Agent API** — HTTP endpoint (port 8420) s API key autentifikáciou
 
-### Security
-- Race conditions fixed — AgentBrain (production path) has zero shared state; legacy TelegramHandler._handle_text still uses instance vars but is deprecated fallback
-- Safe mode check moved before command dispatch (was bypassed on first call)
-- SQL injection fix in persistent_conversation (parameterized LIKE queries)
-- Vault fail-fast when encrypted secrets exist but key is missing
+### Finance & Security
+- **Budget module** — propose → approve → complete workflow (human-in-the-loop)
+- **Encrypted vault** — Fernet AES-128, PBKDF2 480K iterations
+- **ETH + BTC wallets** — v šifrovanom vaulte, nikdy nezverejnené
+- **Input sanitization** — prompt injection guard (EN + SK)
+- **Owner identification** — safe mode pre non-owners v skupinách
+- **50 automated security audit tests**
 
-## [1.3.0] — 2026-03-26
+### Infrastructure
+- **PID lockfile** — zabraňuje duplicitným inštanciám
+- **Message queue persistence** — SQLite, prežije crash
+- **Watchdog** — dead man switch + escalation protocol
+- **GitHub Actions CI** — lint (ruff) + tests + security audit
+- **705+ tests** — unit + integration + e2e + security, $0.00 token cost
 
-### Added
-- Integration tests expanded: 14 → 34 (cross-module, finance lifecycle, consolidation, message priority)
-- GitHub Actions CI (lint + tests + security audit on every push/PR)
-- GitHub community standards (CoC, Contributing, Security policy, issue/PR templates)
+### Security Fixes (included in 1.0.0)
+- Race conditions fixed (AgentBrain, zero shared state)
+- Safe mode check moved before command dispatch
+- SQL injection fix in persistent_conversation
+- Vault fail-fast without encryption key
+- API binds to 127.0.0.1 by default
+- Error messages sanitized (no internal paths leaked)
 
-## [1.2.0] — 2026-03-26
+## Pre-release History
 
-### Added
-- **test_e2e_effectiveness.py** — 44 tests verifying all modules are wired and used
-- **test_security_audit.py** — 50 automated security audit tests (replaces manual reviews)
-- Safe mode bug fix verified end-to-end
+### [0.9.0] — 2026-03-20
+- Persistent conversation system (MemGPT-style)
 
-## [1.1.0] — 2026-03-26
+### [0.8.0] — 2026-03-15
+- Watchdog dead man switch, response quality detector
 
-### Added
-- Message queue persistence (SQLite) — messages survive crashes, replayed on restart
-- PID lockfile — prevents duplicate agent instances
+### [0.7.0] — 2026-03-10
+- Agent-to-Agent HTTP API, group chat support
 
-### Fixed
-- Prompt injection via work description (sanitization added)
-- LLM Router hardcoded model → uses request.model parameter
-- Vault refuses unencrypted storage without key
+### [0.6.0] — 2026-03-05
+- Tool pre-routing, projects + workspace modules
 
-## [1.0.0] — 2026-03-25
+### [0.5.0] — 2026-02-25
+- Learning system v2, sandbox improvements
 
-### Added
-- Anti-confabulation: auto-inject runtime facts when John is asked about his own state
-- `/runtime` command — agent can inspect its own running state
-- Persistent conversation — SQLite-backed (core memory + rolling summary + recent messages), survives restarts
-- Dead man switch + watchdog escalation protocol
-- Agent-to-Agent HTTP API (port 8420) with API key authentication
-- Group chat support — other bots can interact with John
-- Tool pre-routing — auto-fetch weather, crypto prices, datetime before LLM
-- Projects + Workspace modules with conversation memory
-- Honest README — feature tiers (Stable/Beta/Experimental), maturity matrix, known limitations
+### [0.4.0] — 2026-02-18
+- Wallet support (ETH + BTC), finance module, knowledge base
 
-### Changed
-- Dispatcher detectors tightened: max 4 words, stricter patterns to reduce false positives
-- Agent API timeout raised to 90s with partial response (no more connection aborts)
-- Agent-aware prompts improve conversation quality and longer context buffer
+### [0.3.0] — 2026-02-10
+- Semantic cache + RAG, semantic router, 5-layer cascade
 
-### Fixed
-- Empty results handling in dispatcher
-- Weather: normalize Slovak declined city names (prahe -> Praha)
-- Tool router timeout increased from 5s to 15s for slow external APIs
-- Conversation buffer: skip dispatcher on short follow-ups
+### [0.2.0] — 2026-02-01
+- Docker sandbox, web module, programmer brain
 
-### Security
-- **AGENT_OWNER_NAME** env var required — owner identification no longer hardcoded
-- API now requires `AGENT_API_KEY` for all endpoints
-- API binds to `127.0.0.1` by default (was `0.0.0.0`)
-- Prompt injection detection now **blocks** malicious input (previously only warned)
-- Semantic cache poisoning fix — validated inputs before caching
-- Docker sandbox image whitelist + `shlex.quote` on all shell arguments
-- Work queue permission gating — only owner can queue tasks
-- Group chat safe mode — restricted command set in non-private chats
-- Error message sanitization — no internal paths or stack traces leaked to users
-
-## [0.9.0] — 2026-03-20
-
-### Added
-- Persistent conversation system (MemGPT-style: core memory + summary + retrieval)
-- Knowledge base updates: `runtime_features.md` documents all 7 cron jobs
-- `docs/REVIEW_NOTES.md` — 10 verification test instructions
-
-### Changed
-- Agent API: structured messages with intent and metadata fields
-
-## [0.8.0] — 2026-03-15
-
-### Added
-- Watchdog dead man switch with escalation protocol
-- Response quality detector: auto-escalate Haiku -> Sonnet when quality is low
-
-### Changed
-- Budget dispatcher: removed overly broad `financ` keyword, max 4 words
-- All dispatcher detectors tightened for precision
-
-### Fixed
-- Dispatcher false positives resolved
-- John's self-knowledge restored after dispatcher changes
-
-## [0.7.0] — 2026-03-10
-
-### Added
-- Agent-to-Agent HTTP API for bot communication (port 8420)
-- API key authentication for Agent API
-- Group chat support: other bots can interact with John
-
-### Fixed
-- Weather: Slovak declined city name normalization
-- Tool router timeout: 5s -> 15s for wttr.in
-
-## [0.6.0] — 2026-03-05
-
-### Added
-- Tool pre-routing: auto-fetch weather, time, crypto prices
-- Projects + Workspace modules, conversation memory
-- Post-routing quality detector: Haiku -> Sonnet auto-escalation
-- Smart classifier, web search, auto URL fetch, token optimization
-
-### Changed
-- Token optimization: large docs moved out of CLI context, JOHN.md shrunk
-- `/search` renamed to `/hladaj` (Telegram reserves `/search`)
-
-### Fixed
-- Command parsing: strip @botname suffix from commands
-- Conversation buffer: skip dispatcher on short follow-ups
-
-## [0.5.0] — 2026-02-25
-
-### Added
-- Learning system v2: behavioral changes, not just logging
-- README.md and MIT LICENSE
-
-### Changed
-- Sandbox timeout: kill Docker container directly, not just wrapper
-- Architecture review fixes: sandbox mandatory, learning feedback loop, error recovery
-
-## [0.4.0] — 2026-02-18
-
-### Added
-- Wallet support (ETH + BTC) with encrypted vault
-- Finance module: propose -> approve -> complete workflow
-- Knowledge base: 13 knowledge files covering people, systems, projects, skills
-- Learning system: skills + knowledge base + memory consolidation
-- Skills registry: 20 default skills, learns from experience
-
-### Changed
-- Architecture cleanup + complete documentation rewrite
-
-## [0.3.0] — 2026-02-10
-
-### Added
-- Semantic cache + Self-RAG (knowledge base retrieval)
-- Semantic router (MiniLM, preloaded at startup)
-- 5-layer cascade routing (local compute before LLM)
-- Internal dispatcher: answer without LLM where possible
-- Slovak word normalization for dispatcher search
-- Centralized model router (`agent/core/models.py`)
-- `get_slovak_time()` utility
-
-### Changed
-- Sonnet for chat, Opus reserved for programming tasks only
-
-## [0.2.0] — 2026-02-01
-
-### Added
-- Docker sandbox for safe code execution (256MB, no network, read-only)
-- Web module + `/web` command for internet access
-- Programmer brain: structured coding workflow
-- `/review` command for code review
-- `/usage` command for token tracking
-- Auto skill testing (event-driven)
-- Memory consolidation: episodic -> semantic + procedural
-
-### Changed
-- Multi-task detection before Claude — straight to work queue
-- JSON-first context: structured agent state as JSON
-
-### Fixed
-- Sandbox shell escaping: use stdin instead of `-c`
-- Work queue re-queuing past summaries
-- Empty Claude responses handled gracefully
-- Telegram Markdown fallback to prevent parse errors
-
-## [0.1-beta] — 2026-01-20
-
-### Added
-- Initial agent scaffold: 11 core modules
-- Telegram bot with polling and typing indicator
-- Claude Opus integration via Max subscription
-- Memory store: 4 types (episodic, semantic, procedural, working)
-- Watchdog with heartbeats and auto-restart
-- Job runner with circuit breaker and retry
-- Server maintenance module with 3h maintenance cron
-- JOHN.md identity file
-- 219 initial tests
+### [0.1-beta] — 2026-01-20
+- Initial agent scaffold, 11 modules, 219 tests
