@@ -94,11 +94,30 @@ class ReviewIntake:
 
     def validate(self) -> list[str]:
         """Return list of validation errors. Empty = valid."""
+        import re as _re
         errors: list[str] = []
         if not self.repo_path:
             errors.append("repo_path is required")
+        else:
+            # Path traversal protection — resolve and check for suspicious patterns
+            from pathlib import Path as _Path
+            resolved = str(_Path(self.repo_path).resolve())
+            if ".." in self.repo_path:
+                errors.append("repo_path must not contain '..'")
+            # Block system directories (check both raw and resolved paths)
+            # /tmp and /var/folders (macOS temp) are allowed for testing
+            is_temp = resolved.startswith("/tmp") or resolved.startswith("/private/tmp") or "/var/folders/" in resolved or "/private/var/folders/" in resolved
+            if not is_temp:
+                for forbidden in ("/etc", "/var", "/usr", "/bin", "/sbin", "/root", "/proc", "/sys"):
+                    if self.repo_path.startswith(forbidden) or resolved.startswith(forbidden) or resolved.startswith(f"/private{forbidden}"):
+                        errors.append(f"repo_path must not point to system directory: {forbidden}")
+                        break
         if self.review_type == ReviewJobType.PR_REVIEW and not self.diff_spec:
             errors.append("diff_spec is required for PR review")
+        if self.diff_spec:
+            # Validate diff_spec format — only safe git rev/range characters
+            if not _re.match(r'^[a-zA-Z0-9._\-~/^:@]+(\.\.[a-zA-Z0-9._\-~/^:@]+)?$', self.diff_spec):
+                errors.append("diff_spec contains invalid characters")
         if self.max_files < 1:
             errors.append("max_files must be >= 1")
         return errors

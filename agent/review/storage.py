@@ -8,6 +8,7 @@ SQLite-backed, recoverable, auditable.
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -88,15 +89,22 @@ class ReviewStorage:
             )
         return [orjson.loads(row[0]) for row in cursor]
 
+    _MAX_ARTIFACT_SIZE = 5 * 1024 * 1024  # 5MB per artifact
+
     def save_artifact(self, artifact: ReviewArtifact) -> None:
         if not self._db:
             return
+        content = artifact.content
+        if len(content) > self._MAX_ARTIFACT_SIZE:
+            content = content[:self._MAX_ARTIFACT_SIZE] + "\n\n[TRUNCATED — exceeded 5MB limit]"
         json_str = orjson.dumps(artifact.content_json).decode() if artifact.content_json else ""
+        if len(json_str) > self._MAX_ARTIFACT_SIZE:
+            json_str = ""  # Drop oversized JSON rather than corrupt it
         self._db.execute(
             "INSERT OR REPLACE INTO review_artifacts (id, job_id, artifact_type, content, content_json, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (artifact.id, artifact.job_id, artifact.artifact_type.value,
-             artifact.content, json_str, artifact.created_at),
+             content, json_str, artifact.created_at),
         )
         self._db.commit()
 
@@ -112,6 +120,25 @@ class ReviewStorage:
              "has_json": bool(r[3]), "created_at": r[4]}
             for r in cursor
         ]
+
+    def cleanup_old_jobs(self, max_age_days: int = 30) -> int:
+        """Remove jobs older than max_age_days. Returns count of removed jobs."""
+        if not self._db:
+            return 0
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
+        cursor = self._db.execute(
+            "SELECT id FROM review_jobs WHERE created_at < ?", (cutoff,),
+        )
+        old_ids = [row[0] for row in cursor]
+        if not old_ids:
+            return 0
+        placeholders = ",".join("?" for _ in old_ids)
+        self._db.execute(f"DELETE FROM review_artifacts WHERE job_id IN ({placeholders})", old_ids)  # noqa: S608
+        self._db.execute(f"DELETE FROM review_jobs WHERE id IN ({placeholders})", old_ids)  # noqa: S608
+        self._db.commit()
+        logger.info("review_storage_cleanup", removed=len(old_ids), max_age_days=max_age_days)
+        return len(old_ids)
 
     def close(self) -> None:
         if self._db:

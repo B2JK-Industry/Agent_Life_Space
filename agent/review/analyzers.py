@@ -79,8 +79,8 @@ def analyze_repo_structure(
     all_files: list[Path] = []
 
     for f in root.rglob("*"):
-        if not f.is_file():
-            continue
+        if not f.is_file() or f.is_symlink():
+            continue  # Skip symlinks — prevent scanning outside repo
         # Skip excluded dirs
         parts = f.relative_to(root).parts
         if any(p in default_excludes for p in parts):
@@ -91,11 +91,11 @@ def analyze_repo_structure(
             continue
 
         all_files.append(f)
-        if len(all_files) > max_files * 10:  # Safety cap
-            break
+        if len(all_files) >= max_files:
+            break  # Strict enforcement
 
-    # Analyze files
-    for f in all_files[:max_files * 5]:
+    # Analyze files (already capped by max_files)
+    for f in all_files:
         rel = str(f.relative_to(root))
         ext = f.suffix.lower() or "(none)"
         ext_map[ext] = ext_map.get(ext, 0) + 1
@@ -214,8 +214,8 @@ def analyze_security(
     exclude_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv"}
 
     for f in root.rglob("*"):
-        if not f.is_file() or f.suffix.lower() not in code_extensions:
-            continue
+        if not f.is_file() or f.is_symlink() or f.suffix.lower() not in code_extensions:
+            continue  # Skip symlinks — prevent scanning outside repo
         if any(p in f.relative_to(root).parts for p in exclude_dirs):
             continue
         if include_patterns and not any(f.match(pat) for pat in include_patterns):
@@ -239,13 +239,16 @@ def analyze_security(
                 line = content.splitlines()[line_num - 1] if line_num <= len(content.splitlines()) else ""
                 if "test" in rel.lower() and ("mock" in line.lower() or "fake" in line.lower()):
                     continue
+                # Redact secret values from evidence — never leak detected secrets in reports
+                redacted = re.sub(r'["\'][^"\']{8,}["\']', '"[REDACTED]"', line.strip()[:120])
                 findings.append(ReviewFinding(
                     severity=Severity.CRITICAL,
                     title=f"Potential secret: {label}",
                     file_path=rel,
                     line_start=line_num,
                     category="security",
-                    evidence=line.strip()[:120],
+                    evidence=redacted,
+                    impact="Exposed credentials can lead to unauthorized access.",
                     recommendation="Move to environment variable or secrets manager.",
                     confidence=Confidence.MEDIUM,
                     tags=["secret", "security"],

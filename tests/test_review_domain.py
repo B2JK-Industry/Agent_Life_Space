@@ -63,6 +63,34 @@ class TestReviewIntake:
         errors = intake.validate()
         assert any("max_files" in e for e in errors)
 
+    def test_path_traversal_blocked(self):
+        intake = ReviewIntake(repo_path="../../etc/passwd")
+        errors = intake.validate()
+        assert any(".." in e for e in errors)
+
+    def test_system_dir_blocked(self):
+        intake = ReviewIntake(repo_path="/etc/nginx")
+        errors = intake.validate()
+        assert any("system directory" in e for e in errors)
+
+    def test_diff_spec_injection_blocked(self):
+        intake = ReviewIntake(
+            repo_path="/tmp/repo",
+            review_type=ReviewJobType.PR_REVIEW,
+            diff_spec="HEAD; rm -rf /",
+        )
+        errors = intake.validate()
+        assert any("invalid characters" in e for e in errors)
+
+    def test_valid_diff_spec_allowed(self):
+        intake = ReviewIntake(
+            repo_path="/tmp/repo",
+            review_type=ReviewJobType.PR_REVIEW,
+            diff_spec="main..feature/my-branch",
+        )
+        errors = intake.validate()
+        assert not any("invalid" in e for e in errors)
+
 
 class TestReviewFinding:
     def test_location_with_range(self):
@@ -460,6 +488,17 @@ class TestReviewService:
         job = await service.run_review(intake)
         for artifact in job.artifacts:
             assert artifact.job_id == job.id
+
+    async def test_secrets_redacted_in_evidence(self, service):
+        """CRITICAL: evidence must not leak detected secret values."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "config.py").write_text('API_KEY = "sk-super-secret-production-key-12345"\n')
+            intake = ReviewIntake(repo_path=tmpdir)
+            job = await service.run_review(intake)
+            for finding in job.report.findings:
+                if "secret" in finding.title.lower() or "key" in finding.title.lower():
+                    assert "sk-super-secret" not in finding.evidence, "Secret leaked in evidence!"
+                    assert "[REDACTED]" in finding.evidence, "Evidence not redacted"
 
     async def test_finding_has_impact_field(self, service):
         """Findings with security issues should be exportable with impact."""
