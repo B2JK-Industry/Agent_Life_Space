@@ -3,7 +3,7 @@ Agent Life Space — Workspace Manager
 
 Workspace = izolované miesto kde John robí prácu.
 
-Problém: John teraz pracuje priamo v ~/agent-life-space — to je nebezpečné.
+Problém: John teraz pracuje priamo v agent project root — to je nebezpečné.
 Riešenie: Každá práca má vlastný workspace (adresár) s lifecycle.
 
 Workspace lifecycle:

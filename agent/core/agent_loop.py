@@ -22,6 +22,7 @@ import os
 import re
 from collections import deque
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -212,16 +213,16 @@ class AgentLoop:
 
         safe_description = _sanitize_work_description(item.description)
 
+        model = get_model("work_queue")
+        project_root = os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
+
         prompt = (
             f"Si John, agent na serveri b2jk-agentlifespace. "
-            f"Pracuješ v ~/agent-life-space.\n\n"
+            f"Pracuješ v {project_root}.\n\n"
             f"ÚLOHA: {safe_description}\n\n"
             f"Urob to a na konci VŽDY napíš stručné zhrnutie čo si urobil. "
             f"Odpovedaj po slovensky."
         )
-
-        model = get_model("work_queue")
-        project_root = os.environ.get("AGENT_PROJECT_ROOT", os.path.expanduser("~/agent-life-space"))
 
         provider = get_provider()
         response = await provider.generate(GenerateRequest(
