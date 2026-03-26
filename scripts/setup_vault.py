@@ -24,6 +24,10 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent.vault.secrets import SecretsManager
 
 # Add project to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -97,7 +101,7 @@ def main() -> None:
     print(f"\n[OK] Vault directory locked: {vault_dir} (chmod 700)")
 
 
-def _store_if_env(vault: "SecretsManager", env_name: str) -> None:
+def _store_if_env(vault: SecretsManager, env_name: str) -> None:
     """If env var is set, store it in vault (safer than raw env)."""
     value = os.environ.get(env_name, "")
     if value and env_name not in vault.list_secrets():
