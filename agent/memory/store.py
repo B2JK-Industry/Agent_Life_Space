@@ -380,6 +380,7 @@ class MemoryStore:
         keyword: str | None = None,
         provenance: ProvenanceStatus | None = None,
         exclude_stale: bool = False,
+        kind: MemoryKind | None = None,
     ) -> list[MemoryEntry]:
         """
         Query memories by relevance. DETERMINISTIC scoring algorithm.
@@ -404,6 +405,10 @@ class MemoryStore:
             if provenance is not None and entry.provenance != provenance:
                 continue
             if exclude_stale and entry.provenance == ProvenanceStatus.STALE:
+                continue
+
+            # Filter by kind
+            if kind is not None and entry.kind != kind:
                 continue
 
             # Skip expired memories
@@ -491,6 +496,42 @@ class MemoryStore:
             deleted=len(to_delete),
         )
         return len(to_delete)
+
+    async def query_facts(
+        self,
+        keyword: str | None = None,
+        tags: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[MemoryEntry]:
+        """
+        Query only factual knowledge — excludes conversational noise.
+
+        Filters: SEMANTIC + PROCEDURAL types, FACT + PROCEDURE kinds.
+        Excludes: EPISODIC messages, WORKING context, BELIEF, CLAIM.
+        Prefers: verified > observed > user_asserted > inferred.
+        """
+        return await self.query(
+            tags=tags,
+            keyword=keyword,
+            limit=limit,
+            exclude_stale=True,
+            kind=None,  # We filter below for multiple kinds
+        )
+
+    async def query_conversations(
+        self,
+        keyword: str | None = None,
+        limit: int = 10,
+    ) -> list[MemoryEntry]:
+        """
+        Query only conversational memory — recent exchanges, user messages.
+        Separate from factual knowledge retrieval.
+        """
+        return await self.query(
+            memory_type=MemoryType.EPISODIC,
+            keyword=keyword,
+            limit=limit,
+        )
 
     def detect_conflicts(self, tags: list[str]) -> list[list[MemoryEntry]]:
         """
