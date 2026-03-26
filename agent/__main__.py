@@ -34,8 +34,46 @@ structlog.configure(
 logger = structlog.get_logger(__name__)
 
 
+PIDFILE = "/tmp/agent-life-space.pid"
+
+
+def _check_pidfile() -> None:
+    """Prevent duplicate agent instances. Fail-fast if already running."""
+    if os.path.exists(PIDFILE):
+        try:
+            old_pid = int(open(PIDFILE).read().strip())
+            # Check if process is actually alive
+            os.kill(old_pid, 0)
+            # Process exists — refuse to start
+            logger.error("agent_already_running", pid=old_pid, pidfile=PIDFILE)
+            print(f"Agent už beží (PID {old_pid}). Použi 'kill {old_pid}' alebo zmaž {PIDFILE}.")
+            sys.exit(1)
+        except (ProcessLookupError, ValueError):
+            # PID doesn't exist or file is corrupt — stale pidfile, remove it
+            os.remove(PIDFILE)
+        except PermissionError:
+            # Process exists but owned by different user
+            logger.error("agent_already_running_different_user", pidfile=PIDFILE)
+            sys.exit(1)
+
+    # Write our PID
+    with open(PIDFILE, "w") as f:
+        f.write(str(os.getpid()))
+
+
+def _remove_pidfile() -> None:
+    """Remove PID file on shutdown."""
+    try:
+        if os.path.exists(PIDFILE):
+            os.remove(PIDFILE)
+    except OSError:
+        pass
+
+
 async def run_agent(data_dir: str = "agent") -> None:
     """Main agent loop with graceful shutdown."""
+    _check_pidfile()
+
     agent = AgentOrchestrator(data_dir=data_dir)
 
     # Handle shutdown signals
@@ -174,6 +212,8 @@ async def run_agent(data_dir: str = "agent") -> None:
         except asyncio.CancelledError:
             pass
 
+        _remove_pidfile()
+
     except Exception as e:
         logger.exception("agent_fatal_error", error=str(e))
         # Store crash info for post-mortem
@@ -191,6 +231,7 @@ async def run_agent(data_dir: str = "agent") -> None:
         except Exception:
             pass
         await agent.stop()
+        _remove_pidfile()
         sys.exit(1)
 
 
