@@ -115,11 +115,19 @@ class ReviewStorage:
             "SELECT id, artifact_type, content, content_json, created_at FROM review_artifacts WHERE job_id = ?",
             (job_id,),
         )
-        return [
-            {"id": r[0], "artifact_type": r[1], "content_length": len(r[2]),
-             "has_json": bool(r[3]), "created_at": r[4]}
-            for r in cursor
-        ]
+        results = []
+        for r in cursor:
+            entry: dict[str, Any] = {
+                "id": r[0], "artifact_type": r[1],
+                "content": r[2], "created_at": r[4],
+            }
+            if r[3]:
+                try:
+                    entry["content_json"] = orjson.loads(r[3])
+                except Exception:
+                    entry["content_json"] = {}
+            results.append(entry)
+        return results
 
     def cleanup_old_jobs(self, max_age_days: int = 30) -> int:
         """Remove jobs older than max_age_days. Returns count of removed jobs."""
