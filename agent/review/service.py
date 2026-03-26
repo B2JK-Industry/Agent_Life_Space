@@ -395,6 +395,63 @@ class ReviewService:
             return None
         return ReviewJob.from_dict(data)
 
+    def get_delivery_bundle(self, job_id: str) -> dict[str, Any] | None:
+        """Assemble a delivery-ready bundle for a completed review job.
+
+        Returns dict with:
+            - job metadata (id, type, status, requester, verdict)
+            - markdown_report (full content)
+            - json_report (full structured data)
+            - findings_only (list of findings dicts)
+            - execution_trace (list of trace step dicts)
+            - delivery_ready: bool (true only if job completed successfully)
+
+        Returns None if job not found.
+        Foundation for future approval-gated delivery flow.
+        """
+        self.initialize()
+        job = self.load_job(job_id)
+        if job is None:
+            return None
+
+        artifacts = self._storage.get_artifacts(job_id)
+
+        # Extract artifact contents by type
+        md_report = ""
+        json_report: dict[str, Any] = {}
+        trace_data: list[dict[str, Any]] = []
+        findings_data: list[dict[str, Any]] = []
+
+        for a in artifacts:
+            atype = a.get("artifact_type", "")
+            if atype == "review_report" and a.get("content"):
+                md_report = a["content"]
+            if atype == "review_report" and a.get("content_json"):
+                json_report = a["content_json"]
+            if atype == "execution_trace" and a.get("content_json"):
+                trace_data = a["content_json"].get("trace", [])
+            if atype == "finding_list" and a.get("content_json"):
+                findings_data = a["content_json"].get("findings", [])
+
+        return {
+            "job_id": job.id,
+            "job_type": job.job_type.value,
+            "status": job.status.value,
+            "requester": job.requester,
+            "execution_mode": job.execution_mode.value,
+            "verdict": job.report.verdict,
+            "verdict_confidence": job.report.verdict_confidence.value,
+            "finding_counts": job.report.finding_counts,
+            "markdown_report": md_report,
+            "json_report": json_report,
+            "findings_only": findings_data or [f.to_dict() for f in job.report.findings],
+            "execution_trace": trace_data or [t.to_dict() for t in job.execution_trace],
+            "artifact_count": len(artifacts),
+            "delivery_ready": job.status == ReviewJobStatus.COMPLETED,
+            "created_at": job.created_at,
+            "completed_at": job.completed_at,
+        }
+
     def list_jobs(self, status: str = "", limit: int = 20) -> list[dict[str, Any]]:
         """List review jobs."""
         return self._storage.list_jobs(status=status, limit=limit)

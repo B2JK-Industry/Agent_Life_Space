@@ -29,8 +29,8 @@ Status legend:
 
 | Theme | Status | Notes |
 |------|--------|-------|
-| T1 Platform Foundation | in_progress | ReviewJob and artifacts exist, but not yet system-canonical |
-| T2 Reviewer Product | in_progress | Reviewer v1 exists; delivery wiring and recovery details remain |
+| T1 Platform Foundation | in_progress | ReviewJob with recovery, artifacts with full payloads, execution mode explicit. Not yet system-canonical. |
+| T2 Reviewer Product | mostly_complete | Reviewer v1: runtime adapter wired, recovery-safe, delivery bundle, verifier, execution trace. Approval gating and LLM analysis remain. |
 | T3 Builder Product | not_started | No first-class builder slice yet |
 | T4 Operator Product | not_started | No first-class intake/planning/delivery control plane yet |
 | T5 Security, Governance, And Policy | in_progress | Strong foundations exist; reviewer-specific delivery governance remains open |
@@ -55,7 +55,7 @@ Status legend:
 | T2-E1 Review Job Types | mostly_complete | `repo_audit`, `pr_review`, and `release_review` exist in reviewer context |
 | T2-E2 Review Output Standardization | mostly_complete | Canonical report, severity, Markdown and JSON exports exist |
 | T2-E3 Review Verification | mostly_complete | Verifier pass exists and is tested |
-| T2-E4 Review Delivery | in_progress | Telegram adapter wired to ReviewService (T2-E4-S5). Approval gating still open. |
+| T2-E4 Review Delivery | mostly_complete | Telegram adapter wired (T2-E4-S5). Delivery bundle foundation with get_delivery_bundle(). Approval gating before external send still open. |
 
 ### T3 Builder Product
 
@@ -114,8 +114,8 @@ Reviewer v1 is now `mostly_complete`:
 - execution policy audit trace on every review job
 
 Remaining gaps for full Reviewer v1 closure:
-- delivery approval gating (approval queue integration)
+- delivery approval gating (approval queue integration before external send)
 - client-safe output redaction mode
-- LLM-augmented analysis (v1 is deterministic only)
+- LLM-augmented analysis (v1 is deterministic only — v2 scope)
 - pr_review needs git repo test fixtures
-- legacy Programmer.review_file() should be deprecated
+- legacy Programmer.review_file() still exists (not used in runtime, should be deprecated)
