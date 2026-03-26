@@ -35,6 +35,7 @@ from agent.review.analyzers import (
 from agent.review.models import (
     ArtifactType,
     Confidence,
+    ExecutionMode,
     ReviewArtifact,
     ReviewFinding,
     ReviewIntake,
@@ -95,7 +96,7 @@ class ReviewService:
         job.status = ReviewJobStatus.VALIDATING
         self._storage.save_job(job)
 
-        # ── Step 1b: Workspace ──
+        # ── Step 1b: Execution mode + workspace ──
         if self._workspace_manager is not None:
             t_ws = job.trace("workspace")
             try:
@@ -105,10 +106,23 @@ class ReviewService:
                 )
                 self._workspace_manager.activate(ws.id)
                 job.workspace_id = ws.id
+                job.execution_mode = ExecutionMode.WORKSPACE_BOUND
                 t_ws.complete(f"workspace {ws.id}")
             except Exception as e:
                 t_ws.fail(str(e))
+                job.execution_mode = ExecutionMode.READ_ONLY_HOST
                 logger.warning("review_workspace_failed", error=str(e))
+        else:
+            job.execution_mode = ExecutionMode.READ_ONLY_HOST
+
+        # ── Step 1c: Execution policy audit ──
+        t_policy = job.trace("execution_policy")
+        t_policy.complete(
+            f"mode={job.execution_mode.value}, "
+            f"source={job.source}, "
+            f"host_access=read_only, "
+            f"git_subprocess={'yes' if intake.diff_spec else 'no'}"
+        )
 
         # ── Step 2: Analyze ──
         job.status = ReviewJobStatus.ANALYZING
@@ -371,8 +385,15 @@ class ReviewService:
         return " ".join(parts)
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
-        """Retrieve a stored job by ID."""
+        """Retrieve a stored job by ID (dict form)."""
         return self._storage.load_job(job_id)
+
+    def load_job(self, job_id: str) -> ReviewJob | None:
+        """Reconstruct a full ReviewJob from storage. Recovery-safe."""
+        data = self._storage.load_job(job_id)
+        if data is None:
+            return None
+        return ReviewJob.from_dict(data)
 
     def list_jobs(self, status: str = "", limit: int = 20) -> list[dict[str, Any]]:
         """List review jobs."""

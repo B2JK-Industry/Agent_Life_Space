@@ -509,3 +509,149 @@ class TestReviewService:
             if job.report.findings:
                 d = job.report.findings[0].to_dict()
                 assert "impact" in d  # Field exists even if empty
+
+
+# ─────────────────────────────────────────────
+# Recovery + Reload Tests
+# ─────────────────────────────────────────────
+
+class TestReviewRecovery:
+    """Review jobs must be fully recoverable from storage."""
+
+    @pytest.fixture()
+    def service(self):
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        s = ReviewService(storage=ReviewStorage(db_path=db_path))
+        yield s
+        os.unlink(db_path)
+
+    @pytest.fixture()
+    def sample_repo(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "src").mkdir()
+            (Path(tmpdir) / "src" / "app.py").write_text("def run():\n    return 42\n")
+            (Path(tmpdir) / "README.md").write_text("# Test\n")
+            yield tmpdir
+
+    async def test_full_job_reload_with_intake(self, service, sample_repo):
+        """Job reload must include full intake data."""
+        intake = ReviewIntake(
+            repo_path=sample_repo,
+            requester="daniel",
+            focus_areas=["security"],
+        )
+        job = await service.run_review(intake)
+        loaded = service.load_job(job.id)
+        assert loaded is not None
+        assert loaded.intake.repo_path == sample_repo
+        assert loaded.intake.requester == "daniel"
+        assert loaded.intake.focus_areas == ["security"]
+        assert loaded.status == ReviewJobStatus.COMPLETED
+
+    async def test_full_job_reload_preserves_report(self, service, sample_repo):
+        """Job reload must preserve full report with findings."""
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        loaded = service.load_job(job.id)
+        assert loaded is not None
+        assert loaded.report.verdict == job.report.verdict
+        assert loaded.report.files_analyzed == job.report.files_analyzed
+        assert loaded.report.executive_summary == job.report.executive_summary
+        assert len(loaded.report.findings) == len(job.report.findings)
+
+    async def test_full_job_reload_preserves_trace(self, service, sample_repo):
+        """Job reload must preserve execution trace."""
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        loaded = service.load_job(job.id)
+        assert loaded is not None
+        assert len(loaded.execution_trace) == len(job.execution_trace)
+        steps = [t.step for t in loaded.execution_trace]
+        assert "validate" in steps
+        assert "execution_policy" in steps
+
+    async def test_artifact_reload_with_content(self, service, sample_repo):
+        """Artifacts must be reloadable with full content."""
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        artifacts = service._storage.get_artifacts(job.id)
+        assert len(artifacts) >= 3  # markdown + json + trace
+        md = next(a for a in artifacts if a["artifact_type"] == "review_report" and a.get("content"))
+        assert "# Review Report" in md["content"]
+
+    async def test_finding_round_trip(self):
+        """ReviewFinding.from_dict(to_dict()) must be lossless."""
+        f = ReviewFinding(
+            severity=Severity.HIGH,
+            title="Test finding",
+            description="Something wrong",
+            impact="Could break production",
+            file_path="app.py",
+            line_start=42,
+            line_end=50,
+            category="security",
+            evidence="eval(x)",
+            recommendation="Remove eval",
+            confidence=Confidence.HIGH,
+            tags=["security", "critical"],
+        )
+        d = f.to_dict()
+        f2 = ReviewFinding.from_dict(d)
+        assert f2.severity == f.severity
+        assert f2.title == f.title
+        assert f2.impact == f.impact
+        assert f2.file_path == f.file_path
+        assert f2.line_start == f.line_start
+        assert f2.line_end == f.line_end
+        assert f2.confidence == f.confidence
+        assert f2.tags == f.tags
+
+
+# ─────────────────────────────────────────────
+# Execution Mode Tests
+# ─────────────────────────────────────────────
+
+class TestExecutionMode:
+    """Execution mode must be explicit, auditable, and honest."""
+
+    @pytest.fixture()
+    def service(self):
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        s = ReviewService(storage=ReviewStorage(db_path=db_path))
+        yield s
+        os.unlink(db_path)
+
+    @pytest.fixture()
+    def sample_repo(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "app.py").write_text("x = 1\n")
+            yield tmpdir
+
+    async def test_default_execution_mode_is_read_only(self, service, sample_repo):
+        """Without workspace manager, execution mode must be READ_ONLY_HOST."""
+        from agent.review.models import ExecutionMode
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        assert job.execution_mode == ExecutionMode.READ_ONLY_HOST
+
+    async def test_execution_mode_in_to_dict(self, service, sample_repo):
+        """Execution mode must be serialized."""
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        d = job.to_dict()
+        assert d["execution_mode"] == "read_only_host"
+
+    async def test_execution_policy_trace_present(self, service, sample_repo):
+        """Trace must contain execution_policy step with mode info."""
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        policy_traces = [t for t in job.execution_trace if t.step == "execution_policy"]
+        assert len(policy_traces) == 1
+        assert "read_only_host" in policy_traces[0].detail
+        assert "host_access=read_only" in policy_traces[0].detail
