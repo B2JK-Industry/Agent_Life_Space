@@ -655,3 +655,82 @@ class TestExecutionMode:
         assert len(policy_traces) == 1
         assert "read_only_host" in policy_traces[0].detail
         assert "host_access=read_only" in policy_traces[0].detail
+
+
+# ─────────────────────────────────────────────
+# Delivery Bundle Tests
+# ─────────────────────────────────────────────
+
+class TestDeliveryBundle:
+    """Delivery-ready bundle must be complete and recoverable."""
+
+    @pytest.fixture()
+    def service(self):
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        s = ReviewService(storage=ReviewStorage(db_path=db_path))
+        yield s
+        os.unlink(db_path)
+
+    @pytest.fixture()
+    def sample_repo(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "src").mkdir()
+            (Path(tmpdir) / "src" / "app.py").write_text("def run():\n    return 42\n")
+            (Path(tmpdir) / "README.md").write_text("# App\n")
+            yield tmpdir
+
+    async def test_bundle_exists_after_review(self, service, sample_repo):
+        intake = ReviewIntake(repo_path=sample_repo, requester="daniel")
+        job = await service.run_review(intake)
+        bundle = service.get_delivery_bundle(job.id)
+        assert bundle is not None
+        assert bundle["delivery_ready"] is True
+        assert bundle["job_id"] == job.id
+
+    async def test_bundle_contains_markdown(self, service, sample_repo):
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        bundle = service.get_delivery_bundle(job.id)
+        assert "# Review Report" in bundle["markdown_report"]
+
+    async def test_bundle_contains_json_report(self, service, sample_repo):
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        bundle = service.get_delivery_bundle(job.id)
+        assert bundle["json_report"].get("verdict") in ("pass", "pass_with_findings")
+        assert "executive_summary" in bundle["json_report"]
+
+    async def test_bundle_contains_trace(self, service, sample_repo):
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        bundle = service.get_delivery_bundle(job.id)
+        assert len(bundle["execution_trace"]) >= 3
+        steps = [t["step"] for t in bundle["execution_trace"]]
+        assert "validate" in steps
+
+    async def test_bundle_contains_metadata(self, service, sample_repo):
+        intake = ReviewIntake(repo_path=sample_repo, requester="daniel")
+        job = await service.run_review(intake)
+        bundle = service.get_delivery_bundle(job.id)
+        assert bundle["requester"] == "daniel"
+        assert bundle["execution_mode"] == "read_only_host"
+        assert bundle["status"] == "completed"
+
+    async def test_bundle_nonexistent_job(self, service):
+        bundle = service.get_delivery_bundle("nonexistent-id")
+        assert bundle is None
+
+    async def test_bundle_survives_reload(self, service, sample_repo):
+        """Bundle from reloaded job must match original."""
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        # Get bundle immediately
+        bundle1 = service.get_delivery_bundle(job.id)
+        # Reload and get again
+        bundle2 = service.get_delivery_bundle(job.id)
+        assert bundle1["verdict"] == bundle2["verdict"]
+        assert bundle1["markdown_report"] == bundle2["markdown_report"]
+        assert bundle1["finding_counts"] == bundle2["finding_counts"]
