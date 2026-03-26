@@ -261,6 +261,8 @@ class LLMRequest(BaseModel):
 class LLMResponse(BaseModel):
     """Validated LLM response."""
 
+    model_config = {"protected_namespaces": ()}  # Allow model_ prefix fields
+
     request_id: str
     raw_text: str = Field(description="Raw LLM output before parsing")
     parsed: dict[str, Any] | None = Field(

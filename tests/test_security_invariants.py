@@ -138,8 +138,10 @@ class TestNoHardcodedPaths:
     """No hardcoded paths to agent directory."""
 
     def test_no_hardcoded_agent_home(self):
-        """No ~/agent-life-space hardcoded paths in Python files."""
+        """No ~/agent-life-space hardcoded paths in Python files (except paths.py)."""
         for py_file in AGENT_DIR.rglob("*.py"):
+            if py_file.name == "paths.py":
+                continue  # Centralized resolver is the single allowed location
             code = py_file.read_text()
             assert "~/agent-life-space" not in code, (
                 f"{py_file.relative_to(AGENT_DIR.parent)} contains hardcoded ~/agent-life-space"

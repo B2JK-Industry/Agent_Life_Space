@@ -140,7 +140,11 @@ async def run_agent(data_dir: str = "agent") -> None:
             from agent.core.tool_executor import ToolExecutor
 
             sandbox_executor = SandboxExecutor()
-            tool_executor = ToolExecutor(agent=agent, sandbox=sandbox_executor)
+            tool_executor = ToolExecutor(
+                agent=agent,
+                sandbox=sandbox_executor,
+                operator_controls=agent.operator_controls,
+            )
             brain = AgentBrain(agent=agent, work_loop=work_loop, owner_chat_id=owner_id)
             brain._tool_executor = tool_executor  # Available for tool use loop
 

@@ -18,11 +18,9 @@ Toto beží na pozadí — neblokuje Telegram polling.
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 from collections import deque
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import structlog
@@ -214,7 +212,8 @@ class AgentLoop:
         safe_description = _sanitize_work_description(item.description)
 
         model = get_model("work_queue")
-        project_root = os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
+        from agent.core.paths import get_project_root
+        project_root = get_project_root()
 
         prompt = (
             f"Si John, agent na serveri b2jk-agentlifespace. "

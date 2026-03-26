@@ -23,7 +23,7 @@ Tento súbor je len rozcestník. Detailná dokumentácia je na wiki stránkach:
 | [Operator Handbook](./OPERATOR_HANDBOOK.md) | Praktický sprievodca pre vlastníka |
 | [Product Identity](./PRODUCT_IDENTITY.md) | Rozhodnutie: personal sovereign operator |
 | [Release Checklist](./RELEASE_CHECKLIST.md) | Checklist pre každý release |
-| [Strategy Docs](./strategy/README.md) | Source of truth pre dlhodobu produktovu a architektonicku strategiu |
+| [Strategy Docs](./strategy/README.md) | Source of truth pre dlhodobú produktovú a architektonickú stratégiu |
 
 ## Rýchly štart
 
@@ -32,7 +32,7 @@ source .venv/bin/activate
 python -m agent              # Spusti agenta
 python -m agent --status     # Stav
 python -m agent --health     # Zdravie
-python -m pytest tests/ -q   # Testy (1063+ testov)
+python -m pytest tests/ -q   # Testy (1064+ testov)
 ```
 
 ## Verzia

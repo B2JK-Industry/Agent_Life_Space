@@ -17,7 +17,6 @@ Persistence:
 
 from __future__ import annotations
 
-import os
 import shutil
 import sqlite3
 import uuid
@@ -29,12 +28,12 @@ from typing import Any
 
 import structlog
 
+from agent.core.paths import get_project_root
+
 logger = structlog.get_logger(__name__)
 
 # Workspaces root — mimo hlavného kódu
-_WORKSPACES_ROOT = Path(
-    os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
-) / "workspaces"
+_WORKSPACES_ROOT = Path(get_project_root()) / "workspaces"
 
 
 class WorkspaceStatus(str, Enum):
@@ -175,7 +174,7 @@ class WorkspaceManager:
             return
         cursor = self._db.execute(
             "SELECT id, name, project_id, task_id, status, path, "
-            "created_at, started_at, completed_at, output, error FROM workspaces"
+            "created_at, started_at, completed_at, output, error, owner_id FROM workspaces"
         )
         for row in cursor:
             ws = Workspace(
@@ -183,6 +182,7 @@ class WorkspaceManager:
                 status=WorkspaceStatus(row[4]), path=row[5],
                 created_at=row[6], started_at=row[7], completed_at=row[8],
                 output=row[9] or "", error=row[10] or "",
+                owner_id=row[11] or "",
             )
             # Load audit trail for commands/files
             audit_cursor = self._db.execute(

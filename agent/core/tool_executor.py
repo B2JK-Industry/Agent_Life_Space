@@ -102,16 +102,7 @@ class ToolExecutor:
                 "operator_disabled": True,
             }
 
-        handler = self._handlers.get(tool_name)
-        if not handler:
-            self._error_count += 1
-            action.phase = ActionPhase.FAILED
-            action.error = f"Unknown tool: {tool_name}"
-            action.completed_at = time.time()
-            self._action_log.record(action)
-            return {"error": f"Unknown tool: {tool_name}. Available: {list(self._handlers.keys())}"}
-
-        # ── Step 2: POLICY ──
+        # ── Step 2: POLICY (before handler lookup — policy may deny unknown tools) ──
         decision = self._policy.evaluate(tool_name, context)
         action.phase = ActionPhase.POLICY_CHECKED
         action.policy_allowed = decision.allowed
@@ -126,13 +117,70 @@ class ToolExecutor:
             action.phase = ActionPhase.BLOCKED
             action.completed_at = time.time()
             self._action_log.record(action)
-            return {
+
+            result: dict[str, Any] = {
                 "error": decision.reason,
                 "blocked": True,
                 "risk_level": decision.risk_level.value,
                 "side_effect": decision.side_effect.value,
                 "audit_label": decision.audit_label,
             }
+
+            # If denial is APPROVAL_REQUIRED, create a request in the approval queue
+            is_approval_denial = (
+                decision.denial_code is not None
+                and decision.denial_code.value == "approval_required"
+            )
+            if is_approval_denial:
+                approval_queue = getattr(self._agent, "approval_queue", None)
+                if approval_queue is not None:
+                    from agent.core.approval import ApprovalCategory
+                    req = approval_queue.propose(
+                        category=ApprovalCategory.TOOL,
+                        description=f"Tool '{tool_name}' requires approval",
+                        risk_level=decision.risk_level.value,
+                        reason=decision.reason,
+                        context={
+                            "tool_name": tool_name,
+                            "tool_input": tool_input,
+                            "audit_label": decision.audit_label,
+                            "action_id": action.id,
+                        },
+                    )
+                    result["approval_request_id"] = req.id
+                    result["approval_status"] = "pending"
+                    logger.info("tool_approval_requested",
+                                tool=tool_name, request_id=req.id)
+
+            # Update agent status model if available
+            try:
+                from agent.core.status import AgentState, AgentStatusModel
+                status = getattr(self._agent, '_status_model', None)
+                if status is None and hasattr(self._agent, 'brain'):
+                    brain = getattr(self._agent, 'brain', None)
+                    if brain and hasattr(brain, '_status'):
+                        status = brain._status
+                if isinstance(status, AgentStatusModel):
+                    if is_approval_denial:
+                        status.transition(AgentState.WAITING_APPROVAL,
+                                          f"tool '{tool_name}' needs approval")
+                    else:
+                        status.transition(AgentState.BLOCKED,
+                                          f"tool '{tool_name}' denied: {decision.reason[:80]}")
+            except ImportError:
+                pass
+
+            return result
+
+        # Handler lookup (after policy — unknown tools are already denied by policy)
+        handler = self._handlers.get(tool_name)
+        if not handler:
+            self._error_count += 1
+            action.phase = ActionPhase.FAILED
+            action.error = f"Unknown tool: {tool_name}"
+            action.completed_at = time.time()
+            self._action_log.record(action)
+            return {"error": f"Unknown tool: {tool_name}. Available: {list(self._handlers.keys())}"}
 
         # ── Step 3: EXECUTE ──
         action.phase = ActionPhase.EXECUTING

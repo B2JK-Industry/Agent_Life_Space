@@ -89,6 +89,7 @@ class ApprovalRequest:
             "risk_level": self.risk_level,
             "reason": self.reason,
             "proposed_by": self.proposed_by,
+            "context": self.context,
             "status": self.status.value,
             "created_at": self.created_at,
             "decided_at": self.decided_at,

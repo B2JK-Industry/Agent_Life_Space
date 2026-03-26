@@ -16,7 +16,7 @@ Nie je to marketingový materiál — je to technický artefakt, ktorý kód mus
 ### Sandbox (SAFE)
 - Docker container: 256MB RAM, no network, read-only FS
 - Podporované jazyky: Python, Node, Bash, Ruby
-- Timeout: 30s
+- Timeout: 120s (default), max 300s
 - Žiadny prístup k host FS
 
 ### Host CLI (CONTROLLED — vyžaduje explicitný opt-in)
@@ -49,11 +49,12 @@ Každý tool má capability manifest:
 | run_code | HIGH | external | Yes | Blocked |
 | run_tests | HIGH | external | Yes | Blocked |
 
-### Policy rozhodovanie (deterministické)
-1. Unknown tool → blocked v safe mode
-2. Safe mode + blocked tool → denied
-3. Non-owner + owner-only tool → denied
-4. Inak → allowed
+### Policy rozhodovanie (deterministické, deny-by-default)
+1. Unknown tool → **ALWAYS blocked** (nie je v capability manifest = denied)
+2. Restricted channel (agent_api, webhook, public) + high-risk tool → denied
+3. Safe mode + blocked tool → denied
+4. Non-owner + owner-only tool → denied
+5. Inak → allowed
 
 ### Audit trail
 - Každé policy rozhodnutie je logované

@@ -169,10 +169,9 @@ class InternalDispatcher:
 
     async def _handle_skills(self) -> str:
         try:
-            from pathlib import Path
-
             from agent.brain.skills import SkillRegistry
-            base = str(Path.home() / "agent-life-space")
+            from agent.core.paths import get_project_root
+            base = get_project_root()
             registry = SkillRegistry(f"{base}/agent/brain/skills.json")
             summary = registry.summary()
             mastered = ", ".join(summary["mastered"]) if summary["mastered"] else "žiadne"

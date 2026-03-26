@@ -20,20 +20,19 @@ Toto je most medzi "myslím" a "viem".
 
 from __future__ import annotations
 
-import os
 import subprocess
-from pathlib import Path
 from typing import Any
 
 import structlog
 
 from agent.brain.knowledge import KnowledgeBase
 from agent.brain.skills import Skill, SkillRegistry, SkillStatus
+from agent.core.paths import get_project_root
 
 logger = structlog.get_logger(__name__)
 
 # Project root — resolved from env, no hardcoded path
-_PROJECT_ROOT = os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
+_PROJECT_ROOT = get_project_root()
 
 # Test commands for each skill — used by try_skill()
 _SKILL_TESTS: dict[str, str] = {

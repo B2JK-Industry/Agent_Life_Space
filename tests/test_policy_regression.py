@@ -13,6 +13,7 @@ import pytest
 
 from agent.core.tool_policy import (
     TOOL_CAPABILITIES,
+    DenialCode,
     ToolExecutionContext,
     ToolPolicy,
 )
@@ -87,11 +88,12 @@ class TestRedTeamScenarios:
         decision = policy.evaluate("admin_shell", ctx)
         assert not decision.allowed
 
-    def test_unknown_tool_for_owner(self, policy):
-        """Unknown tools allowed for owner (extensibility)."""
+    def test_unknown_tool_denied_by_default(self, policy):
+        """Unknown tools denied by default — even for owner (deny-by-default)."""
         ctx = ToolExecutionContext(is_owner=True, safe_mode=False)
         decision = policy.evaluate("custom_tool", ctx)
-        assert decision.allowed
+        assert not decision.allowed
+        assert decision.denial_code == DenialCode.UNKNOWN_TOOL
 
     def test_privilege_escalation_attempt(self, policy):
         """Non-owner in group trying to run code — must be blocked."""
@@ -107,15 +109,25 @@ class TestRedTeamScenarios:
             assert decision.reason, f"Must explain WHY {tool} is blocked"
 
     def test_channel_context_preserved(self, policy):
-        """Policy must record channel context for audit."""
+        """Policy must record channel context for audit — restricted channels block high-risk tools."""
         ctx = ToolExecutionContext(
             is_owner=True, safe_mode=False, channel_type="agent_api"
         )
         decision = policy.evaluate("run_code", ctx)
-        # Decision allowed, but audit should show it came from agent_api
-        assert decision.allowed
+        # agent_api is restricted channel — run_code must be blocked
+        assert not decision.allowed
         log = policy.audit_log.get_recent(1)
         assert log[0]["channel"] == "agent_api"
+
+    def test_channel_context_private_allowed(self, policy):
+        """Private channel (telegram) allows high-risk tools for owner."""
+        ctx = ToolExecutionContext(
+            is_owner=True, safe_mode=False, channel_type="telegram"
+        )
+        decision = policy.evaluate("run_code", ctx)
+        assert decision.allowed
+        log = policy.audit_log.get_recent(1)
+        assert log[0]["channel"] == "telegram"
 
     def test_rapid_fire_all_tools_blocked(self, policy):
         """Non-owner rapid-firing all tools — nothing should pass sensitive gates."""
