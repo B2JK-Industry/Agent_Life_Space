@@ -11,37 +11,55 @@ Use it for:
 
 ## Current Progress Snapshot
 
-This backlog is currently assessed against PR `#44` at commit `8537f26`.
+Assessment basis: after Builder Foundation + Control-Plane Convergence.
 
 Important:
 - this is a strategy progress snapshot, not a merge-state indicator
 - `main` may still lag behind this assessed implementation state
 
-Status summary:
-- T1 Platform Foundation: `in_progress`
-- T2 Reviewer Product: `in_progress`
-- T3 Builder Product: `not_started`
-- T4 Operator Product: `not_started`
-- T5 Security, Governance, And Policy: `in_progress`
-- T6 Cost, Usage, And Observability: `started`
-- T7 External Capability Gateway: `not_started`
-- T8 Enterprise Hardening: `started`
+### Theme Snapshot
+
+| Theme | Status | Approx Progress | Current State | Gap |
+|-------|--------|-----------------|---------------|-----|
+| T1 Platform Foundation | `in_progress` | 60% | Shared control-plane primitives (JobKind, JobStatus, JobTiming, ExecutionStep, ArtifactKind, UsageSummary). Review service, workspace discipline, artifact persistence. | ReviewJob not yet on shared primitives. |
+| T2 Reviewer Product | `in_progress` | — | — | — |
+| T3 Builder Product | `in_progress` | 35% | Builder bounded context with models, service, storage, verification loop, acceptance criteria. Workspace-first. | Build step is placeholder. No LLM implementation. |
+| T4 Operator Product | `not_started` | — | — | — |
+| T5 Security, Governance, And Policy | `in_progress` | — | — | — |
+| T6 Cost, Usage, And Observability | `started` | — | — | — |
+| T7 External Capability Gateway | `not_started` | — | — | — |
+| T8 Enterprise Hardening | `started` | 35% | — | — |
 
 ## Theme T1: Platform Foundation
+
+- approx_progress: 60%
 
 Goal: unify the core job, state, artifact, and execution foundation so the
 system can support reviewer, builder, and operator modes without fragmenting.
 
 ### Epic T1-E1: Canonical Job Model
 
+- approx_progress: 45%
+- remaining_gap: Shared primitives exist (JobKind, JobStatus, etc). BuildJob uses them. ReviewJob still uses own equivalents.
+
 Stories:
 - T1-E1-S1: Define canonical Job schema for review, build, operate, and delivery
   flows.
+  - status: `in_progress`
+  - current_state: Shared JobKind, JobStatus, JobTiming, ExecutionStep, ArtifactKind, ArtifactRef, UsageSummary exist in agent/control/models.py. BuildJob uses them directly.
+  - missing: ReviewJob still has own equivalents. Migration pending.
 - T1-E1-S2: Add Job lifecycle states and recovery rules.
+  - status: `in_progress`
+  - current_state: Shared JobStatus with CREATED/VALIDATING/RUNNING/VERIFYING/COMPLETED/FAILED/CANCELLED/BLOCKED. JobTiming with mark_started/mark_completed.
+  - missing: ReviewJob uses own ReviewJobStatus.
 - T1-E1-S3: Persist job metadata, execution history, artifacts, and cost data.
+  - status: `in_progress`
+  - current_state: BuildStorage persists job metadata, execution history, artifacts. UsageSummary tracks cost.
+  - missing: No unified cross-system persistence.
 - T1-E1-S4: Add job queries for operator inspection and automation.
 - T1-E1-S5: Reconcile coexistence rules between `ReviewJob`, `JobRunner`,
   `Task`, and `AgentLoop`.
+  - current_state: BuildJob uses shared primitives. ReviewJob does not yet.
 
 ### Epic T1-E2: Artifact-First Execution
 
@@ -55,10 +73,18 @@ Stories:
 
 ### Epic T1-E3: Workspace And Execution Discipline
 
+- approx_progress: 55%
+
 Stories:
 - T1-E3-S1: Ensure all mutable engineering work happens in isolated workspaces.
+  - status: `in_progress`
+  - current_state: Builder is workspace-first (WORKSPACE_BOUND default, requires WorkspaceManager).
+  - missing: Builder workspace integration is foundation-grade.
 - T1-E3-S2: Make workspace lifecycle, audit, and recovery robust.
 - T1-E3-S3: Link workspace records to jobs, artifacts, and approvals.
+  - status: `in_progress`
+  - current_state: BuildJob carries workspace_id. Workspace linked to job lifecycle.
+  - missing: No shared workspace/artifact/approval cross-linkage.
 - T1-E3-S4: Add environment profiles for safe execution modes.
 - T1-E3-S5: Bind reviewer jobs to workspace discipline or define explicit
   read-only review execution mode.
@@ -103,30 +129,68 @@ Stories:
 
 ## Theme T3: Builder Product
 
+- status: `in_progress`
+- approx_progress: 35%
+
 Goal: make implementation work first-class, controlled, and acceptance-driven.
 
 ### Epic T3-E1: Capability-Based Build Execution
 
+- status: `in_progress`
+- approx_progress: 35%
+- remaining_gap: Build flow exists but build step is placeholder. No capability catalog.
+
 Stories:
 - T3-E1-S1: Define implementation capability catalog for backend, frontend,
   integration, and devops work.
+  - status: `started`
+  - current_state: BuildJobType enum (IMPLEMENTATION, INTEGRATION, DEVOPS, TESTING) exists.
+  - missing: No capability catalog or routing.
 - T3-E1-S2: Route implementation jobs to explicit capabilities.
+  - status: `started`
+  - current_state: BuildService routes by build_type.
+  - missing: No explicit capability routing.
 - T3-E1-S3: Capture patch sets, diffs, and execution traces as artifacts.
+  - status: `in_progress`
+  - current_state: BuildArtifact with PATCH, DIFF, VERIFICATION_REPORT, ACCEPTANCE_REPORT kinds. Artifacts persisted via BuildStorage.
 - T3-E1-S4: Make execution resumable after interruption.
+  - status: `in_progress`
+  - current_state: BuildJob carries workspace_id, timing, execution_trace. From_dict() recovery exists.
+  - missing: No resume-from-step capability.
 
 ### Epic T3-E2: Build Verification Loop
 
+- status: `in_progress`
+- approx_progress: 40%
+
 Stories:
 - T3-E2-S1: Add test, lint, and type-check loop for implementation jobs.
+  - status: `in_progress`
+  - current_state: run_verification_suite() runs test + lint in workspace. Custom commands supported.
+  - missing: No typecheck by default. No build-specific test discovery.
 - T3-E2-S2: Add review-after-build pass before completion.
 - T3-E2-S3: Fail jobs clearly when acceptance criteria are not met.
+  - status: `in_progress`
+  - current_state: BuildService fails job when acceptance criteria unmet. AcceptanceVerdict.evaluate() checks all non-skipped criteria.
+  - missing: Evaluation is simple (all-met-if-verification-passed).
 - T3-E2-S4: Capture all verification artifacts and verdicts.
+  - status: `in_progress`
+  - current_state: Verification results are first-class BuildArtifact (VERIFICATION_REPORT kind). Persisted via BuildStorage.
 
 ### Epic T3-E3: Acceptance Criteria Engine
 
+- status: `in_progress`
+- approx_progress: 40%
+
 Stories:
 - T3-E3-S1: Define acceptance criteria object model.
+  - status: `in_progress`
+  - current_state: AcceptanceCriterion with CriterionKind (FUNCTIONAL, QUALITY, SECURITY, PERFORMANCE), CriterionStatus (PENDING, MET, UNMET, SKIPPED). meet()/fail()/skip() methods.
+  - missing: No semantic evaluation.
 - T3-E3-S2: Attach acceptance criteria to jobs.
+  - status: `in_progress`
+  - current_state: BuildIntake carries acceptance_criteria list. BuildJob inherits them. AcceptanceVerdict evaluates at completion.
+  - missing: Criteria are simple — no automated requirement checking.
 - T3-E3-S3: Validate criteria at completion time.
 - T3-E3-S4: Produce acceptance reports for delivery.
 
@@ -246,12 +310,19 @@ premature fragmentation.
 
 ### Epic T8-E1: Contract-First Boundaries
 
+- approx_progress: 45%
+- remaining_gap: Shared control-plane primitives. Review and build as separate bounded contexts. ReviewJob not yet on shared primitives.
+
 Stories:
 - T8-E1-S1: Define contracts between control plane, execution plane, verification,
   and delivery.
+  - status: `in_progress`
+  - current_state: agent/control/models.py defines shared contracts: JobKind, JobStatus, ExecutionMode, JobTiming, ExecutionStep, ArtifactKind, ArtifactRef, UsageSummary.
 - T8-E1-S2: Remove hidden coupling and implicit shared state.
 - T8-E1-S3: Add architecture invariants for contracts and boundaries.
 - T8-E1-S4: Make future service extraction obvious from module boundaries.
+  - status: `in_progress`
+  - current_state: agent/build/ is a clean bounded context: models.py, service.py, storage.py, verification.py. Parallel to agent/review/.
 - T8-E1-S5: Remove duplicated reviewer flows and hidden channel-to-product
   coupling.
 
@@ -270,3 +341,16 @@ Stories:
 - T8-E3-S2: Improve redaction and retention strategy.
 - T8-E3-S3: Support client-safe evidence packaging.
 - T8-E3-S4: Prepare data-handling rules for future enterprise requirements.
+
+---
+
+## Bottom Line
+
+Builder exists as a real bounded context with models, service, storage,
+verification loop, and acceptance criteria engine. Shared control-plane
+primitives (JobKind, JobStatus, JobTiming, ExecutionStep, ArtifactKind,
+UsageSummary) live in agent/control/models.py and BuildJob consumes them
+directly. ReviewJob has not yet migrated to shared primitives — that is the
+next convergence step. The build step itself is a placeholder (no LLM
+implementation), but the surrounding structure (intake, workspace binding,
+verification, acceptance, artifact persistence) is foundation-grade.
