@@ -33,6 +33,7 @@ logger = structlog.get_logger(__name__)
 
 class ApprovalStatus(str, Enum):
     PENDING = "pending"
+    PARTIALLY_APPROVED = "partially_approved"  # Multi-step: some approvers approved
     APPROVED = "approved"
     DENIED = "denied"
     EXPIRED = "expired"
@@ -66,11 +67,19 @@ class ApprovalRequest:
     ttl_seconds: int = 3600  # Expires after 1 hour by default
     executed_at: float = 0.0
 
+    # Multi-step approval
+    required_approvals: int = 1  # How many approvals needed
+    approvals_received: list[str] = field(default_factory=list)  # Who approved so far
+
     @property
     def is_expired(self) -> bool:
-        if self.status != ApprovalStatus.PENDING:
+        if self.status not in (ApprovalStatus.PENDING, ApprovalStatus.PARTIALLY_APPROVED):
             return False
         return time.time() - self.created_at >= self.ttl_seconds
+
+    @property
+    def is_fully_approved(self) -> bool:
+        return len(self.approvals_received) >= self.required_approvals
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +95,8 @@ class ApprovalRequest:
             "decided_by": self.decided_by,
             "denial_reason": self.denial_reason,
             "ttl_seconds": self.ttl_seconds,
+            "required_approvals": self.required_approvals,
+            "approvals_received": list(self.approvals_received),
         }
 
 
@@ -113,6 +124,7 @@ class ApprovalQueue:
         proposed_by: str = "agent",
         context: dict[str, Any] | None = None,
         ttl_seconds: int = 3600,
+        required_approvals: int = 1,
     ) -> ApprovalRequest:
         """Submit an action for approval. Returns the request."""
         req = ApprovalRequest(
@@ -123,6 +135,7 @@ class ApprovalQueue:
             proposed_by=proposed_by,
             context=context or {},
             ttl_seconds=ttl_seconds,
+            required_approvals=max(1, required_approvals),
         )
         self._pending[req.id] = req
         logger.info("approval_proposed",
@@ -131,20 +144,39 @@ class ApprovalQueue:
         return req
 
     def approve(self, request_id: str, decided_by: str = "owner") -> ApprovalRequest | None:
-        """Approve a pending request."""
-        req = self._pending.pop(request_id, None)
+        """
+        Approve a pending request.
+        For multi-step: records approval, only fully approves when all needed.
+        """
+        req = self._pending.get(request_id)
         if not req:
             return None
         if req.is_expired:
+            self._pending.pop(request_id)
             req.status = ApprovalStatus.EXPIRED
             self._archive(req)
             return req
 
-        req.status = ApprovalStatus.APPROVED
-        req.decided_at = time.time()
-        req.decided_by = decided_by
-        self._archive(req)
-        logger.info("approval_granted", id=request_id, by=decided_by)
+        # Record this approval
+        if decided_by not in req.approvals_received:
+            req.approvals_received.append(decided_by)
+
+        if req.is_fully_approved:
+            # All required approvals received
+            self._pending.pop(request_id)
+            req.status = ApprovalStatus.APPROVED
+            req.decided_at = time.time()
+            req.decided_by = decided_by
+            self._archive(req)
+            logger.info("approval_granted", id=request_id, by=decided_by,
+                        approvals=len(req.approvals_received))
+        else:
+            # Partially approved — still pending
+            req.status = ApprovalStatus.PARTIALLY_APPROVED
+            logger.info("approval_partial", id=request_id, by=decided_by,
+                        received=len(req.approvals_received),
+                        required=req.required_approvals)
+
         return req
 
     def deny(
