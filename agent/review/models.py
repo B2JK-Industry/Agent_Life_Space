@@ -68,6 +68,12 @@ class Confidence(str, Enum):
     LOW = "low"
 
 
+class ExecutionMode(str, Enum):
+    """How the review was executed."""
+    READ_ONLY_HOST = "read_only_host"    # Read-only access to host filesystem
+    WORKSPACE_BOUND = "workspace_bound"  # Execution inside managed workspace
+
+
 # ─────────────────────────────────────────────
 # Review Intake
 # ─────────────────────────────────────────────
@@ -163,6 +169,24 @@ class ReviewFinding:
             "confidence": self.confidence.value,
             "tags": self.tags,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ReviewFinding:
+        return cls(
+            id=d.get("id", ""),
+            severity=Severity(d.get("severity", "medium")),
+            title=d.get("title", ""),
+            description=d.get("description", ""),
+            impact=d.get("impact", ""),
+            file_path=d.get("file_path", ""),
+            line_start=d.get("line_start", 0),
+            line_end=d.get("line_end", 0),
+            category=d.get("category", ""),
+            evidence=d.get("evidence", ""),
+            recommendation=d.get("recommendation", ""),
+            confidence=Confidence(d.get("confidence", "medium")),
+            tags=d.get("tags", []),
+        )
 
     @property
     def location(self) -> str:
@@ -287,6 +311,20 @@ class ReviewReport:
             "total_lines": self.total_lines,
         }
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ReviewReport:
+        return cls(
+            executive_summary=d.get("executive_summary", ""),
+            findings=[ReviewFinding.from_dict(f) for f in d.get("findings", [])],
+            open_questions=d.get("open_questions", []),
+            assumptions=d.get("assumptions", []),
+            verdict=d.get("verdict", ""),
+            verdict_confidence=Confidence(d.get("verdict_confidence", "medium")),
+            scope_description=d.get("scope_description", ""),
+            files_analyzed=d.get("files_analyzed", 0),
+            total_lines=d.get("total_lines", 0),
+        )
+
     def to_markdown(self) -> str:
         """Export report as canonical Markdown."""
         lines: list[str] = []
@@ -371,8 +409,9 @@ class ReviewJob:
     # Input
     intake: ReviewIntake = field(default_factory=ReviewIntake)
 
-    # Workspace
+    # Execution
     workspace_id: str = ""
+    execution_mode: ExecutionMode = ExecutionMode.READ_ONLY_HOST
 
     # Lifecycle
     status: ReviewJobStatus = ReviewJobStatus.CREATED
@@ -416,6 +455,7 @@ class ReviewJob:
                 "context": self.intake.context,
             },
             "workspace_id": self.workspace_id,
+            "execution_mode": self.execution_mode.value,
             "status": self.status.value,
             "created_at": self.created_at,
             "started_at": self.started_at,
@@ -430,3 +470,49 @@ class ReviewJob:
             "finding_counts": self.report.finding_counts,
             "verdict": self.report.verdict,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ReviewJob:
+        """Reconstruct a ReviewJob from persisted dict. Recovery-safe."""
+        intake_d = d.get("intake", {})
+        intake = ReviewIntake(
+            repo_path=intake_d.get("repo_path", ""),
+            diff_spec=intake_d.get("diff_spec", ""),
+            review_type=ReviewJobType(intake_d.get("review_type", "repo_audit")),
+            focus_areas=intake_d.get("focus_areas", []),
+            max_files=intake_d.get("max_files", 100),
+            requester=intake_d.get("requester", ""),
+            context=intake_d.get("context", ""),
+        )
+        report = ReviewReport.from_dict(d.get("report", {}))
+        traces = [
+            ExecutionTrace(
+                step=t.get("step", ""),
+                status=t.get("status", "completed"),
+                started_at=t.get("started_at", 0.0),
+                completed_at=t.get("completed_at", 0.0),
+                detail=t.get("detail", ""),
+                error=t.get("error", ""),
+            )
+            for t in d.get("execution_trace", [])
+        ]
+        return cls(
+            id=d.get("id", ""),
+            job_type=ReviewJobType(d.get("job_type", "repo_audit")),
+            source=d.get("source", "manual"),
+            requester=d.get("requester", ""),
+            owner=d.get("owner", "agent"),
+            intake=intake,
+            workspace_id=d.get("workspace_id", ""),
+            execution_mode=ExecutionMode(d.get("execution_mode", "read_only_host")),
+            status=ReviewJobStatus(d.get("status", "created")),
+            created_at=d.get("created_at", ""),
+            started_at=d.get("started_at", ""),
+            completed_at=d.get("completed_at", ""),
+            report=report,
+            execution_trace=traces,
+            total_tokens=d.get("total_tokens", 0),
+            total_cost_usd=d.get("total_cost_usd", 0.0),
+            model_used=d.get("model_used", ""),
+            error=d.get("error", ""),
+        )

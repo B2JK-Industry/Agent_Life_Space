@@ -4,9 +4,7 @@ This file tracks current strategic execution progress against
 `MASTER_SOURCE_OF_TRUTH.md` and `THEMES_EPICS_STORIES.md`.
 
 Important:
-- This snapshot is based on the audited state of PR `#44`
-- Assessed commit: `8537f26`
-- This snapshot is not the same thing as `main`
+- This snapshot is based on reviewer v1 closure pass (post PR #45)
 - Use this file to understand delivery progress, not merge state
 
 Status legend:
@@ -18,12 +16,14 @@ Status legend:
 
 ## Overall Snapshot
 
-- Reviewer bounded context now exists and is real
-- Reviewer v1 is a usable architectural slice, not just a placeholder
+- Reviewer v1 is mostly_complete: recovery-safe storage, explicit execution mode,
+  channel adapter wired, policy audit trace
+- ReviewJob has from_dict() for full recovery (intake, report, findings, trace)
+- Execution mode is explicit (READ_ONLY_HOST vs WORKSPACE_BOUND)
+- Telegram /review routes through ReviewService, not legacy Programmer
 - Platform foundations improved, but canonical system-wide job convergence is
   still open
-- Builder, Operator, External Gateway, and Enterprise Hardening remain mostly
-  future work
+- Builder, Operator, External Gateway, and Enterprise Hardening remain future work
 
 ## Theme Status
 
@@ -44,9 +44,9 @@ Status legend:
 
 | Epic | Status | Notes |
 |------|--------|-------|
-| T1-E1 Canonical Job Model | in_progress | `ReviewJob` exists, but system still also has `JobRunner`, `Task`, and `AgentLoop` models |
-| T1-E2 Artifact-First Execution | in_progress | Review artifacts exist, but storage/recovery still returns mostly metadata instead of full payloads |
-| T1-E3 Workspace And Execution Discipline | in_progress | Hidden sandbox/workspace coupling improved, but reviewer flow is not yet workspace-bound |
+| T1-E1 Canonical Job Model | in_progress | `ReviewJob` with from_dict() recovery exists, but system still also has `JobRunner`, `Task`, and `AgentLoop` models |
+| T1-E2 Artifact-First Execution | mostly_complete | Full payload persistence + recovery. Artifacts contain content, not just metadata. T1-E2-S5 closed. |
+| T1-E3 Workspace And Execution Discipline | in_progress | ReviewService accepts WorkspaceManager, execution mode is explicit (READ_ONLY_HOST/WORKSPACE_BOUND). T1-E3-S5 partially closed. |
 
 ### T2 Reviewer Product
 
@@ -55,7 +55,7 @@ Status legend:
 | T2-E1 Review Job Types | mostly_complete | `repo_audit`, `pr_review`, and `release_review` exist in reviewer context |
 | T2-E2 Review Output Standardization | mostly_complete | Canonical report, severity, Markdown and JSON exports exist |
 | T2-E3 Review Verification | mostly_complete | Verifier pass exists and is tested |
-| T2-E4 Review Delivery | started | Artifacts exist, but approval gating and adapter wiring are still open |
+| T2-E4 Review Delivery | in_progress | Telegram adapter wired to ReviewService (T2-E4-S5). Approval gating still open. |
 
 ### T3 Builder Product
 
@@ -77,7 +77,7 @@ Status legend:
 
 | Epic | Status | Notes |
 |------|--------|-------|
-| T5-E1 Policy Control Plane | in_progress | Tool policy foundations exist; reviewer execution still bypasses a unified execution policy path |
+| T5-E1 Policy Control Plane | in_progress | Reviewer execution trace now includes execution_policy step with mode/source/access info (T5-E1-S5). Still not unified with tool policy engine. |
 | T5-E2 Approval Model | in_progress | Approval foundations exist, but review delivery approval is not yet wired |
 | T5-E3 Client-Safe And Secret-Safe Output | started | Security/reporting foundations exist, but reviewer redaction mode is not yet complete |
 
@@ -100,17 +100,22 @@ Status legend:
 
 | Epic | Status | Notes |
 |------|--------|-------|
-| T8-E1 Contract-First Boundaries | started | Reviewer bounded context exists, but legacy channel/reviewer drift still remains |
+| T8-E1 Contract-First Boundaries | in_progress | Telegram /review now routes through ReviewService. Legacy Programmer.review_file() still exists but is no longer the runtime path. T8-E1-S5 mostly closed. |
 | T8-E2 Deployment And Environment Profiles | started | Centralized project-root resolution exists |
 | T8-E3 Compliance-Friendly Foundations | started | Artifact traceability improved, but export/recovery depth remains incomplete |
 
 ## Current Strategic Interpretation
 
-The project has now crossed the line from "review idea" to "real reviewer
-foundation". The most important next move is not to expand scope into Builder or
-Operator yet, but to finish Reviewer v1 properly:
+Reviewer v1 is now `mostly_complete`:
+- recovery-safe job storage with full from_dict() reconstruction
+- artifacts with full content payloads (not just metadata)
+- explicit execution mode (READ_ONLY_HOST / WORKSPACE_BOUND)
+- Telegram /review routes through ReviewService
+- execution policy audit trace on every review job
 
-- persist full intake and artifact payloads for recovery and delivery
-- bind reviewer execution to workspace and execution policy discipline
-- route review entrypoints through `ReviewService` instead of legacy paths
-- close delivery approval and client-safe output gaps
+Remaining gaps for full Reviewer v1 closure:
+- delivery approval gating (approval queue integration)
+- client-safe output redaction mode
+- LLM-augmented analysis (v1 is deterministic only)
+- pr_review needs git repo test fixtures
+- legacy Programmer.review_file() should be deprecated

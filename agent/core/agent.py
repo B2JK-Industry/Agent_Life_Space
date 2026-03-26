@@ -104,7 +104,8 @@ class AgentOrchestrator:
         self.review = ReviewService(
             storage=ReviewStorage(
                 db_path=str(self._data_dir / "review" / "reviews.db")
-            )
+            ),
+            workspace_manager=self.workspaces,
         )
 
         # Background tasks
