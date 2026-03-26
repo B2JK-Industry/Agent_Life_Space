@@ -52,6 +52,15 @@ class ProvenanceStatus(str, Enum):
     STALE = "stale"              # Was valid, now outdated (time/event-based expiry)
 
 
+class MemoryKind(str, Enum):
+    """Epistemic kind — is this a fact or a belief?"""
+
+    FACT = "fact"        # Objectively verifiable (e.g., "Python 3.12 is installed")
+    BELIEF = "belief"    # Subjectively held (e.g., "user prefers short answers")
+    CLAIM = "claim"      # Someone stated this, unverified (e.g., "the server has 16GB RAM")
+    PROCEDURE = "procedure"  # How-to knowledge (e.g., "to deploy, run make deploy")
+
+
 class MemoryEntry:
     """A single memory entry with metadata for intelligent retrieval."""
 
@@ -65,6 +74,7 @@ class MemoryEntry:
         importance: float = 0.5,
         metadata: dict[str, Any] | None = None,
         provenance: ProvenanceStatus = ProvenanceStatus.OBSERVED,
+        kind: MemoryKind = MemoryKind.FACT,
         expires_at: str | None = None,
     ) -> None:
         self.id = uuid.uuid4().hex[:12]
@@ -76,6 +86,7 @@ class MemoryEntry:
         self.importance = max(0.0, min(1.0, importance))
         self.metadata = metadata or {}
         self.provenance = provenance
+        self.kind = kind
         self.expires_at = expires_at  # ISO timestamp, None = no expiry
         self.created_at = datetime.now(UTC).isoformat()
         self.last_accessed = self.created_at
@@ -172,6 +183,7 @@ class MemoryEntry:
             "importance": self.importance,
             "metadata": self.metadata,
             "provenance": self.provenance.value,
+            "kind": self.kind.value,
             "expires_at": self.expires_at,
             "created_at": self.created_at,
             "last_accessed": self.last_accessed,
@@ -187,6 +199,12 @@ class MemoryEntry:
         except ValueError:
             provenance = ProvenanceStatus.OBSERVED
 
+        kind_val = data.get("kind", "fact")
+        try:
+            kind = MemoryKind(kind_val)
+        except ValueError:
+            kind = MemoryKind.FACT
+
         entry = cls(
             content=data["content"],
             memory_type=MemoryType(data["memory_type"]),
@@ -196,6 +214,7 @@ class MemoryEntry:
             importance=data.get("importance", 0.5),
             metadata=data.get("metadata", {}),
             provenance=provenance,
+            kind=kind,
             expires_at=data.get("expires_at"),
         )
         entry.id = data["id"]
@@ -264,13 +283,19 @@ class MemoryStore:
             )
         except Exception:
             pass  # Column already exists
+        try:
+            await self._db.execute(
+                "ALTER TABLE memories ADD COLUMN kind TEXT DEFAULT 'fact'"
+            )
+        except Exception:
+            pass  # Column already exists
         await self._db.commit()
 
         # Load all memories into index
         async with self._db.execute(
             "SELECT id, content, memory_type, tags, source, confidence, "
             "importance, metadata, provenance, expires_at, created_at, "
-            "last_accessed, access_count, decay_factor FROM memories"
+            "last_accessed, access_count, decay_factor, kind FROM memories"
         ) as cursor:
             async for row in cursor:
                 data = {
@@ -288,6 +313,7 @@ class MemoryStore:
                     "last_accessed": row[11],
                     "access_count": row[12],
                     "decay_factor": row[13],
+                    "kind": row[14] if len(row) > 14 else "fact",
                 }
                 entry = MemoryEntry.from_dict(data)
                 self._index[entry.id] = entry
@@ -315,8 +341,8 @@ class MemoryStore:
                 """INSERT OR REPLACE INTO memories
                 (id, content, memory_type, tags, source, confidence,
                  importance, metadata, provenance, expires_at,
-                 created_at, last_accessed, access_count, decay_factor)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 created_at, last_accessed, access_count, decay_factor, kind)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry.id,
                     entry.content,
@@ -332,6 +358,7 @@ class MemoryStore:
                     entry.last_accessed,
                     entry.access_count,
                     entry.decay_factor,
+                    entry.kind.value,
                 ),
             )
             await self._db.commit()
@@ -465,16 +492,103 @@ class MemoryStore:
         )
         return len(to_delete)
 
+    def detect_conflicts(self, tags: list[str]) -> list[list[MemoryEntry]]:
+        """
+        Detect conflicting memories about the same topic.
+
+        Two memories conflict when they share ≥50% tags (same topic)
+        but have different provenance or content that may contradict.
+
+        Returns groups of potentially conflicting entries.
+        """
+        if not tags:
+            return []
+
+        query_set = {t.lower() for t in tags}
+        candidates: list[MemoryEntry] = []
+
+        for entry in self._index.values():
+            if entry.is_expired:
+                continue
+            entry_tags = {t.lower() for t in entry.tags}
+            if not entry_tags:
+                continue
+            overlap = len(query_set & entry_tags)
+            union = len(query_set | entry_tags)
+            if union > 0 and overlap / union >= 0.5:
+                candidates.append(entry)
+
+        if len(candidates) < 2:
+            return []
+
+        # Group by provenance conflicts: verified vs inferred/user_asserted/stale
+        conflicts: list[list[MemoryEntry]] = []
+        verified = [c for c in candidates if c.provenance == ProvenanceStatus.VERIFIED]
+        non_verified = [c for c in candidates if c.provenance != ProvenanceStatus.VERIFIED]
+
+        if verified and non_verified:
+            conflicts.append(verified + non_verified)
+
+        # Also flag stale + non-stale combos
+        stale = [c for c in candidates if c.provenance == ProvenanceStatus.STALE]
+        fresh = [c for c in candidates if c.provenance != ProvenanceStatus.STALE]
+        if stale and fresh and (stale + fresh) not in conflicts:
+            conflicts.append(stale + fresh)
+
+        return conflicts
+
+    def get_audit_report(self) -> dict[str, Any]:
+        """
+        Memory audit report — epistemic health of the knowledge base.
+
+        Returns breakdown by provenance, expiry status, and potential issues.
+        """
+        by_provenance: dict[str, int] = {}
+        by_type: dict[str, int] = {}
+        expired_count = 0
+        stale_count = 0
+        high_importance_stale: list[str] = []
+
+        for entry in self._index.values():
+            p = entry.provenance.value
+            by_provenance[p] = by_provenance.get(p, 0) + 1
+            t = entry.memory_type.value
+            by_type[t] = by_type.get(t, 0) + 1
+
+            if entry.is_expired:
+                expired_count += 1
+            if entry.provenance == ProvenanceStatus.STALE:
+                stale_count += 1
+                if entry.importance >= 0.7:
+                    high_importance_stale.append(entry.id)
+
+        return {
+            "total_memories": len(self._index),
+            "by_provenance": by_provenance,
+            "by_type": by_type,
+            "expired": expired_count,
+            "stale": stale_count,
+            "high_importance_stale": high_importance_stale,
+            "verified_ratio": (
+                by_provenance.get("verified", 0) / len(self._index)
+                if self._index else 0.0
+            ),
+        }
+
     def get_stats(self) -> dict[str, Any]:
         """Return memory statistics."""
         type_counts: dict[str, int] = {}
+        provenance_counts: dict[str, int] = {}
         for entry in self._index.values():
             t = entry.memory_type.value
             type_counts[t] = type_counts.get(t, 0) + 1
+            p = entry.provenance.value
+            provenance_counts[p] = provenance_counts.get(p, 0) + 1
 
         return {
             "total_memories": len(self._index),
             "by_type": type_counts,
+            "by_provenance": provenance_counts,
             "avg_importance": (
                 sum(e.importance for e in self._index.values()) / len(self._index)
                 if self._index
