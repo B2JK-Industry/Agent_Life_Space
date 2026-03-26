@@ -161,6 +161,15 @@ class ToolExecutionContext:
     channel_type: str = "internal"
 
 
+class DenialCode(str, Enum):
+    """Structured denial reasons — machine-readable, not just strings."""
+
+    SAFE_MODE = "safe_mode"           # Blocked because safe mode is active
+    OWNER_ONLY = "owner_only"         # Requires owner context
+    UNKNOWN_TOOL = "unknown_tool"     # Tool not in manifest
+    APPROVAL_REQUIRED = "approval_required"  # Needs explicit approval
+
+
 @dataclass(frozen=True)
 class ToolPolicyDecision:
     """Result of policy evaluation for a tool call."""
@@ -170,6 +179,7 @@ class ToolPolicyDecision:
     side_effect: SideEffectClass = SideEffectClass.NONE
     audit_label: str = ""
     reason: str = ""
+    denial_code: DenialCode | None = None
     timestamp: float = 0.0
 
 
@@ -189,6 +199,7 @@ class PolicyAuditLog:
             "side_effect": decision.side_effect.value,
             "audit_label": decision.audit_label,
             "reason": decision.reason,
+            "denial_code": decision.denial_code.value if decision.denial_code else None,
             "is_owner": context.is_owner,
             "safe_mode": context.safe_mode,
             "channel": context.channel_type,
@@ -244,6 +255,7 @@ class ToolPolicy:
                 audit_label=f"unknown:{tool_name}",
                 reason=f"Unknown tool '{tool_name}' — blocked in safe mode."
                 if ctx.safe_mode else "",
+                denial_code=DenialCode.UNKNOWN_TOOL if ctx.safe_mode else None,
                 timestamp=ts,
             )
             self._audit.record(decision, tool_name, ctx)
@@ -261,6 +273,7 @@ class ToolPolicy:
                     f"Tool '{tool_name}' is blocked in safe mode. "
                     "Requires owner-approved private context."
                 ),
+                denial_code=DenialCode.SAFE_MODE,
                 timestamp=ts,
             )
             self._audit.record(decision, tool_name, ctx)
@@ -278,6 +291,7 @@ class ToolPolicy:
                     f"Tool '{tool_name}' is owner-only because it can trigger "
                     "external actions or code execution."
                 ),
+                denial_code=DenialCode.OWNER_ONLY,
                 timestamp=ts,
             )
             self._audit.record(decision, tool_name, ctx)
@@ -317,6 +331,66 @@ class ToolPolicy:
                 is_owner=ctx.is_owner,
                 safe_mode=ctx.safe_mode,
             )
+
+    def simulate(
+        self,
+        tool_name: str,
+        context: ToolExecutionContext | None = None,
+    ) -> dict[str, Any]:
+        """
+        Simulate a policy decision WITHOUT logging it.
+
+        Returns what WOULD happen if the tool were called.
+        Useful for: "what would the agent do if policy allowed?"
+        Does NOT record in audit log.
+        """
+        ctx = context or ToolExecutionContext()
+        cap = TOOL_CAPABILITIES.get(tool_name)
+
+        if cap is None:
+            return {
+                "tool": tool_name,
+                "would_allow": not ctx.safe_mode,
+                "risk_level": "medium",
+                "side_effect": "external",
+                "denial_code": "unknown_tool" if ctx.safe_mode else None,
+                "note": "Tool not in manifest — would default to MEDIUM risk",
+            }
+
+        would_allow = True
+        denial_code = None
+        denial_reason = ""
+
+        if ctx.safe_mode and cap.safe_mode_blocked:
+            would_allow = False
+            denial_code = "safe_mode"
+            denial_reason = "Blocked in safe mode"
+        elif not ctx.is_owner and cap.owner_only:
+            would_allow = False
+            denial_code = "owner_only"
+            denial_reason = "Owner-only tool"
+
+        return {
+            "tool": tool_name,
+            "would_allow": would_allow,
+            "risk_level": cap.risk_level.value,
+            "side_effect": cap.side_effect.value,
+            "owner_only": cap.owner_only,
+            "safe_mode_blocked": cap.safe_mode_blocked,
+            "approval": cap.approval.value,
+            "denial_code": denial_code,
+            "denial_reason": denial_reason,
+        }
+
+    def simulate_all(
+        self,
+        context: ToolExecutionContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """Simulate all tools — what would be allowed/blocked for this context."""
+        return [
+            self.simulate(name, context)
+            for name in TOOL_CAPABILITIES
+        ]
 
     def get_manifest(self) -> list[dict[str, Any]]:
         """Return full capability manifest for inspection."""
