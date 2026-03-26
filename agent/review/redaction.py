@@ -68,7 +68,11 @@ def apply_client_redaction(text: str) -> str:
 
 
 def redact_finding(finding: dict[str, Any]) -> dict[str, Any]:
-    """Redact a single finding dict for client-safe export."""
+    """Redact a single finding dict for client-safe export.
+
+    All client-facing text fields go through apply_client_redaction()
+    (paths + hostnames + secrets). File paths are redacted only if absolute.
+    """
     f = dict(finding)
     if f.get("evidence"):
         f["evidence"] = apply_client_redaction(f["evidence"])
@@ -76,8 +80,10 @@ def redact_finding(finding: dict[str, Any]) -> dict[str, Any]:
         # Keep relative paths, redact absolute
         if f["file_path"].startswith("/") or f["file_path"].startswith("\\"):
             f["file_path"] = redact_paths(f["file_path"])
-    if f.get("description"):
-        f["description"] = redact_paths(f["description"])
+    # All client-facing text fields through full redaction pipeline
+    for text_field in ("description", "impact", "recommendation"):
+        if f.get(text_field):
+            f[text_field] = apply_client_redaction(f[text_field])
     return f
 
 
