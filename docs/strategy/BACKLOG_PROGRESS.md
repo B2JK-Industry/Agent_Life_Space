@@ -33,10 +33,10 @@ Status legend:
 | T2 Reviewer Product | complete_for_phase | Reviewer v1 closed: runtime adapter, recovery, delivery bundle, approval gating, client-safe redaction, verifier, execution mode. LLM analysis is v2 scope. |
 | T3 Builder Product | not_started | No first-class builder slice yet |
 | T4 Operator Product | not_started | No first-class intake/planning/delivery control plane yet |
-| T5 Security, Governance, And Policy | in_progress | Strong foundations exist; reviewer-specific delivery governance remains open |
+| T5 Security, Governance, And Policy | mostly_complete | Delivery approval strict (no bypass), policy-driven redaction, client-safe export, secret redaction in analyzers |
 | T6 Cost, Usage, And Observability | started | Existing foundations exist; review-specific cost and quality ledgers remain open |
 | T7 External Capability Gateway | not_started | No gateway implementation yet |
-| T8 Enterprise Hardening | started | Boundary cleanup and path centralization improved, but not closed |
+| T8 Enterprise Hardening | in_progress | ADR-001 execution sidecar design. TS operator contracts. Policy-driven redaction. Contract-first boundaries improving. |
 
 ## Epic Snapshot
 
@@ -100,9 +100,9 @@ Status legend:
 
 | Epic | Status | Notes |
 |------|--------|-------|
-| T8-E1 Contract-First Boundaries | in_progress | Telegram /review now routes through ReviewService. Legacy Programmer.review_file() still exists but is no longer the runtime path. T8-E1-S5 mostly closed. |
-| T8-E2 Deployment And Environment Profiles | started | Centralized project-root resolution exists |
-| T8-E3 Compliance-Friendly Foundations | started | Artifact traceability improved, but export/recovery depth remains incomplete |
+| T8-E1 Contract-First Boundaries | mostly_complete | ReviewService is runtime path. Execution sidecar boundary defined (ADR-001). TS operator contracts defined. Legacy review deprecated. |
+| T8-E2 Deployment And Environment Profiles | in_progress | Centralized project-root. TS operator surface foundation. ADR-001 defines sidecar deployment model. |
+| T8-E3 Compliance-Friendly Foundations | in_progress | Policy-driven redaction module. Client-safe export mode. Delivery approval gating (strict, no bypass without DEV_MODE). |
 
 ## Current Strategic Interpretation
 

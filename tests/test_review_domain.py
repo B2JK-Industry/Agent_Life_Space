@@ -858,8 +858,8 @@ class TestDeliveryApproval:
         result = service.request_delivery_approval("nonexistent-id")
         assert "error" in result
 
-    async def test_delivery_without_queue_bypasses(self):
-        """Without approval queue, delivery is auto-ready (with warning)."""
+    async def test_delivery_without_queue_blocks_by_default(self):
+        """Without approval queue, delivery is BLOCKED (not bypassed)."""
         from agent.review.service import ReviewService
         from agent.review.storage import ReviewStorage
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -870,7 +870,33 @@ class TestDeliveryApproval:
             intake = ReviewIntake(repo_path=tmpdir)
             job = await service.run_review(intake)
             result = service.request_delivery_approval(job.id)
-            assert result.get("approval_bypassed") is True
+            assert result.get("delivery_ready") is False
+            assert "error" in result
+        os.unlink(db_path)
+
+    async def test_delivery_dev_mode_bypass(self):
+        """DEV MODE only: bypass requires explicit env var."""
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        service = ReviewService(storage=ReviewStorage(db_path=db_path))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "app.py").write_text("x = 1\n")
+            intake = ReviewIntake(repo_path=tmpdir)
+            job = await service.run_review(intake)
+            import os as _os
+            old = _os.environ.get("AGENT_DEV_MODE")
+            _os.environ["AGENT_DEV_MODE"] = "1"
+            try:
+                result = service.request_delivery_approval(job.id)
+                assert result.get("approval_bypassed") is True
+                assert "DEV MODE" in result.get("warning", "")
+            finally:
+                if old is None:
+                    _os.environ.pop("AGENT_DEV_MODE", None)
+                else:
+                    _os.environ["AGENT_DEV_MODE"] = old
         os.unlink(db_path)
 
 
@@ -914,6 +940,49 @@ class TestClientSafeExport:
 
     async def test_client_safe_nonexistent_job(self, service):
         assert service.get_client_safe_bundle("nope") is None
+
+
+class TestRedactionPolicy:
+    """Redaction policy must be thorough and testable independently."""
+
+    def test_redact_paths(self):
+        from agent.review.redaction import redact_paths
+        assert "[PATH_REDACTED]" in redact_paths("file at /Users/daniel/code/app.py")
+        assert "[PATH_REDACTED]" in redact_paths("found in /home/user/.secret")
+        assert "relative/path.py" in redact_paths("relative/path.py")
+
+    def test_redact_hostnames(self):
+        from agent.review.redaction import redact_hostnames
+        assert "[HOST_REDACTED]" in redact_hostnames("running on b2jk-agentlifespace")
+        assert "google.com" in redact_hostnames("connect to google.com")
+
+    def test_redact_secrets(self):
+        from agent.review.redaction import redact_secrets
+        assert "[SECRET_REDACTED]" in redact_secrets('api_key = "sk-1234567890abcdef"')
+        assert "[SECRET_REDACTED]" in redact_secrets("Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")
+
+    def test_redact_bundle_strips_internals(self):
+        from agent.review.redaction import redact_bundle
+        bundle = {
+            "markdown_report": "# Report\nPath: /Users/daniel/project\n",
+            "findings_only": [{"evidence": "at /home/user/secrets.py", "file_path": "src/app.py"}],
+            "json_report": {"scope_description": "/Users/daniel/project", "findings": []},
+            "execution_trace": [{"step": "analyze"}],
+            "execution_mode": "read_only_host",
+        }
+        result = redact_bundle(bundle)
+        assert "execution_trace" not in result
+        assert "execution_mode" not in result
+        assert result["export_mode"] == "client_safe"
+        assert "/Users/" not in result["markdown_report"]
+
+    def test_apply_client_redaction_combined(self):
+        from agent.review.redaction import apply_client_redaction
+        text = 'Found api_key = "supersecret12345" at /Users/dev/app.py on b2jk-server'
+        redacted = apply_client_redaction(text)
+        assert "supersecret" not in redacted
+        assert "/Users/" not in redacted
+        assert "b2jk" not in redacted
 
 
 # ─────────────────────────────────────────────

@@ -469,13 +469,24 @@ class ReviewService:
         if job.status != ReviewJobStatus.COMPLETED:
             return {"error": f"Job '{job_id}' is {job.status.value}, not completed"}
 
-        # Create approval request via orchestrator's approval queue
+        # Approval queue is REQUIRED for external delivery.
+        # Without it, delivery is blocked — not silently bypassed.
         if self._approval_queue is None:
+            import os
+            if os.environ.get("AGENT_DEV_MODE") == "1":
+                # Development-only bypass — never in production
+                logger.warning("delivery_approval_dev_bypass", job_id=job_id)
+                return {
+                    "job_id": job_id,
+                    "delivery_ready": True,
+                    "approval_bypassed": True,
+                    "warning": "DEV MODE: approval bypassed. Not safe for production.",
+                }
             return {
-                "error": "No approval queue configured",
+                "error": "Delivery blocked: no approval queue configured. "
+                         "External delivery requires approval gating.",
                 "job_id": job_id,
-                "delivery_ready": True,
-                "approval_bypassed": True,
+                "delivery_ready": False,
             }
 
         from agent.core.approval import ApprovalCategory
@@ -501,52 +512,21 @@ class ReviewService:
         }
 
     def get_client_safe_bundle(self, job_id: str) -> dict[str, Any] | None:
-        """Export a client-safe delivery bundle with redacted sensitive content.
+        """Export a client-safe delivery bundle with policy-driven redaction.
 
-        Differences from internal bundle:
-            - absolute paths replaced with relative or [REDACTED]
-            - raw evidence redacted for secret findings
-            - internal trace details stripped
-            - execution mode and internal metadata removed
+        Uses agent.review.redaction policy to:
+            - redact absolute paths, hostnames, secrets
+            - strip execution trace and internal metadata
+            - redact evidence in findings
+
+        Returns redacted bundle or None if job not found.
         """
         bundle = self.get_delivery_bundle(job_id)
         if bundle is None:
             return None
 
-        import re
-
-        # Redact absolute paths
-        def _redact_paths(text: str) -> str:
-            return re.sub(r'/(?:Users|home|root)/[^\s"\'`]+', '[PATH_REDACTED]', text)
-
-        # Redact markdown report
-        bundle["markdown_report"] = _redact_paths(bundle.get("markdown_report", ""))
-
-        # Redact findings evidence
-        redacted_findings = []
-        for f in bundle.get("findings_only", []):
-            fc = dict(f)
-            if fc.get("evidence"):
-                fc["evidence"] = _redact_paths(fc["evidence"])
-            redacted_findings.append(fc)
-        bundle["findings_only"] = redacted_findings
-
-        # Redact JSON report
-        jr = bundle.get("json_report", {})
-        if jr.get("scope_description"):
-            jr["scope_description"] = _redact_paths(jr["scope_description"])
-        if jr.get("findings"):
-            for f in jr["findings"]:
-                if f.get("evidence"):
-                    f["evidence"] = _redact_paths(f["evidence"])
-        bundle["json_report"] = jr
-
-        # Strip internal-only fields
-        bundle.pop("execution_trace", None)
-        bundle.pop("execution_mode", None)
-        bundle["export_mode"] = "client_safe"
-
-        return bundle
+        from agent.review.redaction import redact_bundle
+        return redact_bundle(bundle)
 
     def list_jobs(self, status: str = "", limit: int = 20) -> list[dict[str, Any]]:
         """List review jobs."""
