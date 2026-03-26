@@ -27,6 +27,28 @@ from agent.core.sandbox import DockerSandbox, SandboxResult
 logger = structlog.get_logger(__name__)
 
 
+async def create_workspace_for_task(task_name: str = "", task_id: str = "") -> str:
+    """Create an isolated workspace directory for a programming task.
+
+    Returns the workspace path. Integrates with WorkspaceManager if available.
+    """
+    try:
+        from agent.work.workspace import WorkspaceManager
+
+        wm = WorkspaceManager()
+        wm.initialize()
+        ws = wm.create(name=task_name or "sandbox-task", task_id=task_id)
+        wm.activate(ws.id)
+        logger.info("workspace_created", id=ws.id, path=ws.path)
+        return ws.path
+    except Exception as e:
+        # Fallback: create temp directory
+        import tempfile
+        path = tempfile.mkdtemp(prefix="agent-workspace-")
+        logger.warning("workspace_fallback_temp", path=path, error=str(e))
+        return path
+
+
 @dataclass
 class ExecutionResult:
     """Structured execution result."""

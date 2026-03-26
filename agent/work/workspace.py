@@ -23,6 +23,7 @@ Bezpečnosť:
 
 from __future__ import annotations
 
+import os
 import shutil
 import uuid
 from dataclasses import dataclass, field
@@ -36,7 +37,9 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 # Workspaces root — mimo hlavného kódu
-_WORKSPACES_ROOT = Path.home() / "agent-life-space" / "workspaces"
+_WORKSPACES_ROOT = Path(
+    os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
+) / "workspaces"
 
 
 class WorkspaceStatus(str, Enum):
