@@ -34,6 +34,6 @@ python -m pytest tests/ -q   # Testy (974+ testov)
 
 ## Verzia
 
-Aktuálna: **v1.1.0** — Breakthrough architecture: epistemic memory, tool governance, approval queue, operator controls.
+Aktuálna: **v1.2.0** — Operator-grade visibility: API audit, budget policy, memory inspection, operator handbook.
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.
