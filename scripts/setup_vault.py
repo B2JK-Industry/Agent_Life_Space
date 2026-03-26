@@ -55,21 +55,27 @@ def main() -> None:
         print("[OK] ETH wallet already exists in vault")
         print(f"     Address: {vault.get_secret('ETH_ADDRESS')}")
     else:
-        eth_address, eth_key = _create_eth_wallet()
-        vault.set_secret("ETH_PRIVATE_KEY", eth_key)
-        vault.set_secret("ETH_ADDRESS", eth_address)
-        print(f"[NEW] ETH wallet created")
-        print(f"      Address: {eth_address}")
+        try:
+            eth_address, eth_key = _create_eth_wallet()
+            vault.set_secret("ETH_PRIVATE_KEY", eth_key)
+            vault.set_secret("ETH_ADDRESS", eth_address)
+            print("[NEW] ETH wallet created")
+            print(f"      Address: {eth_address}")
+        except ImportError:
+            print("[SKIP] ETH wallet — install eth_account: pip install eth-account")
 
     if "BTC_PRIVATE_KEY" in existing:
         print("[OK] BTC wallet already exists in vault")
         print(f"     Address: {vault.get_secret('BTC_ADDRESS')}")
     else:
-        btc_address, btc_key = _create_btc_wallet()
-        vault.set_secret("BTC_PRIVATE_KEY", btc_key)
-        vault.set_secret("BTC_ADDRESS", btc_address)
-        print(f"[NEW] BTC wallet created")
-        print(f"      Address: {btc_address}")
+        try:
+            btc_address, btc_key = _create_btc_wallet()
+            vault.set_secret("BTC_PRIVATE_KEY", btc_key)
+            vault.set_secret("BTC_ADDRESS", btc_address)
+            print("[NEW] BTC wallet created")
+            print(f"      Address: {btc_address}")
+        except ImportError:
+            print("[SKIP] BTC wallet — install bit: pip install bit")
 
     # Step 4: Store additional tokens in vault (if provided via env)
     _store_if_env(vault, "GITHUB_TOKEN")

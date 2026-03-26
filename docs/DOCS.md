@@ -21,6 +21,8 @@ Tento súbor je len rozcestník. Detailná dokumentácia je na wiki stránkach:
 | [Security Model](./SECURITY_MODEL.md) | Bezpečnostný model, execution boundaries, tool policy |
 | [Learning Model](./LEARNING_MODEL.md) | Definícia learning systému, 4 typy, safety rules |
 | [Operator Handbook](./OPERATOR_HANDBOOK.md) | Praktický sprievodca pre vlastníka |
+| [Product Identity](./PRODUCT_IDENTITY.md) | Rozhodnutie: personal sovereign operator |
+| [Release Checklist](./RELEASE_CHECKLIST.md) | Checklist pre každý release |
 
 ## Rýchly štart
 
