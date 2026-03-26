@@ -17,6 +17,7 @@ Tento súbor je len rozcestník. Detailná dokumentácia je na wiki stránkach:
 | [Cron & Maintenance](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Cron-and-Maintenance) | Background jobs, health checks |
 | [Finance](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Finance) | Budget, proposals, approval flow |
 | [Roadmap](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Roadmap) | Backlog, priorities, known issues |
+| [Idea Review and Expansion](./IDEA_REVIEW_AND_EXPANSION_2026_03.md) | Koncept review, rozšírenia, aktuálne nálezy |
 
 ## Rýchly štart
 
@@ -25,7 +26,7 @@ source .venv/bin/activate
 python -m agent              # Spusti agenta
 python -m agent --status     # Stav
 python -m agent --health     # Zdravie
-python -m pytest tests/ -q   # Testy (696+ testov)
+python -m pytest tests/ -q   # Testy (708+ testov)
 ```
 
 ## Verzia

@@ -23,6 +23,7 @@ from typing import Any
 import structlog
 
 from agent.core.llm_provider import GenerateRequest, LLMProvider
+from agent.core.tool_policy import ToolExecutionContext
 from agent.core.tool_executor import ToolExecutor
 from agent.core.tools import AGENT_TOOLS
 
@@ -45,6 +46,8 @@ class ToolUseLoop:
         self._executor = tool_executor
         self._max_turns = max_turns
         self._total_tokens = 0
+        self._total_input_tokens = 0
+        self._total_output_tokens = 0
         self._total_cost = 0.0
 
     async def run(
@@ -56,6 +59,7 @@ class ToolUseLoop:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout: int = 180,
+        tool_context: ToolExecutionContext | None = None,
     ) -> ToolLoopResult:
         """
         Run the tool use loop until LLM responds with text only
@@ -66,6 +70,9 @@ class ToolUseLoop:
         conversation = list(messages)  # Copy to avoid mutation
         turn = 0
         tool_calls_made: list[dict] = []
+        run_input_tokens = 0
+        run_output_tokens = 0
+        run_cost = 0.0
 
         while turn < self._max_turns:
             turn += 1
@@ -80,7 +87,12 @@ class ToolUseLoop:
                 timeout=timeout,
             ))
 
+            run_input_tokens += response.input_tokens
+            run_output_tokens += response.output_tokens
+            run_cost += response.cost_usd
             self._total_tokens += response.input_tokens + response.output_tokens
+            self._total_input_tokens += response.input_tokens
+            self._total_output_tokens += response.output_tokens
             self._total_cost += response.cost_usd
 
             if not response.success:
@@ -89,8 +101,10 @@ class ToolUseLoop:
                     success=False,
                     turns=turn,
                     tool_calls=tool_calls_made,
-                    total_tokens=self._total_tokens,
-                    total_cost=self._total_cost,
+                    total_tokens=run_input_tokens + run_output_tokens,
+                    total_input_tokens=run_input_tokens,
+                    total_output_tokens=run_output_tokens,
+                    total_cost=run_cost,
                     latency_ms=int((time.monotonic() - start) * 1000),
                 )
 
@@ -101,8 +115,10 @@ class ToolUseLoop:
                     success=True,
                     turns=turn,
                     tool_calls=tool_calls_made,
-                    total_tokens=self._total_tokens,
-                    total_cost=self._total_cost,
+                    total_tokens=run_input_tokens + run_output_tokens,
+                    total_input_tokens=run_input_tokens,
+                    total_output_tokens=run_output_tokens,
+                    total_cost=run_cost,
                     latency_ms=int((time.monotonic() - start) * 1000),
                     model=response.model,
                 )
@@ -127,7 +143,11 @@ class ToolUseLoop:
                 logger.info("tool_call", name=tc["name"], turn=turn)
                 tool_calls_made.append(tc)
 
-                result = await self._executor.execute(tc["name"], tc["input"])
+                result = await self._executor.execute(
+                    tc["name"],
+                    tc["input"],
+                    context=tool_context,
+                )
 
                 tool_results.append({
                     "type": "tool_result",
@@ -143,13 +163,17 @@ class ToolUseLoop:
             success=True,
             turns=turn,
             tool_calls=tool_calls_made,
-            total_tokens=self._total_tokens,
-            total_cost=self._total_cost,
+            total_tokens=run_input_tokens + run_output_tokens,
+            total_input_tokens=run_input_tokens,
+            total_output_tokens=run_output_tokens,
+            total_cost=run_cost,
             latency_ms=int((time.monotonic() - start) * 1000),
         )
 
     def get_stats(self) -> dict[str, Any]:
         return {
+            "total_input_tokens": self._total_input_tokens,
+            "total_output_tokens": self._total_output_tokens,
             "total_tokens": self._total_tokens,
             "total_cost": round(self._total_cost, 4),
         }
@@ -165,6 +189,8 @@ class ToolLoopResult:
         turns: int = 0,
         tool_calls: list[dict] | None = None,
         total_tokens: int = 0,
+        total_input_tokens: int = 0,
+        total_output_tokens: int = 0,
         total_cost: float = 0.0,
         latency_ms: int = 0,
         model: str = "",
@@ -174,6 +200,8 @@ class ToolLoopResult:
         self.turns = turns
         self.tool_calls = tool_calls or []
         self.total_tokens = total_tokens
+        self.total_input_tokens = total_input_tokens
+        self.total_output_tokens = total_output_tokens
         self.total_cost = total_cost
         self.latency_ms = latency_ms
         self.model = model

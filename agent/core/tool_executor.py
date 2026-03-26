@@ -18,6 +18,7 @@ from typing import Any
 import structlog
 
 from agent.core.agent import AgentOrchestrator
+from agent.core.tool_policy import ToolExecutionContext, ToolPolicy
 from agent.core.sandbox_executor import SandboxExecutor
 
 logger = structlog.get_logger(__name__)
@@ -32,9 +33,11 @@ class ToolExecutor:
         self,
         agent: AgentOrchestrator,
         sandbox: SandboxExecutor | None = None,
+        policy: ToolPolicy | None = None,
     ) -> None:
         self._agent = agent
         self._sandbox = sandbox or SandboxExecutor()
+        self._policy = policy or ToolPolicy()
         self._handlers: dict[str, Any] = {
             "store_memory": self._store_memory,
             "query_memory": self._query_memory,
@@ -49,17 +52,43 @@ class ToolExecutor:
         }
         self._call_count = 0
         self._error_count = 0
+        self._blocked_count = 0
 
-    async def execute(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+    async def execute(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        context: ToolExecutionContext | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Execute a tool call. Returns result dict."""
+        if isinstance(context, dict):
+            context = ToolExecutionContext(**context)
+
         handler = self._handlers.get(tool_name)
         if not handler:
             self._error_count += 1
             return {"error": f"Unknown tool: {tool_name}. Available: {list(self._handlers.keys())}"}
 
+        decision = self._policy.evaluate(tool_name, context)
+        if not decision.allowed:
+            self._blocked_count += 1
+            logger.warning(
+                "tool_blocked",
+                tool=tool_name,
+                risk_level=decision.risk_level.value,
+                reason=decision.reason,
+            )
+            return {
+                "error": decision.reason,
+                "blocked": True,
+                "risk_level": decision.risk_level.value,
+            }
+
         try:
             self._call_count += 1
             result = await handler(**tool_input)
+            if isinstance(result, dict):
+                result.setdefault("risk_level", decision.risk_level.value)
             logger.info("tool_executed", tool=tool_name, success=True)
             return result
         except Exception as e:
@@ -71,6 +100,7 @@ class ToolExecutor:
         return {
             "total_calls": self._call_count,
             "errors": self._error_count,
+            "blocked": self._blocked_count,
             "available_tools": len(self._handlers),
         }
 

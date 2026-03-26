@@ -199,10 +199,14 @@ class AgentBrain:
 
         provider = get_provider()
         backend = os.environ.get("LLM_BACKEND", "cli")
+        usage_cost = 0.0
+        usage_input_tokens = 0
+        usage_output_tokens = 0
 
         # API backend: use ToolUseLoop (multi-turn with function calling)
         if backend == "api" and provider.supports_tools() and hasattr(self, "_tool_executor") and self._tool_executor:
             from agent.core.tool_loop import ToolUseLoop
+            from agent.core.tool_policy import ToolExecutionContext
             from agent.core.tools import AGENT_TOOLS
 
             tool_loop = ToolUseLoop(provider, self._tool_executor, max_turns=10)
@@ -212,12 +216,21 @@ class AgentBrain:
                 model=model.model_id,
                 tools=AGENT_TOOLS,
                 timeout=model.timeout,
+                tool_context=ToolExecutionContext(
+                    is_owner=message.is_owner,
+                    safe_mode=message.is_group and not message.is_owner,
+                    channel_type=message.channel_type,
+                ),
             )
 
             reply = loop_result.text or "Prepáč, nepodarilo sa mi odpovedať."
             self._total_cost_usd += loop_result.total_cost
-            self._total_input_tokens += loop_result.total_tokens
+            self._total_input_tokens += loop_result.total_input_tokens
+            self._total_output_tokens += loop_result.total_output_tokens
             self._total_requests += 1
+            usage_cost = loop_result.total_cost
+            usage_input_tokens = loop_result.total_input_tokens
+            usage_output_tokens = loop_result.total_output_tokens
 
             if loop_result.tool_calls:
                 logger.info("brain_tool_use", tools_called=len(loop_result.tool_calls),
@@ -241,6 +254,9 @@ class AgentBrain:
             self._total_input_tokens += response.input_tokens
             self._total_output_tokens += response.output_tokens
             self._total_requests += 1
+            usage_cost = response.cost_usd
+            usage_input_tokens = response.input_tokens
+            usage_output_tokens = response.output_tokens
 
         # Store response in conversation buffer
         clean_reply = reply.split("\n\n_💰")[0] if "_💰" in reply else reply
@@ -254,8 +270,8 @@ class AgentBrain:
         # Usage info
         model_short = model.model_id.split("-")[1] if "-" in model.model_id else model.model_id
         reply += (
-            f"\n\n_💰 ${response.cost_usd:.4f} | {model_short} | "
-            f"⬆{response.input_tokens:,} ⬇{response.output_tokens:,} tokens_"
+            f"\n\n_💰 ${usage_cost:.4f} | {model_short} | "
+            f"⬆{usage_input_tokens:,} ⬇{usage_output_tokens:,} tokens_"
         )
 
         return reply

@@ -50,6 +50,7 @@ This project implements multiple security layers. See [Security wiki](https://gi
 
 - **Input sanitization** — prompt injection guard (EN + SK patterns)
 - **Docker sandbox** — read-only, no-network, resource-limited containers
+- **Tool policy gate** — safe-mode / owner-aware authorization before tool execution
 - **Encrypted vault** — Fernet AES-128, PBKDF2 480K iterations
 - **API authentication** — Bearer token, rate limiting
 - **Safe mode** — non-owners restricted to read-only commands

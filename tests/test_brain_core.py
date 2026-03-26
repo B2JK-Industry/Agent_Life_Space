@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -150,3 +150,45 @@ class TestBrainMultiChannel:
         result = await brain.process(msg)
         # Should respond (either from dispatcher or LLM)
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_api_tool_loop_tracks_usage_without_response_object(self, brain, monkeypatch):
+        """API tool-use path should use ToolLoopResult metrics and not crash."""
+        from agent.core.tool_loop import ToolLoopResult
+
+        fake_provider = MagicMock()
+        fake_provider.supports_tools.return_value = True
+        fake_loop = MagicMock()
+        fake_loop.run = AsyncMock(return_value=ToolLoopResult(
+            text="API reply",
+            success=True,
+            turns=2,
+            total_tokens=19,
+            total_input_tokens=12,
+            total_output_tokens=7,
+            total_cost=0.02,
+            model="claude-sonnet-4-6",
+        ))
+
+        brain._tool_executor = MagicMock()
+        monkeypatch.setenv("LLM_BACKEND", "api")
+        monkeypatch.setattr("agent.core.llm_provider.get_provider", lambda: fake_provider)
+
+        with patch("agent.core.tool_loop.ToolUseLoop", return_value=fake_loop):
+            msg = IncomingMessage(
+                text="navrhni zmenu architektury",
+                sender_id="1",
+                sender_name="Daniel",
+                channel_type="telegram",
+                chat_id="123",
+                is_owner=True,
+            )
+            result = await brain.process(msg)
+
+        assert "API reply" in result
+        assert "$0.0200" in result
+        assert "⬆12" in result
+        assert "⬇7" in result
+        tool_context = fake_loop.run.call_args.kwargs["tool_context"]
+        assert tool_context.is_owner is True
+        assert tool_context.safe_mode is False

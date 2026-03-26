@@ -6,7 +6,7 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 
 ## What it does
 
-- **7-layer cascade** — 5 layers of local processing before calling LLM (saves tokens)
+- **7-layer cascade** — 5 layers of local processing before calling LLM (saves API calls)
 - **Docker sandbox** — `/sandbox` code runs in isolated containers (256MB, no network, read-only FS)
 - **Encrypted vault** — API keys, wallet keys (ETH/BTC) encrypted with Fernet AES-128
 - **Memory** — 4 types (episodic, semantic, procedural, working), consolidation, decay
@@ -15,7 +15,8 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Learning system** — skill outcome tracking, model escalation, prompt augmentation
 - **Multi-provider LLM** — Claude CLI, Anthropic API, OpenAI, Ollama (any backend)
 - **Automated security** — 50-test security audit suite replaces manual reviews
-- **705+ tests** — unit + integration + e2e + security audit, $0.00 token cost
+- **Tool policy gate** — deterministic authorization layer between tool requests and execution
+- **708+ tests** — unit + integration + e2e + security audit, $0.00 token cost
 
 ## Quick Start
 
@@ -43,11 +44,11 @@ See **[Deployment guide](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/
 Telegram message
     |
 1. Input sanitization (prompt injection guard)
-2. /commands -> direct response (0 tokens)
-3. Dispatcher -> pattern match (0 tokens)
-4. Semantic router -> embedding classification (0 tokens)
-5. Semantic cache -> cached response (0 tokens)
-6. RAG -> knowledge base lookup (0 tokens)
+2. /commands -> direct response (0 API calls)
+3. Dispatcher -> pattern match (0 API calls)
+4. Semantic router -> embedding classification (local compute)
+5. Semantic cache -> cached response (local compute)
+6. RAG -> knowledge base lookup (local compute)
 7. Claude (Haiku $0.001 | Sonnet $0.01 | Opus $0.05-0.20)
     |
 Response -> Telegram + memory + learning
@@ -73,6 +74,7 @@ Response -> Telegram + memory + learning
 
 - Input sanitization (prompt injection guard, EN + SK)
 - Owner identification + safe mode for non-owners in groups
+- Tool policy gate for tool-use execution context
 - Docker sandbox (read-only, no-network, resource limits, image whitelist)
 - Encrypted vault (fail-fast without key)
 - API authentication (Bearer token) + rate limiting
@@ -85,7 +87,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 705 passed, ~19s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 708 passed, ~21s, $0.00
 ```
 
 | Layer | Tests | What |

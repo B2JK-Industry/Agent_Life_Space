@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agent.core.tools import AGENT_TOOLS, get_tool_names
+from agent.core.tool_policy import ToolExecutionContext
 
 
 class TestToolDefinitions:
@@ -107,6 +108,17 @@ class TestToolExecutor:
         assert "running" in result
 
     @pytest.mark.asyncio
+    async def test_risky_tool_blocked_in_safe_mode(self, executor):
+        result = await executor.execute(
+            "run_code",
+            {"code": "print('hi')"},
+            context=ToolExecutionContext(is_owner=False, safe_mode=True, channel_type="telegram"),
+        )
+        assert result["blocked"] is True
+        assert result["risk_level"] == "high"
+        assert "safe mode" in result["error"]
+
+    @pytest.mark.asyncio
     async def test_unknown_tool_returns_error(self, executor):
         result = await executor.execute("nonexistent_tool", {})
         assert "error" in result
@@ -119,6 +131,7 @@ class TestToolExecutor:
         stats = executor.get_stats()
         assert stats["total_calls"] == 2
         assert stats["errors"] == 0
+        assert stats["blocked"] == 0
 
 
 class TestToolUseLoop:
@@ -196,7 +209,7 @@ class TestToolUseLoop:
         assert result.turns == 2
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0]["name"] == "check_health"
-        mock_executor.execute.assert_called_once_with("check_health", {})
+        mock_executor.execute.assert_called_once_with("check_health", {}, context=None)
 
     @pytest.mark.asyncio
     async def test_multiple_tool_calls(self, mock_provider, mock_executor):
@@ -229,6 +242,35 @@ class TestToolUseLoop:
         assert result.success
         assert len(result.tool_calls) == 2
         assert mock_executor.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_tool_context_forwarded(self, mock_provider, mock_executor):
+        """Execution context is forwarded to ToolExecutor for policy checks."""
+        from agent.core.llm_provider import GenerateResponse
+        from agent.core.tool_loop import ToolUseLoop
+
+        mock_provider.generate = AsyncMock(side_effect=[
+            GenerateResponse(
+                text="",
+                success=True,
+                model="test",
+                tool_calls=[{"id": "tc_1", "name": "check_health", "input": {}}],
+            ),
+            GenerateResponse(
+                text="done",
+                success=True,
+                model="test",
+            ),
+        ])
+
+        loop = ToolUseLoop(mock_provider, mock_executor)
+        context = ToolExecutionContext(is_owner=False, safe_mode=True, channel_type="telegram")
+        await loop.run(
+            messages=[{"role": "user", "content": "status"}],
+            tool_context=context,
+        )
+
+        mock_executor.execute.assert_called_once_with("check_health", {}, context=context)
 
     @pytest.mark.asyncio
     async def test_max_turns_limit(self, mock_provider, mock_executor):
