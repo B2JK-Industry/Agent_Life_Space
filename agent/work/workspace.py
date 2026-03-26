@@ -105,11 +105,22 @@ class Workspace:
 class WorkspaceManager:
     """Spravuje izolované pracovné priestory s SQLite persistence."""
 
-    def __init__(self, root: str | None = None, db_path: str | None = None) -> None:
+    DEFAULT_MAX_ACTIVE = 3
+    DEFAULT_TTL_HOURS = 24  # Completed/failed workspaces older than this get auto-cleaned
+
+    def __init__(
+        self,
+        root: str | None = None,
+        db_path: str | None = None,
+        max_active: int = DEFAULT_MAX_ACTIVE,
+        ttl_hours: int = DEFAULT_TTL_HOURS,
+    ) -> None:
         self._root = Path(root) if root else _WORKSPACES_ROOT
         self._workspaces: dict[str, Workspace] = {}
         self._db_path = db_path or str(self._root / "workspaces.db")
         self._db: sqlite3.Connection | None = None
+        self._max_active = max_active
+        self._ttl_hours = ttl_hours
 
     def initialize(self) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
@@ -204,7 +215,18 @@ class WorkspaceManager:
         project_id: str = "",
         task_id: str = "",
     ) -> Workspace:
-        """Vytvor nový workspace s vlastným adresárom."""
+        """Vytvor nový workspace s vlastným adresárom. Enforces max_active limit."""
+        active_count = sum(
+            1 for w in self._workspaces.values()
+            if w.status == WorkspaceStatus.ACTIVE
+        )
+        if active_count >= self._max_active:
+            msg = (
+                f"Cannot create workspace: {active_count} active workspaces "
+                f"(max {self._max_active}). Complete or fail existing ones first."
+            )
+            raise RuntimeError(msg)
+
         ws = Workspace(
             name=name,
             project_id=project_id,
@@ -335,6 +357,31 @@ class WorkspaceManager:
             "active": self.get_active().name if self.get_active() else None,
             "root": str(self._root),
         }
+
+    def cleanup_expired(self) -> int:
+        """
+        Auto-cleanup completed/failed workspaces older than TTL.
+        Returns number of workspaces cleaned.
+        """
+        now = datetime.now(UTC)
+        cleaned = 0
+        for ws in list(self._workspaces.values()):
+            if ws.status not in (WorkspaceStatus.COMPLETED, WorkspaceStatus.FAILED):
+                continue
+            if not ws.completed_at:
+                continue
+            try:
+                completed = datetime.fromisoformat(ws.completed_at)
+                age_hours = (now - completed).total_seconds() / 3600
+                if age_hours > self._ttl_hours:
+                    if self.cleanup(ws.id):
+                        cleaned += 1
+            except (ValueError, TypeError):
+                continue
+
+        if cleaned:
+            logger.info("workspace_expired_cleanup", cleaned=cleaned)
+        return cleaned
 
     def close(self) -> None:
         if self._db:
