@@ -1,125 +1,171 @@
 # Backlog Progress
 
-This file tracks current strategic execution progress against
-`MASTER_SOURCE_OF_TRUTH.md` and `THEMES_EPICS_STORIES.md`.
+This file tracks current strategic execution progress against:
+- `MASTER_SOURCE_OF_TRUTH.md`
+- `THEMES_EPICS_STORIES.md`
+- the actual state of `main`
+
+Assessment basis:
+- branch: `main`
+- commit: `ccfd969`
+- interpretation date: `2026-03-26`
 
 Important:
-- This snapshot is based on reviewer v1 closure pass (post PR #45)
-- Use this file to understand delivery progress, not merge state
+- this is a product-and-architecture progress snapshot, not a merge history log
+- percentages are directional, not exact velocity math
+- `complete_for_phase` means "good enough for the current bounded-context phase"
 
 Status legend:
 - `not_started`: no meaningful implementation yet
 - `started`: foundations or isolated pieces exist
 - `in_progress`: meaningful implementation exists, but key gaps remain
-- `mostly_complete`: usable slice exists, but not yet fully productized
-- `complete`: strategy intent is materially closed for the current phase
+- `mostly_complete`: usable slice exists, but still leaks or drifts
+- `complete_for_phase`: sufficiently closed for the current phase
 
 ## Overall Snapshot
 
-- Reviewer v1 is mostly_complete: recovery-safe storage, explicit execution mode,
-  channel adapter wired, policy audit trace
-- ReviewJob has from_dict() for full recovery (intake, report, findings, trace)
-- Execution mode is explicit (READ_ONLY_HOST vs WORKSPACE_BOUND)
-- Telegram /review routes through ReviewService, not legacy Programmer
-- Platform foundations improved, but canonical system-wide job convergence is
-  still open
-- Builder, Operator, External Gateway, and Enterprise Hardening remain future work
+- Reviewer is the only product slice that is genuinely far along.
+- Platform foundations are much stronger than before, but there is still no
+  canonical cross-system job/control-plane model.
+- Security and governance foundations are meaningful, but reviewer execution is
+  still not fully under one shared execution boundary.
+- Builder, Operator, External Gateway, and most enterprise-hardening work are
+  still ahead of us.
+- The next highest-leverage step is not another reviewer feature. It is
+  Builder foundation plus control-plane convergence.
 
 ## Theme Status
 
-| Theme | Status | Notes |
-|------|--------|-------|
-| T1 Platform Foundation | in_progress | ReviewJob with recovery, artifacts with full payloads, execution mode explicit. Not yet system-canonical. |
-| T2 Reviewer Product | complete_for_phase | Reviewer v1 closed: runtime adapter, recovery, delivery bundle, approval gating, client-safe redaction, verifier, execution mode. LLM analysis is v2 scope. |
-| T3 Builder Product | not_started | No first-class builder slice yet |
-| T4 Operator Product | not_started | No first-class intake/planning/delivery control plane yet |
-| T5 Security, Governance, And Policy | in_progress | Strong foundations exist; reviewer-specific delivery governance remains open |
-| T6 Cost, Usage, And Observability | started | Existing foundations exist; review-specific cost and quality ledgers remain open |
-| T7 External Capability Gateway | not_started | No gateway implementation yet |
-| T8 Enterprise Hardening | started | Boundary cleanup and path centralization improved, but not closed |
+| Theme | Status | Approx Progress | Current Truth On `main` | Main Remaining Gap |
+|------|--------|-----------------|--------------------------|--------------------|
+| T1 Platform Foundation | in_progress | 45% | ReviewJob, artifact storage, workspace subsystem, execution trace | No canonical cross-system job model yet |
+| T2 Reviewer Product | mostly_complete | 80% | Reviewer bounded context, verifier, delivery bundle, approval hook, Telegram path | Delivery is not fully operator/API complete and reviewer execution truth still leaks |
+| T3 Builder Product | not_started | 5% | Generic workspace and test foundations only | No first-class builder slice |
+| T4 Operator Product | not_started | 5% | Partial approval and delivery foundations only | No intake, planning, or delivery control plane |
+| T5 Security, Governance, And Policy | in_progress | 40% | Tool policy, reviewer execution trace, approval queue, client-safe export foundation | Review repo/diff execution still sits outside a unified policy boundary |
+| T6 Cost, Usage, And Observability | started | 20% | Status, usage fields, broad test discipline | No real per-job cost ledger or operator-facing observability surface |
+| T7 External Capability Gateway | not_started | 0% | Nothing first-class yet | No gateway contract or provider integration |
+| T8 Enterprise Hardening | started | 25% | Review bounded context, some invariants, project-root discipline | No true control-plane contract layer or extraction-ready boundaries yet |
 
 ## Epic Snapshot
 
 ### T1 Platform Foundation
 
-| Epic | Status | Notes |
-|------|--------|-------|
-| T1-E1 Canonical Job Model | in_progress | `ReviewJob` with from_dict() recovery exists, but system still also has `JobRunner`, `Task`, and `AgentLoop` models |
-| T1-E2 Artifact-First Execution | mostly_complete | Full payload persistence + recovery. Artifacts contain content, not just metadata. T1-E2-S5 closed. |
-| T1-E3 Workspace And Execution Discipline | in_progress | ReviewService accepts WorkspaceManager, execution mode is explicit (READ_ONLY_HOST/WORKSPACE_BOUND). T1-E3-S5 partially closed. |
+| Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
+|------|--------|-----------------|--------------------------|---------------|
+| T1-E1 Canonical Job Model | in_progress | 30% | `ReviewJob` exists and is useful | `JobRunner`, `Task`, and `AgentLoop` still coexist without convergence |
+| T1-E2 Artifact-First Execution | mostly_complete | 70% | Reviewer artifacts, report payloads, and delivery bundle exist | Artifact hydration is not yet the single shared truth across domains |
+| T1-E3 Workspace And Execution Discipline | in_progress | 40% | Workspace subsystem exists; reviewer execution mode is explicit | Reviewer execution truth is still imperfect and builder is not workspace-first yet |
 
 ### T2 Reviewer Product
 
-| Epic | Status | Notes |
-|------|--------|-------|
-| T2-E1 Review Job Types | mostly_complete | `repo_audit`, `pr_review`, and `release_review` exist in reviewer context |
-| T2-E2 Review Output Standardization | mostly_complete | Canonical report, severity, Markdown and JSON exports exist |
-| T2-E3 Review Verification | mostly_complete | Verifier pass exists and is tested |
-| T2-E4 Review Delivery | complete_for_phase | Delivery bundle, approval gating (request_delivery_approval), client-safe redaction (get_client_safe_bundle). External send workflow is Operator scope. |
+| Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
+|------|--------|-----------------|--------------------------|---------------|
+| T2-E1 Review Job Types | mostly_complete | 80% | `repo_audit`, `pr_review`, and `release_review` exist | PR and release review still need deeper productization |
+| T2-E2 Review Output Standardization | mostly_complete | 85% | Canonical report, severity, Markdown and JSON exist | Output is not yet specialized for all delivery channels |
+| T2-E3 Review Verification | mostly_complete | 75% | Verifier exists and is tested | No golden-eval-backed quality regime yet |
+| T2-E4 Review Delivery | in_progress | 70% | Delivery bundle, approval hook, and client-safe bundle exist | No-bypass delivery governance, PR comment packs, and API path are still open |
 
 ### T3 Builder Product
 
-| Epic | Status | Notes |
-|------|--------|-------|
-| T3-E1 Capability-Based Build Execution | not_started | No builder job slice yet |
-| T3-E2 Build Verification Loop | not_started | Existing testing infra is not yet builder-job-centric |
-| T3-E3 Acceptance Criteria Engine | not_started | No explicit acceptance criteria object model yet |
+| Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
+|------|--------|-----------------|--------------------------|---------------|
+| T3-E1 Capability-Based Build Execution | not_started | 5% | Generic execution primitives exist | No builder capability catalog or build job slice |
+| T3-E2 Build Verification Loop | started | 10% | Tests, lint, and type checks exist globally | No builder-job verification loop |
+| T3-E3 Acceptance Criteria Engine | not_started | 0% | Strategy only | No explicit acceptance criteria model |
 
 ### T4 Operator Product
 
-| Epic | Status | Notes |
-|------|--------|-------|
-| T4-E1 Intake And Qualification | not_started | Reviewer intake exists locally, not yet system control-plane intake |
-| T4-E2 Job Planning And Routing | not_started | No `JobPlan` layer yet |
-| T4-E3 Delivery Workflow | not_started | Delivery packaging and approval handoff remain future work |
+| Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
+|------|--------|-----------------|--------------------------|---------------|
+| T4-E1 Intake And Qualification | not_started | 10% | Reviewer intake exists locally | No operator-wide intake model |
+| T4-E2 Job Planning And Routing | not_started | 5% | Chat routing exists | No `JobPlan` layer exists |
+| T4-E3 Delivery Workflow | not_started | 10% | Reviewer delivery bundle is a local precursor | No operator delivery workflow |
 
 ### T5 Security, Governance, And Policy
 
-| Epic | Status | Notes |
-|------|--------|-------|
-| T5-E1 Policy Control Plane | in_progress | Reviewer execution trace now includes execution_policy step with mode/source/access info (T5-E1-S5). Still not unified with tool policy engine. |
-| T5-E2 Approval Model | in_progress | Approval foundations exist, but review delivery approval is not yet wired |
-| T5-E3 Client-Safe And Secret-Safe Output | mostly_complete | get_client_safe_bundle() redacts paths and strips trace. Secret evidence redacted in analyzers. |
+| Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
+|------|--------|-----------------|--------------------------|---------------|
+| T5-E1 Policy Control Plane | in_progress | 45% | Tool policy and reviewer trace foundations exist | Reviewer repo/diff execution is not under the shared execution policy |
+| T5-E2 Approval Model | started | 30% | Approval queue exists | Persistence and job/artifact linkage remain shallow |
+| T5-E3 Client-Safe And Secret-Safe Output | in_progress | 55% | Reviewer redaction exists | Redaction is still narrow and reviewer-specific |
 
 ### T6 Cost, Usage, And Observability
 
-| Epic | Status | Notes |
-|------|--------|-------|
-| T6-E1 Cost Ledger | started | Review job fields exist, but deterministic reviewer v1 does not yet fill them materially |
-| T6-E2 Runtime Observability | started | Existing runtime observability exists; review-specific operator surface does not |
-| T6-E3 Quality Evals | started | Reviewer tests exist, but golden review benchmarking is not yet in place |
+| Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
+|------|--------|-----------------|--------------------------|---------------|
+| T6-E1 Cost Ledger | started | 15% | Usage fields exist on reviewer models | No real ledger or budget behavior yet |
+| T6-E2 Runtime Observability | started | 20% | Status and traces exist locally | No operator-facing observability surface |
+| T6-E3 Quality Evals | started | 20% | Tests are strong | No product-quality eval discipline yet |
 
 ### T7 External Capability Gateway
 
-| Epic | Status | Notes |
-|------|--------|-------|
-| T7-E1 Gateway Foundation | not_started | No gateway contract yet |
-| T7-E2 obolos.tech Integration | not_started | No modeled integration yet |
+| Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
+|------|--------|-----------------|--------------------------|---------------|
+| T7-E1 Gateway Foundation | not_started | 0% | Nothing first-class exists | No gateway contract layer |
+| T7-E2 obolos.tech Integration | not_started | 0% | Nothing first-class exists | No provider integration model |
 
 ### T8 Enterprise Hardening
 
-| Epic | Status | Notes |
-|------|--------|-------|
-| T8-E1 Contract-First Boundaries | in_progress | Telegram /review now routes through ReviewService. Legacy Programmer.review_file() still exists but is no longer the runtime path. T8-E1-S5 mostly closed. |
-| T8-E2 Deployment And Environment Profiles | started | Centralized project-root resolution exists |
-| T8-E3 Compliance-Friendly Foundations | started | Artifact traceability improved, but export/recovery depth remains incomplete |
+| Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
+|------|--------|-----------------|--------------------------|---------------|
+| T8-E1 Contract-First Boundaries | in_progress | 35% | Reviewer bounded context improved architecture | Broader runtime contracts are still implicit |
+| T8-E2 Deployment And Environment Profiles | started | 20% | Some environment discipline exists | No explicit profile matrix yet |
+| T8-E3 Compliance-Friendly Foundations | started | 20% | Artifacts, traces, and basic redaction exist | No strong retention/evidence policy yet |
 
 ## Current Strategic Interpretation
 
-Reviewer v1 is now `mostly_complete`:
-- recovery-safe job storage with full from_dict() reconstruction
-- artifacts with full content payloads (not just metadata)
-- explicit execution mode (READ_ONLY_HOST / WORKSPACE_BOUND)
-- Telegram /review routes through ReviewService
-- execution policy audit trace on every review job
+`main` is now best described as:
+- a strong reviewer-first modular monolith
+- with meaningful governance and workspace foundations
+- but without a shared control plane
+- and without a first-class builder or operator slice
 
-Reviewer v1 is now `complete_for_phase`:
-- delivery approval gating: request_delivery_approval() creates approval request
-- client-safe export: get_client_safe_bundle() redacts paths, strips trace
-- PR review: tested with real git repo fixture (init + commits + diff)
-- legacy Programmer.review_file() deprecated with DeprecationWarning
+That means the masterplan is still valid, but implementation is concentrated in:
+- T1 partial foundations
+- T2 reviewer product
+- T5 partial governance
+- T8 early architectural hardening
 
-Remaining for Reviewer v2:
-- LLM-augmented analysis (deterministic-only in v1)
-- external delivery send workflow (Operator scope)
-- Programmer.review_file() full removal
+The main systemic debt is still:
+- no canonical Job model
+- no builder bounded context
+- no operator control plane
+- no gateway layer
+
+## Highest-Leverage Next Chunk
+
+Recommended next chunk:
+`Builder Foundation + Control-Plane Convergence`
+
+Why this is next:
+- it moves T1, T3, T4, and T8 together
+- it turns the project from reviewer-only into a real engineering-system base
+- it reduces the risk that builder work gets bolted onto chat/runtime flow
+
+Target backlog movement for the next chunk:
+- T1-E1-S1
+- T1-E1-S2
+- T1-E1-S3
+- T1-E1-S5
+- T1-E3-S1
+- T1-E3-S3
+- T3-E1-S1
+- T3-E1-S2
+- T3-E1-S3
+- T3-E1-S4
+- T3-E2-S1
+- T3-E2-S3
+- T3-E2-S4
+- T3-E3-S1
+- T3-E3-S2
+- T8-E1-S1
+- T8-E1-S4
+
+Definition of success for the next chunk:
+- first shared control-plane job primitives exist
+- first builder bounded context exists
+- builder jobs are workspace-first
+- build verification artifacts exist
+- acceptance criteria becomes a first-class model
+- reviewer and builder can coexist without further chat-centric drift
