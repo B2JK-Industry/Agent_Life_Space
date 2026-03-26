@@ -14,10 +14,11 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Agent-to-Agent API** — HTTP endpoint for inter-agent communication
 - **Learning system** — skill outcome tracking, model escalation, prompt augmentation
 - **Multi-provider LLM** — Claude CLI, Anthropic API, OpenAI, Ollama (any backend)
-- **Automated security** — 50-test security audit suite replaces manual reviews
-- **Tool governance** — capability manifest, policy engine, audit trail for all tool decisions
-- **Workspace persistence** — SQLite-backed workspaces with audit trail, recovery after restart
-- **769+ tests** — unit + integration + e2e + security + routing evals, $0.00 token cost
+- **Automated security** — 116-test security audit + invariant suite
+- **Tool governance** — capability manifest, policy engine, 4-step action pipeline with audit trail
+- **Workspace persistence** — SQLite-backed workspaces with audit trail, limits, TTL, recovery
+- **Approval queue** — structured propose → approve/deny → execute workflow for risk-sensitive actions
+- **830+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -75,28 +76,32 @@ Response -> Telegram + memory + learning
 
 - Input sanitization (prompt injection guard, EN + SK)
 - Owner identification + safe mode for non-owners in groups
-- Tool policy gate for tool-use execution context
+- Tool governance — capability manifest + deterministic policy engine
+- Host file access blocked by default (AGENT_SANDBOX_ONLY=1)
 - Docker sandbox (read-only, no-network, resource limits, image whitelist)
 - Encrypted vault (fail-fast without key)
+- Approval queue for risk-sensitive actions (finance, host access, external writes)
 - API authentication (Bearer token) + rate limiting
 - Log redaction (secrets never in logs)
 - PID lockfile (prevents duplicate instances)
-- 50 automated security audit tests
+- 116 automated security + invariant tests
 
 Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Security)**
 
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 769 passed, ~19s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 830+ passed, ~19s, $0.00
 ```
 
 | Layer | Tests | What |
 |-------|-------|------|
-| Unit | ~524 | Individual modules |
+| Unit | ~580 | Individual modules |
 | Integration | 34 | Cross-module flows |
 | E2E | 44 | Full agent wiring |
-| Security Audit | 50 | Automated security review |
+| Security | 116 | Audit + invariants |
+| Routing Evals | 40+ | Classification accuracy + adversarial |
+| Governance | 30+ | Policy enforcement + action pipeline |
 
 All tests are offline — no API calls, no Docker needed. Details: **[Testing wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Testing)**
 
@@ -127,6 +132,23 @@ curl -X POST https://your-tunnel.trycloudflare.com/api/message \
 ```
 
 Details: **[API Reference wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/API-Reference)**
+
+## Known Limitations
+
+This project is honest about what works and what doesn't yet.
+
+| Area | Status | What's missing |
+|------|--------|---------------|
+| Memory provenance | Working | Conflict detection is tag-based, not semantic. No auto-consolidation pipeline yet. |
+| Tool governance | Working | Approval queue is in-memory. No persistent approval storage. |
+| Workspace | Working | No cleanup scheduler (must call `cleanup_expired()` manually). |
+| Routing | Working | Keyword + signal heuristics. No ML-based classification. |
+| Learning | Partial | Model failure tracking resets on restart. No eval set. |
+| Finance | Foundation | Propose/approve flow exists, but no UI/inbox. |
+| Multi-channel | Foundation | Telegram only in production. Discord/email are interfaces, not implemented. |
+| Dashboard | Not started | No operator UI. Everything via Telegram or CLI. |
+
+See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) for security boundaries and [docs/LEARNING_MODEL.md](docs/LEARNING_MODEL.md) for learning system spec.
 
 ## License
 
