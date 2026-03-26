@@ -981,6 +981,47 @@ class TestRedactionPolicy:
         assert result["export_mode"] == "client_safe"
         assert "/Users/" not in result["markdown_report"]
 
+    def test_redact_finding_description_full_pipeline(self):
+        """Finding description must go through full redaction, not just path scrub."""
+        from agent.review.redaction import redact_finding
+        finding = {
+            "description": "Found at /Users/daniel/code on b2jk-server",
+            "impact": 'Leaks api_key = "mysecret12345678" to logs',
+            "recommendation": "Fix config at /home/user/.env on agent-life-space host",
+            "evidence": "",
+            "file_path": "src/app.py",
+        }
+        result = redact_finding(finding)
+        assert "/Users/" not in result["description"]
+        assert "b2jk" not in result["description"]
+        assert "mysecret" not in result["impact"]
+        assert "/home/" not in result["recommendation"]
+        assert "agent-life-space" not in result["recommendation"]
+
+    def test_redact_bundle_error_field(self):
+        """Error field must be redacted in client-safe export."""
+        from agent.review.redaction import redact_bundle
+        bundle = {
+            "error": "Failed at /Users/daniel/project: connection to b2jk-prod refused",
+            "markdown_report": "",
+            "findings_only": [],
+            "json_report": {},
+        }
+        result = redact_bundle(bundle)
+        assert "/Users/" not in result["error"]
+        assert "b2jk" not in result["error"]
+
+    def test_git_stderr_leak_in_description(self):
+        """Git stderr-style content in description must be redacted."""
+        from agent.review.redaction import redact_finding
+        finding = {
+            "description": "fatal: unable to access '/home/runner/repo/.git/': Permission denied",
+            "evidence": "",
+            "file_path": "src/app.py",
+        }
+        result = redact_finding(finding)
+        assert "/home/" not in result["description"]
+
     def test_apply_client_redaction_combined(self):
         from agent.review.redaction import apply_client_redaction
         text = 'Found api_key = "supersecret12345" at /Users/dev/app.py on b2jk-server'
@@ -1002,6 +1043,7 @@ class TestAuditV4Regressions:
         """Even with workspace_manager, execution_mode must be READ_ONLY_HOST
         because v1 analyzers read from host path, not workspace."""
         from unittest.mock import MagicMock
+
         from agent.review.models import ExecutionMode
         from agent.review.service import ReviewService
         from agent.review.storage import ReviewStorage

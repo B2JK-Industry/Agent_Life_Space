@@ -1,246 +1,521 @@
-version: 1
+version: 2
 source_of_truth: docs/strategy/MASTER_SOURCE_OF_TRUTH.md
-seed_note: "Machine-friendly backlog seed. Story IDs may be sparse because this file is a curated subset plus corrective additions."
+seed_note: >
+  Machine-friendly backlog seed aligned to current main. Mirrors
+  THEMES_EPICS_STORIES.md with status and progress at all levels.
+
 progress_snapshot:
-  assessed_pr: 44
-  assessed_commit: "8537f26"
-  assessed_state_note: "Snapshot reflects audited PR state, not necessarily main."
+  assessed_state_note: "Snapshot after PR #50 merge + strategy sync."
+  interpretation_date: "2026-03-26"
   theme_status:
-    T1: in_progress
-    T2: in_progress
-    T3: not_started
-    T4: not_started
-    T5: in_progress
-    T6: started
-    T7: not_started
-    T8: started
+    T1:
+      status: in_progress
+      approx_progress: 50
+    T2:
+      status: complete_for_phase
+      approx_progress: 85
+    T3:
+      status: not_started
+      approx_progress: 5
+    T4:
+      status: started
+      approx_progress: 10
+    T5:
+      status: in_progress
+      approx_progress: 50
+    T6:
+      status: started
+      approx_progress: 20
+    T7:
+      status: not_started
+      approx_progress: 0
+    T8:
+      status: in_progress
+      approx_progress: 30
+
 themes:
   - id: T1
     name: Platform Foundation
     goal: Unify job, artifact, state, and workspace foundations.
+    status: in_progress
+    approx_progress: 50
+    current_state: ReviewJob with recovery, artifact metadata hydration, workspace subsystem, _get_analysis_path().
+    main_gap: No canonical cross-system job model yet.
     epics:
       - id: T1-E1
         name: Canonical Job Model
+        status: in_progress
+        approx_progress: 30
+        remaining_gap: ReviewJob is strong locally, but JobRunner, Task, AgentLoop coexist without convergence.
         stories:
           - id: T1-E1-S1
-            name: Define canonical Job schema
+            name: Define canonical Job schema for review, build, operate, and delivery flows
+            status: started
+            current_state: ReviewJob exists for reviewer only.
+            missing: System-wide shared Job schema.
           - id: T1-E1-S2
             name: Add Job lifecycle states and recovery rules
+            status: started
+            current_state: Reviewer lifecycle exists and reload works.
+            missing: One lifecycle model across all job types.
           - id: T1-E1-S3
-            name: Persist job history, artifacts, and cost
+            name: Persist job metadata, execution history, artifacts, and cost data
+            status: started
+            current_state: Reviewer jobs persist metadata, report, and traces.
+            missing: Unified persistence across all job types.
+          - id: T1-E1-S4
+            name: Add job queries for operator inspection and automation
+            status: not_started
           - id: T1-E1-S5
-            name: Reconcile ReviewJob with JobRunner Task and AgentLoop coexistence
+            name: Reconcile coexistence rules between ReviewJob, JobRunner, Task, and AgentLoop
+            status: started
+            current_state: Coexistence is visible and documented.
+            missing: Explicit convergence rules or phased deprecation plan.
+
       - id: T1-E2
         name: Artifact-First Execution
+        status: mostly_complete
+        approx_progress: 75
+        remaining_gap: Artifact metadata hydrates via from_dict(), but content loads separately via storage. Not shared across domains.
         stories:
           - id: T1-E2-S1
             name: Define artifact types and storage layout
+            status: mostly_complete
           - id: T1-E2-S2
-            name: Link artifacts to jobs and traces
+            name: Link artifacts to jobs and execution traces
+            status: mostly_complete
           - id: T1-E2-S3
-            name: Export artifacts to Markdown and JSON
+            name: Add export support for Markdown, JSON, and delivery bundles
+            status: complete_for_phase
+          - id: T1-E2-S4
+            name: Add artifact retention and recovery rules
+            status: started
           - id: T1-E2-S5
-            name: Persist full intake report and artifact payloads for recovery-safe reload
+            name: Persist full intake, report payloads, and artifact payloads for recovery-safe reload
+            status: mostly_complete
+            current_state: ReviewArtifact.from_dict() hydrates metadata. Full content via storage.get_artifacts().
+            missing: Artifact content not inline in ReviewJob.
+
       - id: T1-E3
         name: Workspace And Execution Discipline
+        status: in_progress
+        approx_progress: 45
+        remaining_gap: Execution mode is honest (always READ_ONLY_HOST in v1). WORKSPACE_BOUND deferred to v2.
         stories:
           - id: T1-E3-S1
-            name: Enforce workspace isolation for mutable work
+            name: Ensure all mutable engineering work happens in isolated workspaces
+            status: started
+            missing: Builder execution not using workspaces yet.
           - id: T1-E3-S2
-            name: Make workspace recovery robust
+            name: Make workspace lifecycle, audit, and recovery robust
+            status: mostly_complete
           - id: T1-E3-S3
-            name: Link workspaces to jobs and approvals
+            name: Link workspace records to jobs, artifacts, and approvals
+            status: started
+          - id: T1-E3-S4
+            name: Add environment profiles for safe execution modes
+            status: started
           - id: T1-E3-S5
-            name: Bind reviewer jobs to workspace discipline or explicit read-only execution mode
+            name: Bind reviewer jobs to workspace discipline or define explicit read-only review execution mode
+            status: complete_for_phase
+            current_state: ExecutionMode always READ_ONLY_HOST in v1. _get_analysis_path() is single source of truth.
+            missing: WORKSPACE_BOUND requires analyzers to read from workspace path (v2 scope).
 
   - id: T2
     name: Reviewer Product
     goal: Make review a first-class client-ready workflow.
+    status: complete_for_phase
+    approx_progress: 85
+    current_state: Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode.
+    main_gap: LLM analysis, API entrypoint, PR comment packs are v2 scope.
     epics:
       - id: T2-E1
         name: Review Job Types
+        status: mostly_complete
+        approx_progress: 80
         stories:
           - id: T2-E1-S1
-            name: Implement repo audit jobs
+            name: Implement repo audit job type
+            status: complete_for_phase
           - id: T2-E1-S2
-            name: Implement PR review jobs
+            name: Implement PR review job type
+            status: in_progress
           - id: T2-E1-S3
-            name: Implement release readiness review jobs
+            name: Implement release readiness review job type
+            status: mostly_complete
+          - id: T2-E1-S4
+            name: Add shared review job interface and input validation
+            status: mostly_complete
       - id: T2-E2
         name: Review Output Standardization
+        status: complete_for_phase
+        approx_progress: 90
         stories:
           - id: T2-E2-S1
-            name: Define canonical review report structure
+            name: Define canonical report structure
+            status: complete_for_phase
           - id: T2-E2-S2
-            name: Standardize severity and file refs
+            name: Standardize severity, file references, and recommended fixes
+            status: complete_for_phase
           - id: T2-E2-S3
+            name: Add explicit assumptions, open questions, and low-confidence language
+            status: mostly_complete
+          - id: T2-E2-S4
             name: Export reports to Markdown and JSON
+            status: complete_for_phase
       - id: T2-E3
         name: Review Verification
+        status: mostly_complete
+        approx_progress: 75
         stories:
           - id: T2-E3-S1
-            name: Add verifier pass for findings
+            name: Add verifier pass for review output
+            status: complete_for_phase
           - id: T2-E3-S2
-            name: Record review confidence and verification results
+            name: Add false-positive reduction strategy
+            status: mostly_complete
+          - id: T2-E3-S3
+            name: Add consistency checks for severity and evidence
+            status: mostly_complete
+          - id: T2-E3-S4
+            name: Record review confidence and verification result
+            status: mostly_complete
       - id: T2-E4
         name: Review Delivery
+        status: mostly_complete
+        approx_progress: 80
         stories:
           - id: T2-E4-S1
-            name: Produce PR comment packs
+            name: Prepare copy-paste-ready PR comments
+            status: not_started
           - id: T2-E4-S2
-            name: Gate external delivery with approvals
+            name: Add delivery approval before external send
+            status: complete_for_phase
+            current_state: Strict approval gating. delivery_ready=False by default. Blocked without queue.
+            missing: External send workflow (Operator scope).
+          - id: T2-E4-S3
+            name: Add client-safe output mode with redaction
+            status: complete_for_phase
+            current_state: Full redaction pipeline on all text fields. Strips requester, source, execution_mode, trace.
+            missing: Wider system outputs beyond reviewer.
+          - id: T2-E4-S4
+            name: Add report packaging for operator handoff
+            status: mostly_complete
           - id: T2-E4-S5
-            name: Route Telegram and API review requests through ReviewService
+            name: Route Telegram and API review entrypoints through ReviewService
+            status: in_progress
+            current_state: Telegram /review routes through ReviewService.
+            missing: API review entrypoint.
 
   - id: T3
     name: Builder Product
     goal: Make implementation controlled, testable, and acceptance-driven.
+    status: not_started
+    approx_progress: 5
+    main_gap: No first-class builder slice exists yet.
     epics:
       - id: T3-E1
         name: Capability-Based Build Execution
+        status: not_started
+        approx_progress: 5
         stories:
           - id: T3-E1-S1
             name: Define implementation capability catalog
+            status: not_started
           - id: T3-E1-S2
-            name: Route build jobs to capabilities
+            name: Route implementation jobs to explicit capabilities
+            status: not_started
+          - id: T3-E1-S3
+            name: Capture patch sets, diffs, and execution traces as artifacts
+            status: started
+          - id: T3-E1-S4
+            name: Make execution resumable after interruption
+            status: started
       - id: T3-E2
         name: Build Verification Loop
+        status: started
+        approx_progress: 10
         stories:
           - id: T3-E2-S1
-            name: Add test, lint, and type-check loop
+            name: Add test, lint, and type-check loop for implementation jobs
+            status: started
           - id: T3-E2-S2
-            name: Add review-after-build pass
+            name: Add review-after-build pass before completion
+            status: not_started
+          - id: T3-E2-S3
+            name: Fail jobs clearly when acceptance criteria are not met
+            status: not_started
+          - id: T3-E2-S4
+            name: Capture all verification artifacts and verdicts
+            status: started
       - id: T3-E3
         name: Acceptance Criteria Engine
+        status: not_started
+        approx_progress: 0
         stories:
           - id: T3-E3-S1
             name: Define acceptance criteria object model
+            status: not_started
           - id: T3-E3-S2
-            name: Validate acceptance on completion
+            name: Attach acceptance criteria to jobs
+            status: not_started
+          - id: T3-E3-S3
+            name: Validate criteria at completion time
+            status: not_started
+          - id: T3-E3-S4
+            name: Produce acceptance reports for delivery
+            status: not_started
 
   - id: T4
     name: Operator Product
     goal: Coordinate end-to-end work and delivery.
+    status: started
+    approx_progress: 10
+    current_state: Mock-driven TS skeleton with CI typecheck. No live backend.
+    main_gap: No intake, planning, or delivery control plane.
     epics:
       - id: T4-E1
         name: Intake And Qualification
+        status: not_started
+        approx_progress: 10
         stories:
           - id: T4-E1-S1
-            name: Build intake model for repo and diff work
+            name: Create intake model for repo paths, git URLs, diff ranges, and work type
+            status: started
           - id: T4-E1-S2
-            name: Add scope, risk, and budget qualification
+            name: Add qualification logic for scope, risk, and budget
+            status: not_started
+          - id: T4-E1-S3
+            name: Add operator-facing intake summary and recommended plan
+            status: not_started
+          - id: T4-E1-S4
+            name: Reject unsupported work cleanly and honestly
+            status: started
       - id: T4-E2
         name: Job Planning And Routing
+        status: not_started
+        approx_progress: 5
         stories:
           - id: T4-E2-S1
-            name: Create JobPlan model
+            name: Create JobPlan model and planner outputs
+            status: not_started
           - id: T4-E2-S2
             name: Split work into review, build, verify, deliver phases
+            status: not_started
+          - id: T4-E2-S3
+            name: Assign capabilities and budget envelopes
+            status: not_started
+          - id: T4-E2-S4
+            name: Record execution traces for planning decisions
+            status: started
       - id: T4-E3
         name: Delivery Workflow
+        status: started
+        approx_progress: 15
         stories:
           - id: T4-E3-S1
             name: Define delivery package model
+            status: started
           - id: T4-E3-S2
-            name: Assemble reports, artifacts, and acceptance results
+            name: Assemble artifacts, reports, and acceptance results into delivery bundles
+            status: started
+          - id: T4-E3-S3
+            name: Gate delivery through approvals
+            status: started
+          - id: T4-E3-S4
+            name: Record delivery status and handoff audit events
+            status: not_started
 
   - id: T5
-    name: Security Governance And Policy
-    goal: Keep all valuable workflows controlled and auditable.
+    name: Security, Governance, And Policy
+    goal: Ensure all valuable workflows remain controlled and auditable.
+    status: in_progress
+    approx_progress: 50
+    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline.
+    main_gap: Review execution outside unified policy boundary.
     epics:
       - id: T5-E1
         name: Policy Control Plane
+        status: in_progress
+        approx_progress: 50
         stories:
           - id: T5-E1-S1
-            name: Extend policy decisions across jobs and delivery
+            name: Extend policy model to job, artifact, delivery, and gateway decisions
+            status: started
           - id: T5-E1-S2
-            name: Preserve deny-by-default everywhere
+            name: Keep policy deny-by-default across execution modes
+            status: in_progress
+          - id: T5-E1-S3
+            name: Add structured denial reasons everywhere
+            status: started
+          - id: T5-E1-S4
+            name: Ensure policy is deterministic and separately testable
+            status: mostly_complete
           - id: T5-E1-S5
-            name: Bring repository and diff analysis under shared execution and policy boundaries
+            name: Bring repository and diff analysis under shared execution and policy boundary
+            status: started
       - id: T5-E2
         name: Approval Model
+        status: in_progress
+        approx_progress: 40
         stories:
           - id: T5-E2-S1
-            name: Make approval requests persistent
+            name: Make approval requests persistent and queryable
+            status: started
           - id: T5-E2-S2
-            name: Support approvals for risky execution and delivery
+            name: Support approvals for risky execution and external delivery
+            status: in_progress
+          - id: T5-E2-S3
+            name: Support multi-step approvals where needed
+            status: not_started
+          - id: T5-E2-S4
+            name: Link approvals to jobs, artifacts, and delivery bundles
+            status: not_started
       - id: T5-E3
-        name: Client-Safe Output
+        name: Client-Safe And Secret-Safe Output
+        status: mostly_complete
+        approx_progress: 70
+        remaining_gap: Redaction covers all reviewer text fields, but not yet system-wide.
         stories:
           - id: T5-E3-S1
-            name: Enforce redaction in reports and logs
+            name: Enforce redaction on reports and logs
+            status: started
           - id: T5-E3-S2
+            name: Prevent sensitive internal data in client output
+            status: complete_for_phase
+            current_state: requester, source, execution_mode, trace stripped. All text fields through full redaction.
+          - id: T5-E3-S3
             name: Add client-safe review mode
+            status: complete_for_phase
+            current_state: Client-safe bundle with full pipeline. Error field redacted.
+          - id: T5-E3-S4
+            name: Add security regression tests around redaction and delivery
+            status: started
 
   - id: T6
-    name: Cost Usage And Observability
-    goal: Make the system measurable, operable, and cost-aware.
+    name: Cost, Usage, And Observability
+    goal: Make the system operable, measurable, and economically sane.
+    status: started
+    approx_progress: 20
+    main_gap: No real per-job cost ledger or operator-facing observability.
     epics:
       - id: T6-E1
         name: Cost Ledger
+        status: started
+        approx_progress: 15
         stories:
           - id: T6-E1-S1
-            name: Record per-job model and token cost
+            name: Record per-job model usage and token cost
+            status: started
           - id: T6-E1-S2
             name: Add hard budget, soft budget, and stop-loss behavior
+            status: not_started
       - id: T6-E2
         name: Runtime Observability
+        status: started
+        approx_progress: 20
         stories:
           - id: T6-E2-S1
-            name: Track job status, retries, and failures
+            name: Track job status, failures, retries, and durations
+            status: started
           - id: T6-E2-S2
-            name: Add operator-facing status surface
+            name: Track worker execution and workspace health
+            status: started
       - id: T6-E3
         name: Quality Evals
+        status: started
+        approx_progress: 20
         stories:
           - id: T6-E3-S1
-            name: Create golden review cases
+            name: Build golden review cases
+            status: not_started
           - id: T6-E3-S2
-            name: Measure false positives and regressions
+            name: Measure finding precision and false positives
+            status: not_started
 
   - id: T7
     name: External Capability Gateway
-    goal: Integrate external capability providers through a safe gateway.
+    goal: Integrate external capability providers cleanly and safely.
+    status: not_started
+    approx_progress: 0
     epics:
       - id: T7-E1
         name: Gateway Foundation
+        status: not_started
         stories:
           - id: T7-E1-S1
-            name: Define gateway contract
+            name: Define gateway contract for external capabilities
+            status: not_started
           - id: T7-E1-S2
-            name: Add auth, retry, timeout, and rate limits
+            name: Add auth, timeout, retry, and rate-limit policy
+            status: not_started
       - id: T7-E2
         name: obolos.tech Integration
+        status: not_started
         stories:
           - id: T7-E2-S1
-            name: Model obolos.tech as external capabilities
+            name: Represent obolos.tech capabilities through the gateway model
+            status: not_started
           - id: T7-E2-S2
-            name: Add routing and fallback rules
+            name: Add capability catalog and routing logic
+            status: not_started
 
   - id: T8
     name: Enterprise Hardening
-    goal: Prepare for future enterprise-grade architecture without premature fragmentation.
+    goal: Prepare for enterprise-grade architecture without premature fragmentation.
+    status: in_progress
+    approx_progress: 30
+    current_state: Review bounded context, ADR-001 sidecar, TS operator contracts + skeleton, policy-driven redaction.
+    main_gap: No shared control-plane contract layer yet.
     epics:
       - id: T8-E1
         name: Contract-First Boundaries
+        status: in_progress
+        approx_progress: 40
         stories:
           - id: T8-E1-S1
-            name: Define contracts between major planes
+            name: Define contracts between control plane, execution plane, verification, and delivery
+            status: started
           - id: T8-E1-S2
-            name: Add architecture invariants for module boundaries
+            name: Remove hidden coupling and implicit shared state
+            status: started
+          - id: T8-E1-S3
+            name: Add architecture invariants for contracts and boundaries
+            status: started
+          - id: T8-E1-S4
+            name: Make future service extraction obvious from module boundaries
+            status: started
           - id: T8-E1-S5
             name: Remove duplicated reviewer flows and hidden channel-to-product coupling
+            status: mostly_complete
       - id: T8-E2
         name: Deployment And Environment Profiles
+        status: started
+        approx_progress: 20
         stories:
           - id: T8-E2-S1
             name: Define local, operator, and enterprise environment profiles
+            status: not_started
           - id: T8-E2-S2
-            name: Standardize config and project-root resolution
+            name: Make environment-sensitive behavior explicit and testable
+            status: started
+          - id: T8-E2-S3
+            name: Add configuration discipline for project roots, secrets, and storage
+            status: started
       - id: T8-E3
         name: Compliance-Friendly Foundations
+        status: in_progress
+        approx_progress: 30
         stories:
           - id: T8-E3-S1
-            name: Improve audit export and traceability
+            name: Improve audit export and artifact traceability
+            status: started
           - id: T8-E3-S2
-            name: Improve retention and client-safe evidence packaging
+            name: Improve redaction and retention strategy
+            status: started
+          - id: T8-E3-S3
+            name: Support client-safe evidence packaging
+            status: started
+          - id: T8-E3-S4
+            name: Prepare data-handling rules for future enterprise requirements
+            status: not_started
