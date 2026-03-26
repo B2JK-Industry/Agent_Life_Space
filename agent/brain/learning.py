@@ -556,6 +556,74 @@ class LearningSystem:
             ),
         }
 
+    # --- Rollback support ---
+
+    def rollback_skill(self, skill_name: str) -> dict[str, Any]:
+        """
+        Reset a skill to UNKNOWN state — undo learned behavior.
+        Use when a learned behavior is wrong or harmful.
+        """
+        skill = self.skills.get(skill_name)
+        if not skill:
+            return {"rolled_back": False, "reason": "skill not found"}
+
+        old_status = skill.status.value
+        old_confidence = skill.confidence
+        skill.status = SkillStatus.UNKNOWN
+        skill.success_count = 0
+        skill.fail_count = 0
+        skill.last_error = ""
+        self.skills._save()
+
+        self.audit_log.record(LearningEvent(
+            event_type="rollback",
+            skill=skill_name,
+            detail=f"reset from {old_status} (conf={old_confidence:.2f}) to unknown",
+            source="rollback_skill",
+        ))
+
+        logger.info("skill_rolled_back", skill=skill_name,
+                     from_status=old_status, from_confidence=old_confidence)
+
+        # Clear model failure tracking for this skill
+        if skill_name in self._model_failures:
+            del self._model_failures[skill_name]
+
+        return {
+            "rolled_back": True,
+            "skill": skill_name,
+            "from_status": old_status,
+            "from_confidence": old_confidence,
+        }
+
+    def get_learning_report(self) -> dict[str, Any]:
+        """
+        Learning quality report — what the agent learned and how confident.
+        """
+        skills_summary = self.skills.summary()
+        audit_stats = self.audit_log.get_stats()
+
+        # Compute overall learning confidence
+        all_skills = list(self.skills._skills.values())
+        if all_skills:
+            avg_confidence = sum(s.confidence for s in all_skills) / len(all_skills)
+            mastered = sum(1 for s in all_skills if s.status == SkillStatus.MASTERED)
+            failed = sum(1 for s in all_skills if s.status == SkillStatus.FAILED)
+        else:
+            avg_confidence = 0.0
+            mastered = 0
+            failed = 0
+
+        return {
+            "skills": skills_summary,
+            "avg_confidence": round(avg_confidence, 3),
+            "mastered_count": mastered,
+            "failed_count": failed,
+            "total_learning_events": audit_stats["total"],
+            "events_by_type": audit_stats.get("by_type", {}),
+            "model_escalations": len(self._model_failures),
+        }
+
     # --- Model failure tracking (in-memory, resets on restart) ---
     _model_failures: dict[str, str] = {}  # skill_name → last failed model_id
 
