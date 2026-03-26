@@ -30,6 +30,6 @@ python -m pytest tests/ -q   # Testy (696+ testov)
 
 ## Verzia
 
-Aktuálna: **v3.0.0** — Provider-agnostic LLM, Tool use, Sandbox executor, Channel abstraction.
+Aktuálna: **v1.0.0** — Prvý stabilný release. Provider-agnostic LLM, Tool use, Sandbox executor, Channel abstraction.
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.
