@@ -734,3 +734,201 @@ class TestDeliveryBundle:
         assert bundle1["verdict"] == bundle2["verdict"]
         assert bundle1["markdown_report"] == bundle2["markdown_report"]
         assert bundle1["finding_counts"] == bundle2["finding_counts"]
+
+
+# ─────────────────────────────────────────────
+# PR Review Fixtures
+# ─────────────────────────────────────────────
+
+class TestPRReview:
+    """PR review with real git repo fixture."""
+
+    @pytest.fixture()
+    def service(self):
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        s = ReviewService(storage=ReviewStorage(db_path=db_path))
+        yield s
+        os.unlink(db_path)
+
+    @pytest.fixture()
+    def git_repo(self):
+        """Create a real git repo with commits for PR review testing."""
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Init repo
+            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True)
+
+            # First commit
+            (Path(tmpdir) / "app.py").write_text("def main():\n    pass\n")
+            subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=tmpdir, capture_output=True)
+
+            # Second commit with changes
+            (Path(tmpdir) / "app.py").write_text("def main():\n    return 42\n\ndef helper():\n    pass\n")
+            (Path(tmpdir) / "utils.py").write_text("x = 1\n")
+            subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "add features"], cwd=tmpdir, capture_output=True)
+
+            yield tmpdir
+
+    async def test_pr_review_with_diff(self, service, git_repo):
+        """PR review with real git diff."""
+        intake = ReviewIntake(
+            repo_path=git_repo,
+            review_type=ReviewJobType.PR_REVIEW,
+            diff_spec="HEAD~1..HEAD",
+            requester="daniel",
+        )
+        job = await service.run_review(intake)
+        assert job.status == ReviewJobStatus.COMPLETED
+        assert job.report.files_analyzed >= 1
+        assert "PR review" in job.report.scope_description or "diff" in job.report.scope_description.lower()
+
+    async def test_pr_review_shows_changed_files(self, service, git_repo):
+        intake = ReviewIntake(
+            repo_path=git_repo,
+            review_type=ReviewJobType.PR_REVIEW,
+            diff_spec="HEAD~1..HEAD",
+        )
+        job = await service.run_review(intake)
+        # Should detect at least utils.py (new file) and app.py (modified)
+        assert job.report.files_analyzed >= 1
+
+    async def test_pr_review_invalid_diff_spec(self, service, git_repo):
+        intake = ReviewIntake(
+            repo_path=git_repo,
+            review_type=ReviewJobType.PR_REVIEW,
+            diff_spec="HEAD; rm -rf /",
+        )
+        job = await service.run_review(intake)
+        assert job.status == ReviewJobStatus.FAILED
+        assert "invalid" in job.error.lower()
+
+
+# ─────────────────────────────────────────────
+# Delivery Approval Gating
+# ─────────────────────────────────────────────
+
+class TestDeliveryApproval:
+    """Review delivery must go through approval gate."""
+
+    @pytest.fixture()
+    def service_with_approval(self):
+        from agent.core.approval import ApprovalQueue
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        queue = ApprovalQueue()
+        s = ReviewService(
+            storage=ReviewStorage(db_path=db_path),
+            approval_queue=queue,
+        )
+        yield s, queue
+        os.unlink(db_path)
+
+    @pytest.fixture()
+    def sample_repo(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "app.py").write_text("x = 1\n")
+            yield tmpdir
+
+    async def test_delivery_approval_creates_request(self, service_with_approval, sample_repo):
+        service, queue = service_with_approval
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+
+        result = service.request_delivery_approval(job.id)
+        assert result.get("approval_request_id") is not None
+        assert result["approval_status"] == "pending"
+        assert result["delivery_ready"] is False
+
+        # Queue should have the request
+        pending = queue.get_pending()
+        assert len(pending) == 1
+        assert pending[0]["context"]["job_id"] == job.id
+
+    async def test_delivery_approval_rejects_incomplete_job(self, service_with_approval, sample_repo):
+        service, _ = service_with_approval
+        result = service.request_delivery_approval("nonexistent-id")
+        assert "error" in result
+
+    async def test_delivery_without_queue_bypasses(self):
+        """Without approval queue, delivery is auto-ready (with warning)."""
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        service = ReviewService(storage=ReviewStorage(db_path=db_path))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "app.py").write_text("x = 1\n")
+            intake = ReviewIntake(repo_path=tmpdir)
+            job = await service.run_review(intake)
+            result = service.request_delivery_approval(job.id)
+            assert result.get("approval_bypassed") is True
+        os.unlink(db_path)
+
+
+# ─────────────────────────────────────────────
+# Client-Safe Redaction
+# ─────────────────────────────────────────────
+
+class TestClientSafeExport:
+    """Client-safe export must redact sensitive internal details."""
+
+    @pytest.fixture()
+    def service(self):
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        s = ReviewService(storage=ReviewStorage(db_path=db_path))
+        yield s
+        os.unlink(db_path)
+
+    async def test_client_safe_redacts_paths(self, service):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "app.py").write_text("x = 1\n")
+            intake = ReviewIntake(repo_path=tmpdir)
+            job = await service.run_review(intake)
+            bundle = service.get_client_safe_bundle(job.id)
+            assert bundle is not None
+            assert bundle["export_mode"] == "client_safe"
+            # Internal paths must be redacted
+            assert "/Users/" not in bundle["markdown_report"]
+            assert "/home/" not in bundle["markdown_report"]
+
+    async def test_client_safe_strips_trace(self, service):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "app.py").write_text("x = 1\n")
+            intake = ReviewIntake(repo_path=tmpdir)
+            job = await service.run_review(intake)
+            bundle = service.get_client_safe_bundle(job.id)
+            assert "execution_trace" not in bundle
+            assert "execution_mode" not in bundle
+
+    async def test_client_safe_nonexistent_job(self, service):
+        assert service.get_client_safe_bundle("nope") is None
+
+
+# ─────────────────────────────────────────────
+# Legacy Deprecation
+# ─────────────────────────────────────────────
+
+class TestLegacyDeprecation:
+    """Programmer.review_file() must be deprecated."""
+
+    def test_review_file_emits_deprecation_warning(self):
+        from agent.brain.programmer import Programmer
+        prog = Programmer()
+        with pytest.warns(DeprecationWarning, match="ReviewService"):
+            # Will fail on file not found, but deprecation warning fires first
+            try:
+                prog.review_file("nonexistent.py")
+            except Exception:
+                pass

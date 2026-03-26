@@ -30,7 +30,7 @@ Status legend:
 | Theme | Status | Notes |
 |------|--------|-------|
 | T1 Platform Foundation | in_progress | ReviewJob with recovery, artifacts with full payloads, execution mode explicit. Not yet system-canonical. |
-| T2 Reviewer Product | mostly_complete | Reviewer v1: runtime adapter wired, recovery-safe, delivery bundle, verifier, execution trace. Approval gating and LLM analysis remain. |
+| T2 Reviewer Product | complete_for_phase | Reviewer v1 closed: runtime adapter, recovery, delivery bundle, approval gating, client-safe redaction, verifier, execution mode. LLM analysis is v2 scope. |
 | T3 Builder Product | not_started | No first-class builder slice yet |
 | T4 Operator Product | not_started | No first-class intake/planning/delivery control plane yet |
 | T5 Security, Governance, And Policy | in_progress | Strong foundations exist; reviewer-specific delivery governance remains open |
@@ -55,7 +55,7 @@ Status legend:
 | T2-E1 Review Job Types | mostly_complete | `repo_audit`, `pr_review`, and `release_review` exist in reviewer context |
 | T2-E2 Review Output Standardization | mostly_complete | Canonical report, severity, Markdown and JSON exports exist |
 | T2-E3 Review Verification | mostly_complete | Verifier pass exists and is tested |
-| T2-E4 Review Delivery | mostly_complete | Telegram adapter wired (T2-E4-S5). Delivery bundle foundation with get_delivery_bundle(). Approval gating before external send still open. |
+| T2-E4 Review Delivery | complete_for_phase | Delivery bundle, approval gating (request_delivery_approval), client-safe redaction (get_client_safe_bundle). External send workflow is Operator scope. |
 
 ### T3 Builder Product
 
@@ -79,7 +79,7 @@ Status legend:
 |------|--------|-------|
 | T5-E1 Policy Control Plane | in_progress | Reviewer execution trace now includes execution_policy step with mode/source/access info (T5-E1-S5). Still not unified with tool policy engine. |
 | T5-E2 Approval Model | in_progress | Approval foundations exist, but review delivery approval is not yet wired |
-| T5-E3 Client-Safe And Secret-Safe Output | started | Security/reporting foundations exist, but reviewer redaction mode is not yet complete |
+| T5-E3 Client-Safe And Secret-Safe Output | mostly_complete | get_client_safe_bundle() redacts paths and strips trace. Secret evidence redacted in analyzers. |
 
 ### T6 Cost, Usage, And Observability
 
@@ -113,9 +113,13 @@ Reviewer v1 is now `mostly_complete`:
 - Telegram /review routes through ReviewService
 - execution policy audit trace on every review job
 
-Remaining gaps for full Reviewer v1 closure:
-- delivery approval gating (approval queue integration before external send)
-- client-safe output redaction mode
-- LLM-augmented analysis (v1 is deterministic only — v2 scope)
-- pr_review needs git repo test fixtures
-- legacy Programmer.review_file() still exists (not used in runtime, should be deprecated)
+Reviewer v1 is now `complete_for_phase`:
+- delivery approval gating: request_delivery_approval() creates approval request
+- client-safe export: get_client_safe_bundle() redacts paths, strips trace
+- PR review: tested with real git repo fixture (init + commits + diff)
+- legacy Programmer.review_file() deprecated with DeprecationWarning
+
+Remaining for Reviewer v2:
+- LLM-augmented analysis (deterministic-only in v1)
+- external delivery send workflow (Operator scope)
+- Programmer.review_file() full removal

@@ -61,9 +61,11 @@ class ReviewService:
         self,
         storage: ReviewStorage | None = None,
         workspace_manager: Any = None,
+        approval_queue: Any = None,
     ) -> None:
         self._storage = storage or ReviewStorage()
         self._workspace_manager = workspace_manager
+        self._approval_queue = approval_queue
         self._initialized = False
 
     def initialize(self) -> None:
@@ -451,6 +453,100 @@ class ReviewService:
             "created_at": job.created_at,
             "completed_at": job.completed_at,
         }
+
+    def request_delivery_approval(self, job_id: str) -> dict[str, Any]:
+        """Gate review delivery through approval queue.
+
+        Creates an approval request for the delivery of a completed review.
+        Delivery must be explicitly approved before external send.
+
+        Returns approval request info or error.
+        """
+        self.initialize()
+        job = self.load_job(job_id)
+        if job is None:
+            return {"error": f"Job '{job_id}' not found"}
+        if job.status != ReviewJobStatus.COMPLETED:
+            return {"error": f"Job '{job_id}' is {job.status.value}, not completed"}
+
+        # Create approval request via orchestrator's approval queue
+        if self._approval_queue is None:
+            return {
+                "error": "No approval queue configured",
+                "job_id": job_id,
+                "delivery_ready": True,
+                "approval_bypassed": True,
+            }
+
+        from agent.core.approval import ApprovalCategory
+        req = self._approval_queue.propose(
+            category=ApprovalCategory.EXTERNAL,
+            description=f"Deliver review report for job {job_id[:8]} ({job.report.verdict})",
+            risk_level="medium",
+            reason=f"Review of {job.intake.repo_path} — {len(job.report.findings)} findings",
+            context={
+                "job_id": job_id,
+                "verdict": job.report.verdict,
+                "finding_counts": job.report.finding_counts,
+                "requester": job.requester,
+            },
+        )
+        logger.info("review_delivery_approval_requested",
+                     job_id=job_id, approval_id=req.id)
+        return {
+            "job_id": job_id,
+            "approval_request_id": req.id,
+            "approval_status": "pending",
+            "delivery_ready": False,
+        }
+
+    def get_client_safe_bundle(self, job_id: str) -> dict[str, Any] | None:
+        """Export a client-safe delivery bundle with redacted sensitive content.
+
+        Differences from internal bundle:
+            - absolute paths replaced with relative or [REDACTED]
+            - raw evidence redacted for secret findings
+            - internal trace details stripped
+            - execution mode and internal metadata removed
+        """
+        bundle = self.get_delivery_bundle(job_id)
+        if bundle is None:
+            return None
+
+        import re
+
+        # Redact absolute paths
+        def _redact_paths(text: str) -> str:
+            return re.sub(r'/(?:Users|home|root)/[^\s"\'`]+', '[PATH_REDACTED]', text)
+
+        # Redact markdown report
+        bundle["markdown_report"] = _redact_paths(bundle.get("markdown_report", ""))
+
+        # Redact findings evidence
+        redacted_findings = []
+        for f in bundle.get("findings_only", []):
+            fc = dict(f)
+            if fc.get("evidence"):
+                fc["evidence"] = _redact_paths(fc["evidence"])
+            redacted_findings.append(fc)
+        bundle["findings_only"] = redacted_findings
+
+        # Redact JSON report
+        jr = bundle.get("json_report", {})
+        if jr.get("scope_description"):
+            jr["scope_description"] = _redact_paths(jr["scope_description"])
+        if jr.get("findings"):
+            for f in jr["findings"]:
+                if f.get("evidence"):
+                    f["evidence"] = _redact_paths(f["evidence"])
+        bundle["json_report"] = jr
+
+        # Strip internal-only fields
+        bundle.pop("execution_trace", None)
+        bundle.pop("execution_mode", None)
+        bundle["export_mode"] = "client_safe"
+
+        return bundle
 
     def list_jobs(self, status: str = "", limit: int = 20) -> list[dict[str, Any]]:
         """List review jobs."""

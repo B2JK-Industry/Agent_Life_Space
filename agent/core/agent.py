@@ -106,6 +106,7 @@ class AgentOrchestrator:
                 db_path=str(self._data_dir / "review" / "reviews.db")
             ),
             workspace_manager=self.workspaces,
+            approval_queue=self.approval_queue,
         )
 
         # Background tasks
