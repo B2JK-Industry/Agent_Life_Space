@@ -4,20 +4,23 @@ seed_note: "Machine-friendly backlog seed. Story IDs may be sparse because this 
 progress_snapshot:
   assessed_pr: 44
   assessed_commit: "8537f26"
-  assessed_state_note: "Snapshot reflects audited PR state, not necessarily main."
+  assessed_state_note: "Snapshot after Builder Foundation + Control-Plane Convergence."
   theme_status:
-    T1: in_progress
+    T1: { status: in_progress, approx_progress: 60 }
     T2: in_progress
-    T3: not_started
+    T3: { status: in_progress, approx_progress: 35 }
     T4: not_started
     T5: in_progress
     T6: started
     T7: not_started
-    T8: started
+    T8: { status: started, approx_progress: 35 }
 themes:
   - id: T1
     name: Platform Foundation
     goal: Unify job, artifact, state, and workspace foundations.
+    status: in_progress
+    approx_progress: 60
+    current_state: "shared control-plane primitives"
     epics:
       - id: T1-E1
         name: Canonical Job Model

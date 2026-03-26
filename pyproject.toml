@@ -58,6 +58,9 @@ ignore = [
 "agent/brain/programmer.py" = ["S603", "S607"]  # subprocess — pytest/py_compile
 "agent/brain/learning.py" = ["S603", "S607"]  # subprocess — skill tests
 "agent/review/analyzers.py" = ["S603", "S607"]  # subprocess — git diff analysis
+"agent/build/service.py" = ["S603", "S607"]  # subprocess — git diff in workspace
+"agent/build/verification.py" = ["S603"]  # subprocess — verification commands in workspace
+"agent/build/storage.py" = ["S101"]  # assert for DB preconditions
 "agent/social/telegram_handler.py" = ["S603", "S607", "E741"]  # subprocess — Claude CLI; l=line in list comp
 "agent/**/__main__.py" = ["S603", "S607"]
 "agent/memory/persistent_conversation.py" = ["S101", "S608"]  # assert for DB preconditions; SQL built safely with params
