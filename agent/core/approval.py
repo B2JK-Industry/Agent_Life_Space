@@ -70,7 +70,7 @@ class ApprovalRequest:
     def is_expired(self) -> bool:
         if self.status != ApprovalStatus.PENDING:
             return False
-        return time.time() - self.created_at > self.ttl_seconds
+        return time.time() - self.created_at >= self.ttl_seconds
 
     def to_dict(self) -> dict[str, Any]:
         return {
