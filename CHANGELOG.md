@@ -8,6 +8,30 @@ This project follows [Semantic Versioning](https://semver.org/):
 - MINOR (1.x.0) — nové features, spätne kompatibilné
 - MAJOR (x.0.0) — breaking changes (len so schválením)
 
+## [1.3.0] — 2026-03-26
+
+Completeness release. Remaining backlog items implemented.
+
+### Memory
+- **Factual/conversational separation** — query_facts() vs query_conversations(), kind= filter
+- **Memory consolidation pipeline** — inferred → verified promotion, stale auto-detection
+
+### Learning
+- **Rollback** — reset skill to UNKNOWN, clear model failures
+- **Learning report** — avg confidence, mastered/failed counts
+
+### Workspace
+- **Ownership** — owner_id field on workspaces
+- **Immutable audit trail** — hash-chained entries (tamper-evident)
+
+### Finance
+- **Risk templates** — 6 pre-defined expense categories with validation
+- **Audit trail export** — CSV format for external auditing
+
+### CI
+- **Expanded mypy** — all new modules covered
+- **Performance budget** — 60s timeout, 1000+ test count gate
+
 ## [1.2.0] — 2026-03-26
 
 Operator-grade visibility and control release. 5 PR, 1000+ tests.

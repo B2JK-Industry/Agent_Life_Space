@@ -34,6 +34,6 @@ python -m pytest tests/ -q   # Testy (974+ testov)
 
 ## Verzia
 
-Aktuálna: **v1.2.0** — Operator-grade visibility: API audit, budget policy, memory inspection, operator handbook.
+Aktuálna: **v1.3.0** — Completeness: memory separation, learning rollback, immutable audit, risk templates.
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.
