@@ -564,7 +564,7 @@ class TestGroupChatSafeMode:
         h = handler_with_loop
 
         # Mock _handle_text so we don't need full Claude pipeline
-        async def mock_handle_text(text):
+        async def mock_handle_text(text, ctx=None):
             return "odpoved"
         h._handle_text = mock_handle_text
 
@@ -589,7 +589,7 @@ class TestGroupChatSafeMode:
         import os
         owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
 
-        async def mock_handle_text(text):
+        async def mock_handle_text(text, ctx=None):
             return "odpoved"
         h._handle_text = mock_handle_text
         h._bot = None

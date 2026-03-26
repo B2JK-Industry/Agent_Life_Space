@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import dataclass
 from datetime import UTC
 from typing import Any
 
@@ -50,6 +51,18 @@ Som John. Odpovedaj stručne, po slovensky, 1-2 vety max.
 """
 
 
+@dataclass
+class RequestContext:
+    """Per-request context. Prevents race conditions between concurrent messages."""
+
+    sender: str = ""
+    chat_type: str = "private"
+    chat_id: int = 0
+    user_id: int = 0
+    is_owner: bool = False
+    force_safe_mode: bool = False
+
+
 class TelegramHandler:
     """
     Routes Telegram messages through agent's brain (Claude + tools).
@@ -74,12 +87,25 @@ class TelegramHandler:
         # Semantic cache and RAG (lazy init)
         self._semantic_cache = None
         self._rag_index = None
-        # Conversation buffer — RAM (pre rýchly prístup)
-        self._conversation: list[dict[str, str]] = []
+        # Per-chat conversation buffers (key = chat_id)
+        self._conversations: dict[int, list[dict[str, str]]] = {}
         self._max_conversation = 10
         # Persistent conversation — SQLite (prežije reštart)
         self._persistent_conv: Any = None
+        # DEPRECATED: kept for backward compat in tests
+        self._conversation: list[dict[str, str]] = []
         self._conversation_id = ""
+
+    def _get_chat_conversation(self, chat_id: int) -> list[dict[str, str]]:
+        """Get per-chat conversation buffer. Creates if not exists."""
+        if chat_id not in self._conversations:
+            self._conversations[chat_id] = []
+        return self._conversations[chat_id]
+
+    def _get_conversation_id(self, chat_id: int) -> str:
+        """Per-chat session ID for persistent conversation."""
+        from datetime import datetime
+        return f"chat-{chat_id}-{datetime.now(UTC).strftime('%Y-%m-%d')}"
 
     async def handle(
         self, text: str, user_id: int, chat_id: int,
@@ -90,16 +116,29 @@ class TelegramHandler:
         if not text:
             return "Prázdna správa."
 
-        # Zisti kto píše — pre sanitizáciu (sender context)
-        # Musí byť pred sanitize aby logy mali sender info
-        # Bot už resolved owner name pre allowed users
-        # Fallback: private chat bez username = pravdepodobne owner
+        # Build per-request context (no shared instance state — prevents race conditions)
+        owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
         if not username or username == "unknown":
-            owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
-            self._current_sender = owner_name if chat_type == "private" else "unknown"
+            sender = owner_name if chat_type == "private" else "unknown"
         else:
-            self._current_sender = username
-        self._current_chat_type = chat_type
+            sender = username
+
+        is_owner = sender == owner_name
+        is_group = chat_type in ("group", "supergroup")
+
+        ctx = RequestContext(
+            sender=sender,
+            chat_type=chat_type,
+            chat_id=chat_id,
+            user_id=user_id,
+            is_owner=is_owner,
+            force_safe_mode=is_group and not is_owner,
+        )
+
+        # DEPRECATED: keep for backward compat (tests that check these attrs)
+        self._current_sender = ctx.sender
+        self._current_chat_type = ctx.chat_type
+        self._force_safe_mode = ctx.force_safe_mode
 
         # Input sanitizácia — prompt injection ochrana
         sanitized = self._sanitize_input(text)
@@ -107,24 +146,13 @@ class TelegramHandler:
             return "Tento vstup bol zablokovaný bezpečnostným filtrom."
         text = sanitized
 
-        # SECURITY: V skupinách non-owner nemôže spúšťať programovacie úlohy
-        # ani work queue. Len konverzácia (chat/simple/greeting).
-        # Musí byť PRED command check aby _force_safe_mode bol nastavený.
-        owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
-        is_owner = self._current_sender == owner_name
-        is_group = chat_type in ("group", "supergroup")
-        if is_group and not is_owner:
-            self._force_safe_mode = True
-        else:
-            self._force_safe_mode = False
-
         if text.startswith("/"):
             # SECURITY: Non-owner v skupine nemá prístup k privilegovaným príkazom
-            if self._force_safe_mode:
+            if ctx.force_safe_mode:
                 _SAFE_COMMANDS = frozenset(["/start", "/help", "/status", "/health"])
                 cmd = text.split()[0].lower().split("@")[0]
                 if cmd not in _SAFE_COMMANDS:
-                    logger.warning("command_blocked_non_owner", command=cmd, sender=self._current_sender)
+                    logger.warning("command_blocked_non_owner", command=cmd, sender=ctx.sender)
                     return f"Príkaz {cmd} je dostupný len pre ownera."
             return await self._handle_command(text)
 
@@ -139,7 +167,7 @@ class TelegramHandler:
             typing_task = asyncio.create_task(keep_typing())
 
         try:
-            return await self._handle_text(text)
+            return await self._handle_text(text, ctx)
         finally:
             if typing_task:
                 typing_task.cancel()
@@ -618,16 +646,26 @@ class TelegramHandler:
 
     # --- Free text — Claude thinks, agent acts ---
 
-    async def _handle_text(self, text: str) -> str:
+    async def _handle_text(self, text: str, ctx: RequestContext | None = None) -> str:
         """
         JSON in → Claude thinks → JSON out → format for Telegram.
         Multi-task detection happens BEFORE Claude — goes straight to queue.
         """
         import re
 
-        import orjson
-
         from agent.memory.store import MemoryEntry, MemoryType
+
+        # Resolve context (backward compat for tests calling without ctx)
+        if ctx is None:
+            ctx = RequestContext(
+                sender=getattr(self, "_current_sender", "unknown"),
+                chat_type=getattr(self, "_current_chat_type", "private"),
+                chat_id=self._owner_chat_id,
+            )
+
+        # Per-chat conversation buffer
+        chat_conv = self._get_chat_conversation(ctx.chat_id)
+        conv_id = self._get_conversation_id(ctx.chat_id)
 
         # Detect multi-task input BEFORE calling Claude
         # Patterns: "1. x, 2. y" or "x, y, z" separated by commas with action words
@@ -669,7 +707,7 @@ class TelegramHandler:
         # === STEP 1: Try internal dispatch FIRST (no LLM) ===
         # Skip dispatcher ak máme conversation context a správa je krátka
         # (pravdepodobne nadväzuje na predchádzajúcu tému)
-        short_followup = len(self._conversation) > 0 and len(text.split()) <= 8
+        short_followup = len(chat_conv) > 0 and len(text.split()) <= 8
         if not short_followup:
             from agent.brain.dispatcher import InternalDispatcher
             dispatcher = InternalDispatcher(self._agent)
@@ -742,12 +780,9 @@ class TelegramHandler:
                     db_path=str(self._agent._data_dir / "memory" / "conversations.db")
                 )
                 await self._persistent_conv.initialize()
-                # Conversation ID = dátum (jedna konverzácia za deň)
-                from datetime import datetime
-                self._conversation_id = f"session-{datetime.now(UTC).strftime('%Y-%m-%d')}"
 
             persistent_context = await self._persistent_conv.build_context(
-                self._conversation_id, query=text,
+                conv_id, query=text,
             )
         except Exception as e:
             logger.error("persistent_conv_error", error=str(e))
@@ -861,10 +896,10 @@ class TelegramHandler:
 
         # === STEP 4.9: Build conversation history ===
         conv_context = ""
-        has_conversation = len(self._conversation) > 0
+        has_conversation = len(chat_conv) > 0
         if has_conversation:
             conv_lines = []
-            for msg in self._conversation[-self._max_conversation:]:
+            for msg in chat_conv[-self._max_conversation:]:
                 _owner = os.environ.get("AGENT_OWNER_NAME", "Daniel")
                 role = msg.get("sender", _owner) if msg["role"] == "user" else "John"
                 conv_lines.append(f"{role}: {msg['content'][:200]}")
@@ -879,22 +914,22 @@ class TelegramHandler:
                 logger.info("conversation_context_escalation",
                             original_type=task_type, reason="short msg with conversation history")
 
-        # Store user message in conversation buffer
-        self._conversation.append({"role": "user", "content": text, "sender": self._current_sender})
-        if len(self._conversation) > self._max_conversation:
-            self._conversation.pop(0)
+        # Store user message in per-chat conversation buffer
+        chat_conv.append({"role": "user", "content": text, "sender": ctx.sender})
+        if len(chat_conv) > self._max_conversation:
+            chat_conv.pop(0)
 
         # === STEP 5: Build prompt based on task type ===
         # Vyber system prompt podľa toho kto píše
-        is_agent_chat = self._current_chat_type == "agent_api" or (
-            self._current_sender not in (os.environ.get("AGENT_OWNER_NAME", "Daniel"), "unknown", "")
-            and self._current_chat_type in ("group", "supergroup", "agent_api")
+        is_agent_chat = ctx.chat_type == "agent_api" or (
+            ctx.sender not in (os.environ.get("AGENT_OWNER_NAME", "Daniel"), "unknown", "")
+            and ctx.chat_type in ("group", "supergroup", "agent_api")
         )
         active_prompt = AGENT_PROMPT if is_agent_chat else SYSTEM_PROMPT
 
         # SECURITY: Non-owner v skupine nemôže spúšťať programming tasky
-        if getattr(self, "_force_safe_mode", False) and task_type == "programming":
-            logger.warning("programming_downgraded_to_chat", sender=self._current_sender)
+        if ctx.force_safe_mode and task_type == "programming":
+            logger.warning("programming_downgraded_to_chat", sender=ctx.sender)
             task_type = "chat"
 
         if task_type == "programming":
@@ -913,7 +948,7 @@ class TelegramHandler:
         elif task_type in ("simple", "factual", "greeting") and not tool_context.count("\n") > 2:
             prompt = (
                 f"{SIMPLE_PROMPT}\n"
-                f"{self._current_sender}: {text}\n"
+                f"{ctx.sender}: {text}\n"
             )
         else:
             # Chat/analysis — full context
@@ -930,7 +965,7 @@ class TelegramHandler:
             if url_context:
                 prompt += f"Obsah odkazov:\n{url_context}\n\n"
             prompt += (
-                f"{self._current_sender}: {text}\n"
+                f"{ctx.sender}: {text}\n"
                 f"Použi aktuálne dáta vyššie ak sú relevantné. Odpovedaj po slovensky."
             )
 
@@ -942,101 +977,45 @@ class TelegramHandler:
             pass  # learner nemusí byť dostupný
 
         try:
-            import subprocess
+            from agent.core.llm_provider import GenerateRequest, get_provider
 
-            env = os.environ.copy()
-            oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-            if oauth_token:
-                env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+            # Resolve project root from config (no hardcoded paths)
+            project_root = os.environ.get(
+                "AGENT_PROJECT_ROOT",
+                str(self._agent._data_dir.parent) if hasattr(self._agent, "_data_dir") else "",
+            )
 
-            claude_bin = os.path.expanduser("~/.local/bin/claude")
-
-            # --dangerously-skip-permissions LEN pre programovacie úlohy
-            # kde Claude potrebuje čítať/písať súbory. Pre chat/greeting nie.
-            cli_args = [
-                claude_bin,
-                "--print",
-                "--output-format", "json",
-                "--model", model.model_id,
-                "--max-turns", str(model.max_turns),
-            ]
-            if task_type == "programming":
-                cli_args.append("--dangerously-skip-permissions")
-
-            result = await asyncio.to_thread(
-                subprocess.run,
-                cli_args,
-                input=prompt,
-                capture_output=True,
-                text=True,
+            provider = get_provider()
+            response = await provider.generate(GenerateRequest(
+                messages=[{"role": "user", "content": prompt}],
+                model=model.model_id,
+                max_tokens=model.max_turns * 4096,
                 timeout=model.timeout,
-                env=env,
-                cwd=os.path.expanduser("~/agent-life-space"),
-            )
+                max_turns=model.max_turns,
+                allow_file_access=task_type == "programming",
+                cwd=project_root,
+            ))
 
-            if result.returncode != 0:
-                logger.error(
-                    "claude_cli_error",
-                    returncode=result.returncode,
-                    stderr=result.stderr[:500],
-                    stdout=result.stdout[:500],
-                )
-                return f"Chyba: {result.stderr[:200] or result.stdout[:200]}"
+            if not response.success:
+                logger.error("llm_error", error=response.error[:500])
+                return f"Chyba: {response.error[:200]}"
 
-            # Parse Claude's JSON response
-            try:
-                response_data = orjson.loads(result.stdout)
-            except Exception:
-                logger.error("claude_parse_error", stdout=result.stdout[:500])
-                return "Nepodarilo sa spracovať odpoveď."
-
-            if response_data.get("is_error"):
-                return f"Chyba: {response_data.get('result', '?')}"
-
-            reply = response_data.get("result", "").strip()
+            reply = response.text
             if not reply:
-                # Try to extract from subresults or session messages
-                subresults = response_data.get("subresults", [])
-                if subresults:
-                    # Get last text subresult
-                    texts = [s.get("result", "") for s in subresults if s.get("result")]
-                    if texts:
-                        reply = texts[-1].strip()
-            if not reply:
-                # CLI vrátilo prázdny result — skús retry s jednoduchším promptom
-                logger.warning("empty_cli_result", original_prompt_len=len(prompt))
-                retry_prompt = (
-                    f"{active_prompt}\n"
-                    f"Otázka: {text}\n"
-                    f"Odpovedaj priamo, stručne, po slovensky. Nepoužívaj nástroje."
-                )
-                retry_result = await asyncio.to_thread(
-                    subprocess.run,
-                    [claude_bin, "--print", "--output-format", "json",
-                     "--model", model.model_id, "--max-turns", "1"],
-                    input=retry_prompt,
-                    capture_output=True, text=True,
-                    timeout=60, env=env,
-                    cwd=os.path.expanduser("~/agent-life-space"),
-                )
-                if retry_result.returncode == 0:
-                    try:
-                        retry_data = orjson.loads(retry_result.stdout)
-                        reply = retry_data.get("result", "").strip()
-                    except Exception:
-                        pass
-                if not reply:
-                    reply = "Prepáč, nepodarilo sa mi odpovedať. Skús otázku preformulovať."
+                # Retry with simpler prompt
+                logger.warning("empty_result", original_prompt_len=len(prompt))
+                retry_response = await provider.generate(GenerateRequest(
+                    messages=[{"role": "user", "content": f"{active_prompt}\nOtázka: {text}\nOdpovedaj priamo, stručne, po slovensky."}],
+                    model=model.model_id,
+                    max_turns=1,
+                    timeout=60,
+                    cwd=project_root,
+                ))
+                reply = retry_response.text or "Prepáč, nepodarilo sa mi odpovedať. Skús otázku preformulovať."
 
-            cost = response_data.get("total_cost_usd", 0)
-            tokens = response_data.get("usage", {})
-            # Total input = direct + cache_creation + cache_read
-            input_tok = (
-                tokens.get("input_tokens", 0)
-                + tokens.get("cache_creation_input_tokens", 0)
-                + tokens.get("cache_read_input_tokens", 0)
-            )
-            output_tok = tokens.get("output_tokens", 0)
+            input_tok = response.input_tokens
+            output_tok = response.output_tokens
+            cost = response.cost_usd
 
             # Track cumulative usage
             self._total_cost_usd += cost
@@ -1063,20 +1042,20 @@ class TelegramHandler:
                     importance=0.3,
                 )
             )
-            # Store clean reply in conversation buffer (bez usage line)
+            # Store clean reply in per-chat conversation buffer
             clean_reply = reply.split("\n\n_💰")[0] if "_💰" in reply else reply
-            self._conversation.append({"role": "assistant", "content": clean_reply[:300]})
-            if len(self._conversation) > self._max_conversation:
-                self._conversation.pop(0)
+            chat_conv.append({"role": "assistant", "content": clean_reply[:300]})
+            if len(chat_conv) > self._max_conversation:
+                chat_conv.pop(0)
 
             # Persist exchange do SQLite (prežije reštart)
             try:
                 if self._persistent_conv:
                     await self._persistent_conv.save_exchange(
-                        self._conversation_id,
+                        conv_id,
                         text,
                         clean_reply[:500],
-                        sender=self._current_sender,
+                        sender=ctx.sender,
                     )
             except Exception as e:
                 logger.error("persistent_save_error", error=str(e))
@@ -1097,49 +1076,27 @@ class TelegramHandler:
                             score=quality.score,
                             reason=quality.reason,
                         )
-                        # Re-run s Sonnet
+                        # Re-run s Sonnet via provider
                         from agent.core.models import SONNET
                         escalated_model = SONNET
-                        cli_args_esc = [
-                            claude_bin,
-                            "--print",
-                            "--output-format", "json",
-                            "--model", escalated_model.model_id,
-                            "--max-turns", str(escalated_model.max_turns),
-                        ]
-                        result_esc = await asyncio.to_thread(
-                            subprocess.run,
-                            cli_args_esc,
-                            input=prompt,
-                            capture_output=True,
-                            text=True,
+                        esc_response = await provider.generate(GenerateRequest(
+                            messages=[{"role": "user", "content": prompt}],
+                            model=escalated_model.model_id,
+                            max_turns=escalated_model.max_turns,
                             timeout=escalated_model.timeout,
-                            env=env,
-                            cwd=os.path.expanduser("~/agent-life-space"),
-                        )
-                        if result_esc.returncode == 0:
-                            try:
-                                esc_data = orjson.loads(result_esc.stdout)
-                                esc_reply = esc_data.get("result", "").strip()
-                                if esc_reply:
-                                    reply = esc_reply
-                                    model = escalated_model
-                                    esc_cost = esc_data.get("total_cost_usd", 0)
-                                    esc_tokens = esc_data.get("usage", {})
-                                    cost += esc_cost
-                                    input_tok += (
-                                        esc_tokens.get("input_tokens", 0)
-                                        + esc_tokens.get("cache_creation_input_tokens", 0)
-                                        + esc_tokens.get("cache_read_input_tokens", 0)
-                                    )
-                                    output_tok += esc_tokens.get("output_tokens", 0)
-                                    self._total_cost_usd += esc_cost
-                                    self._total_input_tokens += input_tok
-                                    self._total_output_tokens += output_tok
-                                    logger.info("post_routing_escalation_success",
-                                                model=escalated_model.model_id)
-                            except Exception:
-                                pass  # Escalation failed, keep original reply
+                            cwd=project_root,
+                        ))
+                        if esc_response.success and esc_response.text:
+                            reply = esc_response.text
+                            model = escalated_model
+                            cost += esc_response.cost_usd
+                            input_tok += esc_response.input_tokens
+                            output_tok += esc_response.output_tokens
+                            self._total_cost_usd += esc_response.cost_usd
+                            self._total_input_tokens += esc_response.input_tokens
+                            self._total_output_tokens += esc_response.output_tokens
+                            logger.info("post_routing_escalation_success",
+                                        model=escalated_model.model_id)
                 except Exception as e:
                     logger.error("post_routing_error", error=str(e))
 
@@ -1172,7 +1129,7 @@ class TelegramHandler:
 
             return reply
 
-        except subprocess.TimeoutExpired:
+        except TimeoutError:
             logger.error("john_timeout")
             return "Premýšľanie trvalo príliš dlho. Skús kratšiu otázku."
         except Exception as e:

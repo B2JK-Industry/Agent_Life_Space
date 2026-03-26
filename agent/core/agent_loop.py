@@ -20,12 +20,10 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import subprocess
 from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
-import orjson
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -208,13 +206,9 @@ class AgentLoop:
         return any(re.search(p, text) for p in _PROGRAMMING_SIGNALS)
 
     async def _execute_item(self, item: WorkItem) -> str:
-        """Vykonaj jednu úlohu cez Claude CLI."""
-        env = os.environ.copy()
-        oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-        if oauth_token:
-            env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
-
-        claude_bin = os.path.expanduser("~/.local/bin/claude")
+        """Vykonaj jednu úlohu cez LLM provider (CLI alebo API)."""
+        from agent.core.llm_provider import GenerateRequest, get_provider
+        from agent.core.models import get_model
 
         safe_description = _sanitize_work_description(item.description)
 
@@ -226,42 +220,23 @@ class AgentLoop:
             f"Odpovedaj po slovensky."
         )
 
-        from agent.core.models import get_model
         model = get_model("work_queue")
+        project_root = os.environ.get("AGENT_PROJECT_ROOT", os.path.expanduser("~/agent-life-space"))
 
-        cli_args = [
-            claude_bin,
-            "--print",
-            "--output-format", "json",
-            "--model", model.model_id,
-            "--max-turns", str(model.max_turns),
-        ]
-        # --dangerously-skip-permissions LEN pre programming tasky
-        # Inak Claude beží bez file/shell prístupu
-        if self._is_programming_task(item.description):
-            cli_args.append("--dangerously-skip-permissions")
-
-        result = await asyncio.to_thread(
-            subprocess.run,
-            cli_args,
-            input=prompt,
-            capture_output=True,
-            text=True,
+        provider = get_provider()
+        response = await provider.generate(GenerateRequest(
+            messages=[{"role": "user", "content": prompt}],
+            model=model.model_id,
+            max_turns=model.max_turns,
             timeout=model.timeout,
-            env=env,
-            cwd=os.path.expanduser("~/agent-life-space"),
-        )
+            allow_file_access=self._is_programming_task(item.description),
+            cwd=project_root,
+        ))
 
-        if result.returncode != 0:
-            return f"Error: {result.stderr[:200] or result.stdout[:200]}"
+        if not response.success:
+            return f"Error: {response.error[:200]}"
 
-        try:
-            data = orjson.loads(result.stdout)
-            if data.get("is_error"):
-                return f"Error: {data.get('result', '?')}"
-            return data.get("result", "").strip() or "Hotovo (bez detailov)."
-        except Exception:
-            return "Nepodarilo sa spracovať odpoveď."
+        return response.text or "Hotovo (bez detailov)."
 
     def get_status(self) -> dict[str, Any]:
         total = self._processed_count + self._error_count

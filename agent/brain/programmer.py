@@ -19,6 +19,7 @@ Workflow:
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,7 +56,11 @@ class Programmer:
     """
 
     def __init__(self, project_root: str = "") -> None:
-        self._root = Path(project_root) if project_root else Path.home() / "agent-life-space"
+        self._root = Path(
+            project_root
+            or os.environ.get("AGENT_PROJECT_ROOT", "")
+            or Path.home() / "agent-life-space"
+        )
 
     # --- ANALYZE ---
 

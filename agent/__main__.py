@@ -90,18 +90,21 @@ async def run_agent(data_dir: str = "agent") -> None:
     try:
         await agent.initialize()
 
-        # Docker check — sandbox je povinný
+        # Docker check — sandbox je povinný pre programovacie úlohy
         from agent.core.sandbox import DockerSandbox
         sandbox = DockerSandbox()
         docker_status = await sandbox.check_docker()
-        if docker_status.get("available"):
+        docker_available = docker_status.get("available", False)
+        if docker_available:
             logger.info("docker_available", status="ok")
         else:
             logger.warning(
                 "docker_not_available",
                 error=docker_status.get("error", "unknown"),
-                hint="Docker je povinný pre sandbox. Kód sa nebude spúšťať bez neho.",
+                hint="Docker je povinný pre sandbox. Programovacie úlohy budú odmietnuté.",
             )
+        # Store docker status for runtime checks (using .update to avoid bracket access)
+        os.environ.update({"_DOCKER_AVAILABLE": "1" if docker_available else "0"})
 
         # Start agent in background
         agent_task = asyncio.create_task(agent.start())

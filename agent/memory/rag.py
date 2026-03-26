@@ -33,7 +33,9 @@ class RAGIndex:
     """
 
     def __init__(self, knowledge_dir: str = "") -> None:
-        self._knowledge_dir = Path(knowledge_dir) if knowledge_dir else Path.home() / "agent-life-space" / "agent" / "brain" / "knowledge"
+        import os
+        default_root = os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
+        self._knowledge_dir = Path(knowledge_dir) if knowledge_dir else Path(default_root) / "agent" / "brain" / "knowledge"
         self._model = None
         self._index: list[dict[str, Any]] = []  # [{text, embedding, source, category}]
         self._built = False

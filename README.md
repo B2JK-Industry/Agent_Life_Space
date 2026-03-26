@@ -14,7 +14,7 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Agent-to-Agent API** — HTTP endpoint for inter-agent communication
 - **Learning system** — skill outcome tracking, model escalation, prompt augmentation
 - **Automated security** — 50-test security audit suite replaces manual reviews
-- **762 tests** — unit + integration + e2e + security audit, $0.00 token cost
+- **652+ tests** — unit + integration + e2e + security audit, $0.00 token cost
 
 ## Quick Start
 
@@ -84,7 +84,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 762 passed, ~19s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 652 passed, ~19s, $0.00
 ```
 
 | Layer | Tests | What |

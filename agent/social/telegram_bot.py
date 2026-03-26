@@ -56,7 +56,8 @@ class TelegramBot:
         self._owner_name = owner_name
         self._session: aiohttp.ClientSession | None = None
         self._running = False
-        self._update_id_file = Path(os.path.expanduser("~/agent-life-space/.last_update_id"))
+        _project_root = os.environ.get("AGENT_PROJECT_ROOT", os.path.expanduser("~/agent-life-space"))
+        self._update_id_file = Path(_project_root) / ".last_update_id"
         self._last_update_id = self._load_last_update_id()
         self._handlers: dict[str, Any] = {}
         self._message_callback: Any = None

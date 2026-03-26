@@ -1,19 +1,56 @@
 """
 Agent Life Space — Model Router
 
-Ktorý model na čo. Jedno miesto, ľahko rozšíriteľné.
+Ktorý model na čo. Provider-agnostic, ľahko rozšíriteľné.
 
-Cascade: dispatcher (lokálne) → Haiku (lacný) → Sonnet (reasoning) → Opus (kód)
+Cascade: dispatcher (lokálne) -> Haiku (lacný) -> Sonnet (reasoning) -> Opus (kód)
 
-Cost odhad per request (s Max sub = $0, bez sub):
-    Haiku:  ~$0.001 per odpoveď
-    Sonnet: ~$0.01  per odpoveď
-    Opus:   ~$0.05-0.20 per programovacia úloha
+Model tiers namiesto hardcoded IDs:
+    FAST     = cheap, quick (Haiku, GPT-4o-mini, llama3:8b)
+    BALANCED = good quality (Sonnet, GPT-4o, llama3:70b)
+    POWERFUL = best quality (Opus, o3, llama3:70b)
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from enum import Enum
+
+
+class ModelTier(str, Enum):
+    """Provider-agnostic model quality tier."""
+
+    FAST = "fast"
+    BALANCED = "balanced"
+    POWERFUL = "powerful"
+
+
+# Provider -> tier -> model ID mapping
+PROVIDER_MODELS: dict[str, dict[ModelTier, str]] = {
+    "anthropic": {
+        ModelTier.FAST: "claude-haiku-4-5-20251001",
+        ModelTier.BALANCED: "claude-sonnet-4-6",
+        ModelTier.POWERFUL: "claude-opus-4-6",
+    },
+    "openai": {
+        ModelTier.FAST: "gpt-4o-mini",
+        ModelTier.BALANCED: "gpt-4o",
+        ModelTier.POWERFUL: "o3",
+    },
+    "local": {
+        ModelTier.FAST: "llama3:8b",
+        ModelTier.BALANCED: "llama3:70b",
+        ModelTier.POWERFUL: "llama3:70b",
+    },
+}
+
+# Tier -> (max_turns, timeout) defaults
+_TIER_DEFAULTS: dict[ModelTier, tuple[int, int]] = {
+    ModelTier.FAST: (1, 60),
+    ModelTier.BALANCED: (3, 180),
+    ModelTier.POWERFUL: (15, 300),
+}
 
 
 @dataclass(frozen=True)
@@ -21,50 +58,63 @@ class ModelConfig:
     model_id: str
     max_turns: int
     timeout: int  # seconds
+    tier: ModelTier = ModelTier.BALANCED
 
 
-# --- Model definitions ---
+def _resolve_model_id(tier: ModelTier) -> str:
+    """Resolve tier to model ID based on current provider config."""
+    backend = os.environ.get("LLM_BACKEND", "cli")
+    provider = os.environ.get("LLM_PROVIDER", "anthropic")
 
+    # CLI backend always uses Anthropic models
+    if backend == "cli":
+        provider = "anthropic"
+
+    models = PROVIDER_MODELS.get(provider, PROVIDER_MODELS["anthropic"])
+    return models[tier]
+
+
+# --- Task -> Tier mapping ---
+
+_TASK_TIER: dict[str, ModelTier] = {
+    # Haiku-tier: jednoduché otázky, krátke odpovede
+    "simple": ModelTier.FAST,
+    "greeting": ModelTier.FAST,
+    "factual": ModelTier.FAST,
+
+    # Sonnet-tier: konverzácia, reasoning, analýza
+    "chat": ModelTier.BALANCED,
+    "analysis": ModelTier.BALANCED,
+    "work_queue": ModelTier.BALANCED,
+
+    # Opus-tier: len programovanie (čítanie/písanie súborov, testy, git)
+    "programming": ModelTier.POWERFUL,
+}
+
+# Backward-compatible constants (used in existing tests)
 HAIKU = ModelConfig(
-    model_id="claude-haiku-4-5-20251001",
+    model_id=PROVIDER_MODELS["anthropic"][ModelTier.FAST],
     max_turns=1,
     timeout=60,
+    tier=ModelTier.FAST,
 )
 
 SONNET = ModelConfig(
-    model_id="claude-sonnet-4-6",
+    model_id=PROVIDER_MODELS["anthropic"][ModelTier.BALANCED],
     max_turns=3,
     timeout=180,
+    tier=ModelTier.BALANCED,
 )
 
 OPUS = ModelConfig(
-    model_id="claude-opus-4-6",
+    model_id=PROVIDER_MODELS["anthropic"][ModelTier.POWERFUL],
     max_turns=15,
     timeout=300,
+    tier=ModelTier.POWERFUL,
 )
 
 
-# --- Task → Model mapping ---
-
-_TASK_MODEL: dict[str, ModelConfig] = {
-    # Zero tokens (handled by dispatcher)
-    # "status", "health", "tasks", "skills", "budget", "identity"
-
-    # Haiku — jednoduché otázky, krátke odpovede, klasifikácia
-    "simple": HAIKU,
-    "greeting": HAIKU,
-    "factual": HAIKU,
-
-    # Sonnet — konverzácia, reasoning, analýza
-    "chat": SONNET,
-    "analysis": SONNET,
-    "work_queue": SONNET,
-
-    # Opus — len programovanie (čítanie/písanie súborov, testy, git)
-    "programming": OPUS,
-}
-
-# Classify text → task type
+# Classify text -> task type
 _PROGRAMMING_KEYWORDS = frozenset([
     "naprogramuj", "implementuj", "napíš kód", "pridaj", "oprav bug",
     "vytvor modul", "refaktoruj", "fix", "uprav kód", "pridaj príkaz",
@@ -79,7 +129,7 @@ _SIMPLE_KEYWORDS = frozenset([
 
 def classify_task(text: str) -> str:
     """
-    Classify user message → task type for model selection.
+    Classify user message -> task type for model selection.
 
     Multi-signal scoring — nie len keyword match.
     Signály: keywords, complexity, URL, action verbs, dĺžka.
@@ -98,52 +148,49 @@ def classify_task(text: str) -> str:
     # === COMPLEX: signály že úloha vyžaduje hlbšie premýšľanie ===
     complexity_score = 0
 
-    # URL v texte → agent musí niečo prečítať/spracovať
     if "http://" in text_lower or "https://" in text_lower or "github.com" in text_lower:
         complexity_score += 2
 
-    # Action verbs — agent má UROBIŤ niečo, nie len odpovedať
-    _ACTION_VERBS = [
+    action_verbs = [
         "registruj", "zaregistruj", "prihlás", "vytvor účet",
         "nájdi", "vyhľadaj", "porovnaj", "analyzuj",
         "stiahni", "nainštaluj", "nastav", "nakonfiguruj",
         "preskúmaj", "prečítaj", "zisti", "over",
         "spusti", "otestuj", "skontroluj",
     ]
-    if any(v in text_lower for v in _ACTION_VERBS):
+    if any(v in text_lower for v in action_verbs):
         complexity_score += 2
 
-    # Multi-step request (viacero viet alebo čiarky)
     if text.count(".") >= 2 or text.count(",") >= 2:
         complexity_score += 1
 
-    # Dlhší text = pravdepodobne komplexnejšia úloha
     if len(words) > 15:
         complexity_score += 1
 
-    # Otázka o schopnostiach ("vieš...?", "dokážeš...?")
-    _CAPABILITY_VERBS = ["vieš", "dokážeš", "môžeš", "zvládneš", "umíš"]
-    if any(v in text_lower for v in _CAPABILITY_VERBS):
+    capability_verbs = ["vieš", "dokážeš", "môžeš", "zvládneš", "umíš"]
+    if any(v in text_lower for v in capability_verbs):
         complexity_score += 1
 
     if complexity_score >= 3:
-        return "programming"  # Opus — komplexné úlohy
+        return "programming"
     if complexity_score >= 1:
-        return "analysis"  # Sonnet — stredná komplexita
+        return "analysis"
 
     # === FACTUAL: krátka jednoduchá otázka ===
     if len(text_lower) < 30 and text_lower.endswith("?") and complexity_score == 0:
         return "factual"
 
-    # Default: Sonnet
     return "chat"
 
 
 def get_model(task_type: str) -> ModelConfig:
-    """Vráť model config pre daný typ úlohy."""
-    return _TASK_MODEL.get(task_type, SONNET)
+    """Get model config for task type. Resolves through provider-agnostic tier."""
+    tier = _TASK_TIER.get(task_type, ModelTier.BALANCED)
+    model_id = _resolve_model_id(tier)
+    max_turns, timeout = _TIER_DEFAULTS[tier]
+    return ModelConfig(model_id=model_id, max_turns=max_turns, timeout=timeout, tier=tier)
 
 
 def list_models() -> dict[str, str]:
     """Pre /models príkaz — prehľad."""
-    return {task: cfg.model_id for task, cfg in _TASK_MODEL.items()}
+    return {task: get_model(task).model_id for task in _TASK_TIER}

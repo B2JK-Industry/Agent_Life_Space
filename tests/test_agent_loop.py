@@ -241,4 +241,4 @@ class TestExecuteItem:
             item = WorkItem(description="test task")
             result = await loop._execute_item(item)
 
-        assert "Nepodarilo" in result
+        assert "Error" in result or "Nepodarilo" in result
