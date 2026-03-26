@@ -129,7 +129,7 @@ OPUS = ModelConfig(
 
 _PROGRAMMING_KEYWORDS = frozenset([
     "naprogramuj", "implementuj", "napíš kód", "pridaj", "oprav bug",
-    "vytvor modul", "refaktoruj", "fix", "uprav kód", "pridaj príkaz",
+    "vytvor modul", "refaktoruj", "fix bug", "uprav kód", "pridaj príkaz",
     "napíš test", "debug", "commitni", "pushni",
 ])
 
@@ -171,8 +171,17 @@ def classify_task_detailed(text: str) -> ClassificationResult:
     words = text_lower.split()
     signals: dict[str, int] = {}
 
+    # === Code content early check (before simple) ===
+    has_code = "```" in text or "def " in text or "import " in text or "class " in text
+
     # === SIMPLE: krátke jednoduché správy ===
-    if len(words) <= 3 and any(kw in text_lower for kw in _SIMPLE_KEYWORDS):
+    # Only if no code content and no programming keywords present
+    if (
+        len(words) <= 3
+        and not has_code
+        and any(kw in text_lower for kw in _SIMPLE_KEYWORDS)
+        and not any(kw in text_lower for kw in _PROGRAMMING_KEYWORDS)
+    ):
         return ClassificationResult(task_type="simple", score=0, signals={"simple_match": 1})
 
     # === Signal scoring ===
@@ -213,7 +222,7 @@ def classify_task_detailed(text: str) -> ClassificationResult:
         total += cap_matches
 
     # Code-like content (backticks, indentation, function calls)
-    if "```" in text or "def " in text or "import " in text or "class " in text:
+    if has_code:
         signals["code_content"] = 5
         total += 5
 
