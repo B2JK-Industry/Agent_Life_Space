@@ -32,7 +32,7 @@ class ServerMaintenance:
     """
 
     def __init__(self, home_dir: str = "") -> None:
-        default = os.environ.get("AGENT_PROJECT_ROOT", os.path.expanduser("~/agent-life-space"))
+        default = os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
         self._home = Path(os.path.expanduser(home_dir or default))
 
     async def find_and_kill_stale_processes(

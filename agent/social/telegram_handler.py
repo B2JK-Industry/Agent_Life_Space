@@ -19,6 +19,7 @@ import asyncio
 import os
 from dataclasses import dataclass
 from datetime import UTC
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -463,7 +464,7 @@ class TelegramHandler:
         try:
 
             from agent.vault.secrets import SecretsManager
-            _root = os.environ.get("AGENT_PROJECT_ROOT", os.path.expanduser("~/agent-life-space"))
+            _root = os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
             vault_dir = os.path.join(_root, "agent", "vault")
             master_key = os.environ.get("AGENT_VAULT_KEY", "")
             if not master_key:
@@ -936,7 +937,7 @@ class TelegramHandler:
             prompt = (
                 f"{active_prompt}\n"
                 f"{tool_context}"
-                f"Si programátor. Pracuješ v ~/agent-life-space.\n\n"
+                f"Si programátor. Pracuješ v {os.environ.get('AGENT_PROJECT_ROOT', str(Path.home() / 'agent-life-space'))}.\n\n"
                 f"ÚLOHA: {text}\n\n"
             )
             if url_context:

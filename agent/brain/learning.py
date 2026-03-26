@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -32,7 +33,7 @@ from agent.brain.skills import Skill, SkillRegistry, SkillStatus
 logger = structlog.get_logger(__name__)
 
 # Project root — resolved from env, no hardcoded path
-_PROJECT_ROOT = os.environ.get("AGENT_PROJECT_ROOT", os.path.expanduser("~/agent-life-space"))
+_PROJECT_ROOT = os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
 
 # Test commands for each skill — used by try_skill()
 _SKILL_TESTS: dict[str, str] = {
