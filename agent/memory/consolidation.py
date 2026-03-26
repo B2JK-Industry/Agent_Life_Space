@@ -28,7 +28,7 @@ from typing import Any
 
 import structlog
 
-from agent.memory.store import MemoryEntry, MemoryStore, MemoryType
+from agent.memory.store import MemoryEntry, MemoryStore, MemoryType, ProvenanceStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -140,6 +140,8 @@ class MemoryConsolidation:
                         limit=1,
                     )
                     if not existing:
+                        # Provenance: consolidated from episodic → inferred
+                        # (not directly observed, derived from pattern matching)
                         new_entry = MemoryEntry(
                             content=entry.content,
                             memory_type=pattern["target_type"],
@@ -147,6 +149,7 @@ class MemoryConsolidation:
                             source="consolidation",
                             importance=min(1.0, entry.importance + 0.1),
                             confidence=entry.confidence,
+                            provenance=ProvenanceStatus.INFERRED,
                         )
                         await self._store.store(new_entry)
                         patterns_found += 1
@@ -253,6 +256,81 @@ class MemoryConsolidation:
             importance=1.0,  # Working memory is always most important
         )
         return await self._store.store(entry)
+
+    async def promote_inferred_to_verified(self, min_access_count: int = 5) -> int:
+        """
+        Promote frequently-accessed inferred memories to verified.
+
+        Logic: if an inferred fact has been accessed 5+ times without
+        being contradicted, it's reliable enough to promote.
+        This is the consolidation pipeline: inferred → verified.
+        """
+        inferred = await self._store.query(
+            provenance=ProvenanceStatus.INFERRED,
+            limit=100,
+        )
+
+        promoted = 0
+        for entry in inferred:
+            if entry.access_count >= min_access_count and entry.confidence >= 0.7:
+                entry.verify(source="consolidation_promotion")
+                if self._store._db:
+                    await self._store._db.execute(
+                        "UPDATE memories SET provenance=?, metadata=? WHERE id=?",
+                        (
+                            entry.provenance.value,
+                            __import__("orjson").dumps(entry.metadata).decode(),
+                            entry.id,
+                        ),
+                    )
+                promoted += 1
+
+        if self._store._db and promoted:
+            await self._store._db.commit()
+
+        if promoted:
+            logger.info("memory_promoted", count=promoted, threshold=min_access_count)
+        return promoted
+
+    async def detect_stale_facts(self, max_age_days: int = 30) -> int:
+        """
+        Mark semantic facts as stale if they haven't been accessed in max_age_days.
+        Stale facts get lower relevance scores but aren't deleted.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
+        stale_count = 0
+
+        # Read directly from index to avoid access() side effect
+        semantic = [
+            e for e in self._store._index.values()
+            if e.memory_type == MemoryType.SEMANTIC
+        ]
+
+        for entry in semantic:
+            if (
+                entry.provenance not in (ProvenanceStatus.STALE, ProvenanceStatus.VERIFIED)
+                and entry.last_accessed < cutoff
+            ):
+                entry.mark_stale(reason=f"not accessed in {max_age_days} days")
+                if self._store._db:
+                    await self._store._db.execute(
+                        "UPDATE memories SET provenance=?, metadata=? WHERE id=?",
+                        (
+                            entry.provenance.value,
+                            __import__("orjson").dumps(entry.metadata).decode(),
+                            entry.id,
+                        ),
+                    )
+                stale_count += 1
+
+        if self._store._db and stale_count:
+            await self._store._db.commit()
+
+        if stale_count:
+            logger.info("memory_stale_detected", count=stale_count)
+        return stale_count
 
     async def extract_user_patterns(self) -> list[dict[str, str]]:
         """
