@@ -6,7 +6,7 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 
 ## What it does
 
-- **7-layer cascade** — 5 layers of local processing before calling LLM (saves API calls)
+- **9-layer cascade** — dispatch → cache → RAG → classify → LLM → quality escalation → learning → channel filter → explanation
 - **Docker sandbox** — `/sandbox` code runs in isolated containers (256MB, no network, read-only FS)
 - **Encrypted vault** — API keys, wallet keys (ETH/BTC) encrypted with Fernet AES-128
 - **Epistemic memory** — 4 types + provenance model (observed/asserted/inferred/verified/stale), expiry, decay
@@ -14,11 +14,11 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Agent-to-Agent API** — HTTP endpoint for inter-agent communication
 - **Learning system** — skill outcome tracking, model escalation, prompt augmentation
 - **Multi-provider LLM** — Claude CLI, Anthropic API, OpenAI, Ollama (any backend)
-- **Automated security** — 116-test security audit + invariant suite
+- **Automated security** — 127-test security audit + invariant suite
 - **Tool governance** — capability manifest, policy engine, 4-step action pipeline with audit trail
 - **Workspace persistence** — SQLite-backed workspaces with audit trail, limits, TTL, recovery
 - **Approval queue** — structured propose → approve/deny → execute workflow for risk-sensitive actions
-- **1063+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **1064+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -70,7 +70,7 @@ Response -> Telegram + memory + learning
 | `projects/` | Project scoping | Beta |
 | `work/` | Isolated workspaces | Beta |
 
-~12,300 lines of code. Details: **[Modules wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Modules)**
+~17,300 lines of code. Details: **[Modules wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Modules)**
 
 ## Security
 
@@ -84,14 +84,14 @@ Response -> Telegram + memory + learning
 - API authentication (Bearer token) + rate limiting
 - Log redaction (secrets never in logs)
 - PID lockfile (prevents duplicate instances)
-- 116 automated security + invariant tests
+- 127 automated security + invariant tests
 
 Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Security)**
 
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 1063+ passed, ~19s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1064+ passed, ~19s, $0.00
 ```
 
 | Layer | Tests | What |

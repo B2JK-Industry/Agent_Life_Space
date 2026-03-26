@@ -74,7 +74,8 @@ class TestEncryption:
 
             # Read raw file
             secrets_file = os.path.join(tmpdir, "secrets.enc")
-            raw = open(secrets_file, "rb").read()
+            with open(secrets_file, "rb") as f:
+                raw = f.read()
             assert b"super-secret-value-12345" not in raw
 
     def test_wrong_key_cannot_decrypt(self) -> None:

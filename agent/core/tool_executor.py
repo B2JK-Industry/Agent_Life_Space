@@ -126,6 +126,25 @@ class ToolExecutor:
             action.phase = ActionPhase.BLOCKED
             action.completed_at = time.time()
             self._action_log.record(action)
+
+            # Update agent status model if available
+            try:
+                from agent.core.status import AgentState, AgentStatusModel
+                status = getattr(self._agent, '_status_model', None)
+                if status is None and hasattr(self._agent, 'brain'):
+                    brain = getattr(self._agent, 'brain', None)
+                    if brain and hasattr(brain, '_status'):
+                        status = brain._status
+                if isinstance(status, AgentStatusModel):
+                    if decision.denial_code and decision.denial_code.value == "approval_required":
+                        status.transition(AgentState.WAITING_APPROVAL,
+                                          f"tool '{tool_name}' needs approval")
+                    else:
+                        status.transition(AgentState.BLOCKED,
+                                          f"tool '{tool_name}' denied: {decision.reason[:80]}")
+            except ImportError:
+                pass
+
             return {
                 "error": decision.reason,
                 "blocked": True,

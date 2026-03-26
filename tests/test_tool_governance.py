@@ -91,10 +91,12 @@ class TestPolicyDecisions:
         decision = policy.evaluate("totally_unknown_tool", ctx)
         assert not decision.allowed
 
-    def test_unknown_tool_allowed_for_owner(self, policy):
+    def test_unknown_tool_denied_for_owner(self, policy):
+        """Deny-by-default: unknown tools blocked even for owner."""
         ctx = ToolExecutionContext(is_owner=True, safe_mode=False)
         decision = policy.evaluate("totally_unknown_tool", ctx)
-        assert decision.allowed
+        assert not decision.allowed
+        assert decision.risk_level == ToolRiskLevel.HIGH
 
     def test_decision_includes_metadata(self, policy):
         decision = policy.evaluate("run_code", ToolExecutionContext())

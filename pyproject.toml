@@ -71,3 +71,10 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    "error",
+    # Mock coroutine warning from unittest.mock internals — not our code
+    "ignore::RuntimeWarning:unittest.mock",
+    # SQLite Connection.__del__ GC cleanup — harmless, not our resource leak
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]

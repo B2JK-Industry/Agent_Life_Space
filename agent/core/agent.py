@@ -33,9 +33,11 @@ from typing import Any
 import structlog
 
 from agent.brain.decision_engine import DecisionEngine
+from agent.core.approval import ApprovalQueue
 from agent.core.job_runner import JobConfig, JobRunner
 from agent.core.llm_router import LLMRouter
 from agent.core.messages import Message, MessageType, ModuleID
+from agent.core.operator import OperatorControls
 from agent.core.router import MessageRouter
 from agent.core.watchdog import Watchdog
 from agent.finance.tracker import FinanceTracker
@@ -83,8 +85,13 @@ class AgentOrchestrator:
         self.tasks = TaskManager(
             db_path=str(self._data_dir / "tasks" / "tasks.db")
         )
+        # Governance
+        self.approval_queue = ApprovalQueue()
+        self.operator_controls = OperatorControls()
+
         self.finance = FinanceTracker(
-            db_path=str(self._data_dir / "finance" / "finance.db")
+            db_path=str(self._data_dir / "finance" / "finance.db"),
+            approval_queue=self.approval_queue,
         )
         self.projects = ProjectManager(
             db_path=str(self._data_dir / "projects" / "projects.db")

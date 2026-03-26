@@ -4,15 +4,16 @@ Agent Life Space — Agent Brain
 Channel-agnostic message processing. THE core intelligence.
 Extracted from TelegramHandler to enable multi-channel support.
 
-What it does:
+Runtime pipeline (every layer actually executes in process()):
     1. Multi-task detection → work queue
     2. Internal dispatch (no LLM)
-    3. Semantic cache + RAG
-    4. Persistent conversation (per-chat)
-    5. Task classification → model selection
-    6. LLM call (via provider abstraction)
-    7. Learning feedback + skill auto-update
-    8. Post-routing quality escalation
+    3. Semantic cache lookup → early return on hit
+    4. RAG retrieval → direct answer or context augmentation
+    5. Task classification → model selection + learning-based escalation
+    6. LLM call (via provider abstraction) with augmented prompt
+    7. Post-routing quality escalation (re-run with stronger model if needed)
+    8. Learning feedback + skill auto-update
+    9. Channel policy filter + explanation log
 
 What it does NOT do:
     - Telegram-specific formatting
@@ -40,6 +41,8 @@ class AgentBrain:
     """
     Channel-agnostic message processing engine.
     Processes IncomingMessage, returns response text.
+
+    Full pipeline: dispatch → cache → RAG → classify → LLM → escalation → learning → filter
     """
 
     def __init__(
@@ -63,8 +66,9 @@ class AgentBrain:
         self._max_conversation = 10
 
         # Lazy-init components
-        self._semantic_cache = None
-        self._rag_index = None
+        self._semantic_cache: Any = None
+        self._rag_index: Any = None
+        self._learner: Any = None
         self._persistent_conv: Any = None
 
         # Status model (optional)
@@ -87,6 +91,17 @@ class AgentBrain:
         """
         Process an incoming message from any channel.
         Returns response text.
+
+        Full pipeline:
+            1. Work queue (multi-task)
+            2. Internal dispatch
+            3. Semantic cache
+            4. RAG retrieval
+            5. Classification + learning escalation
+            6. LLM call
+            7. Quality escalation
+            8. Learning feedback
+            9. Channel policy + explanation
         """
         if self._status:
             from agent.core.status import AgentState
@@ -102,7 +117,7 @@ class AgentBrain:
         chat_conv = self._get_chat_conversation(message.chat_id)
         conv_id = self._get_conversation_id(message.chat_id)
 
-        # Multi-task detection → work queue
+        # ── Layer 1: Multi-task detection → work queue ──
         import re
         lines = [line.strip() for line in text.split("\n") if line.strip()]
         numbered = [re.sub(r"^\d+[\.\)]\s*", "", line) for line in lines if re.match(r"^\d+[\.\)]", line)]
@@ -133,7 +148,7 @@ class AgentBrain:
             importance=0.6,
         ))
 
-        # Internal dispatch (no LLM)
+        # ── Layer 2: Internal dispatch (no LLM) ──
         short_followup = len(chat_conv) > 0 and len(text.split()) <= 8
         if not short_followup:
             from agent.brain.dispatcher import InternalDispatcher
@@ -142,7 +157,22 @@ class AgentBrain:
             if internal_result:
                 return internal_result
 
-        # Task classification + model selection
+        # ── Layer 3: Semantic cache ──
+        cached_response = self._try_semantic_cache(text)
+        if cached_response:
+            logger.info("brain_cache_hit", query=text[:50])
+            return f"{cached_response}\n\n_📦 cache hit_"
+
+        # ── Layer 4: RAG retrieval ──
+        rag_context = ""
+        rag_direct = self._try_rag_retrieval(text)
+        if rag_direct is not None:
+            if rag_direct.get("action") == "direct":
+                return f"Z knowledge base ({rag_direct.get('source', '')}):\n{rag_direct.get('context', '')}"
+            if rag_direct.get("action") == "augment":
+                rag_context = rag_direct.get("context", "")
+
+        # ── Layer 5: Task classification + model selection ──
         from agent.core.models import classify_task, get_model
         task_type = classify_task(text)
         model = get_model(task_type)
@@ -152,9 +182,33 @@ class AgentBrain:
             task_type = "chat"
             model = get_model(task_type)
 
+        # Learning-based model escalation
+        learner = self._get_learner()
+        learning_escalation = None
+        if learner:
+            adaptation = learner.adapt_model(task_type, text)
+            if adaptation.get("model_override"):
+                from agent.core.models import OPUS, SONNET
+                override_map = {
+                    "claude-sonnet-4-6": SONNET,
+                    "claude-opus-4-6": OPUS,
+                }
+                override = override_map.get(adaptation["model_override"])
+                if override:
+                    logger.info("learning_override_model",
+                                original=model.model_id,
+                                override=override.model_id,
+                                reason=adaptation.get("reason", ""))
+                    model = override
+                    learning_escalation = adaptation.get("reason", "")
+
         # Build prompt
         is_agent_chat = message.channel_type == "agent_api"
         active_prompt = AGENT_PROMPT if is_agent_chat else SYSTEM_PROMPT
+
+        # Learning-augmented prompt (add past errors if relevant)
+        if learner:
+            active_prompt = learner.augment_prompt(text, active_prompt)
 
         # Persistent conversation context
         persistent_context = await self._get_persistent_context(conv_id, text)
@@ -186,14 +240,20 @@ class AgentBrain:
             prompt = f"{SIMPLE_PROMPT}\n{message.sender_name}: {text}\n"
         else:
             prompt = f"{active_prompt}\n"
+            if rag_context:
+                prompt += f"Relevantný kontext z knowledge base:\n{rag_context}\n\n"
             if persistent_context:
                 prompt += f"{persistent_context}\n\n"
             elif conv_context:
                 prompt += f"Predchádzajúca konverzácia:\n{conv_context}\n\n"
             prompt += f"{message.sender_name}: {text}\nOdpovedaj po slovensky."
 
-        # LLM call via provider
+        # ── Layer 6: LLM call via provider ──
         from agent.core.llm_provider import GenerateRequest, get_provider
+
+        if self._status:
+            from agent.core.status import AgentState
+            self._status.transition(AgentState.EXECUTING, f"LLM call: {model.model_id}")
 
         project_root = os.environ.get(
             "AGENT_PROJECT_ROOT",
@@ -261,6 +321,49 @@ class AgentBrain:
             usage_input_tokens = response.input_tokens
             usage_output_tokens = response.output_tokens
 
+        # ── Layer 7: Post-routing quality escalation ──
+        try:
+            from agent.core.response_quality import assess_quality
+            quality = assess_quality(text, reply, model.model_id)
+            if quality.should_escalate:
+                logger.info("post_routing_escalation",
+                            from_model=model.model_id,
+                            score=quality.score,
+                            reason=quality.reason)
+                from agent.core.models import SONNET
+                esc_response = await provider.generate(GenerateRequest(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=SONNET.model_id,
+                    timeout=SONNET.timeout,
+                    max_turns=SONNET.max_turns,
+                    cwd=project_root,
+                ))
+                if esc_response.success and esc_response.text:
+                    reply = esc_response.text
+                    model = SONNET
+                    usage_cost += esc_response.cost_usd
+                    usage_input_tokens += esc_response.input_tokens
+                    usage_output_tokens += esc_response.output_tokens
+                    self._total_cost_usd += esc_response.cost_usd
+                    self._total_input_tokens += esc_response.input_tokens
+                    self._total_output_tokens += esc_response.output_tokens
+                    logger.info("post_routing_escalation_success", model=SONNET.model_id)
+        except Exception as e:
+            logger.error("quality_escalation_error", error=str(e))
+
+        # ── Layer 8: Learning feedback + skill auto-update ──
+        if learner:
+            try:
+                learner.process_outcome(
+                    task_description=text,
+                    reply=reply,
+                    model_used=model.model_id,
+                )
+            except Exception as e:
+                logger.error("learning_feedback_error", error=str(e))
+
+        await self._auto_update_skills(reply)
+
         # Store response in conversation buffer
         clean_reply = reply.split("\n\n_💰")[0] if "_💰" in reply else reply
         chat_conv.append({"role": "assistant", "content": clean_reply[:300]})
@@ -270,7 +373,14 @@ class AgentBrain:
         # Persist exchange
         await self._save_exchange(conv_id, text, clean_reply, message.sender_name)
 
-        # Channel policy — filter response based on channel trust level
+        # Store in semantic cache (not for programming tasks)
+        if self._semantic_cache and task_type not in ("programming",):
+            try:
+                self._semantic_cache.store(text, clean_reply)
+            except Exception:
+                pass
+
+        # ── Layer 9: Channel policy filter + explanation ──
         from agent.social.channel_policy import (
             can_send_response,
             classify_response,
@@ -286,11 +396,46 @@ class AgentBrain:
                            response_class=response_class.value,
                            channel=message.channel_type)
 
-        # Record explanation
+        # Record explanation with full context
         if self._explanation_log is not None:
             from agent.core.explanation import DecisionExplanation
             from agent.core.models import classify_task_detailed
             classification = classify_task_detailed(text)
+
+            # Gather policy context from tool executor if available
+            policy_decisions: list[dict[str, Any]] = []
+            if hasattr(self, "_tool_executor") and self._tool_executor:
+                try:
+                    recent = self._tool_executor.action_log.get_recent(5)
+                    policy_decisions = [
+                        {"tool": a.get("tool_name", ""), "allowed": a.get("policy_allowed", True),
+                         "risk": a.get("policy_risk_level", "")}
+                        for a in recent
+                    ]
+                except Exception:
+                    pass
+
+            # Gather learning context
+            skill_confidence: dict[str, float] = {}
+            past_errors: list[str] = []
+            if learner:
+                try:
+                    advice = learner.get_advice_for_task(text)
+                    past_errors = advice.get("past_errors", [])[:3]
+                    for s in advice.get("relevant_skills", []):
+                        if isinstance(s, dict):
+                            skill_confidence[s.get("name", "")] = s.get("confidence", 0.0)
+                except Exception:
+                    pass
+
+            # Gather memory provenance breakdown
+            provenance_breakdown: dict[str, int] = {}
+            try:
+                mem_stats = self._agent.memory.get_stats()
+                provenance_breakdown = mem_stats.get("by_provenance", {})
+            except Exception:
+                pass
+
             self._explanation_log.record(DecisionExplanation(
                 action_type="message_response",
                 action_summary=f"Odpovedal na '{text[:50]}'",
@@ -298,6 +443,12 @@ class AgentBrain:
                 routing_score=classification.score,
                 routing_signals=classification.signals,
                 model_used=model.model_id,
+                policy_decisions=policy_decisions,
+                learning_escalation=learning_escalation or "",
+                past_errors_used=past_errors,
+                skill_confidence=skill_confidence,
+                memories_recalled=1 if rag_context else 0,
+                provenance_breakdown=provenance_breakdown,
             ))
 
         # Usage info
@@ -312,6 +463,95 @@ class AgentBrain:
             self._status.transition(AgentState.IDLE, "response sent")
 
         return reply
+
+    # ─────────────────────────────────────────────
+    # Pipeline components
+    # ─────────────────────────────────────────────
+
+    def _try_semantic_cache(self, text: str) -> str | None:
+        """Layer 3: Lookup semantic cache. Returns cached response or None."""
+        try:
+            if self._semantic_cache is None:
+                from agent.memory.semantic_cache import SemanticCache
+                self._semantic_cache = SemanticCache()
+            return self._semantic_cache.lookup(text)
+        except Exception:
+            return None
+
+    def _try_rag_retrieval(self, text: str) -> dict[str, Any] | None:
+        """Layer 4: RAG retrieval. Returns action dict or None."""
+        try:
+            if self._rag_index is None:
+                from agent.memory.rag import RAGIndex
+                self._rag_index = RAGIndex()
+                if not self._rag_index._built:
+                    self._rag_index.build_index()
+            result = self._rag_index.retrieve_for_llm(text)
+            if result.get("action") in ("direct", "augment"):
+                return result
+        except Exception as e:
+            logger.error("rag_retrieval_error", error=str(e))
+        return None
+
+    def _get_learner(self) -> Any:
+        """Lazy-init LearningSystem."""
+        if self._learner is None:
+            try:
+                from agent.brain.learning import LearningSystem
+                self._learner = LearningSystem()
+            except Exception:
+                pass
+        return self._learner
+
+    async def _auto_update_skills(self, reply: str) -> None:
+        """Scan reply for evidence of skill usage and auto-update skills.json."""
+        try:
+            from pathlib import Path
+
+            from agent.brain.skills import SkillRegistry
+
+            base = str(Path.home() / "agent-life-space")
+            registry = SkillRegistry(f"{base}/agent/brain/skills.json")
+            reply_lower = reply.lower()
+
+            skill_signals = {
+                "curl": ["curl ", "curl -s", "http request", "api call"],
+                "web_scraping": ["scraping", "beautifulsoup", "requests.get"],
+                "git_commit": ["git commit", "git push", "commitol", "pushol"],
+                "git_status": ["git status", "git log", "git diff"],
+                "python_run": ["python3 -c", "spustil skript", "python3 -m"],
+                "pytest": ["pytest", "testov prešlo", "tests passed"],
+                "docker_run": ["docker run", "docker build", "kontajner"],
+                "system_health": ["free -h", "df -h"],
+                "maintenance": ["cache", "čistenie", "stale proces"],
+                "pip_install": ["pip install", "pip3 install"],
+                "memory_store": ["uložil do pamäte", "memory.store"],
+                "memory_query": ["memory.query", "prehľadal pamäť"],
+                "task_create": ["vytvoril úlohu", "create_task"],
+            }
+
+            success_markers = ["ok", "funguje", "hotovo", "úspešne", "success", "done", "passed", "✅"]
+            failure_markers = ["chyba", "error", "failed", "nefunguje", "timeout", "❌"]
+            has_success = any(m in reply_lower for m in success_markers)
+            has_failure = any(m in reply_lower for m in failure_markers)
+
+            if not has_success and not has_failure:
+                return
+
+            updated = []
+            for skill_name, patterns in skill_signals.items():
+                if any(p in reply_lower for p in patterns):
+                    if has_success and not has_failure:
+                        registry.record_success(skill_name)
+                        updated.append(f"{skill_name}:success")
+                    elif has_failure and not has_success:
+                        registry.record_failure(skill_name, reply[:200])
+                        updated.append(f"{skill_name}:failure")
+
+            if updated:
+                logger.info("skills_auto_updated", skills=updated)
+        except Exception as e:
+            logger.error("skills_auto_update_error", error=str(e))
 
     # ─────────────────────────────────────────────
     # Helpers

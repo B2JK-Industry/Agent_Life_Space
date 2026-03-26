@@ -31,7 +31,7 @@ source .venv/bin/activate
 python -m agent              # Spusti agenta
 python -m agent --status     # Stav
 python -m agent --health     # Zdravie
-python -m pytest tests/ -q   # Testy (1063+ testov)
+python -m pytest tests/ -q   # Testy (1064+ testov)
 ```
 
 ## Verzia
