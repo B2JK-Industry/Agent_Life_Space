@@ -8,6 +8,14 @@ This project follows [Semantic Versioning](https://semver.org/):
 - MINOR (1.x.0) — nové features, spätne kompatibilné
 - MAJOR (x.0.0) — breaking changes (len so schválením)
 
+## [1.4.1] — 2026-03-27
+
+Bug-fix release for `1.4.0`.
+
+### Release Notes
+- Patch release line for the tested post-`1.4.0` main state
+- Intended as bug-fix continuation of the `1.4.0` release
+
 ## [1.4.0] — 2026-03-26
 
 Backlog zero release. All items from master backlog implemented.

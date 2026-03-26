@@ -39,6 +39,6 @@ python -m pytest tests/ -q   # Testy (1064+ testov)
 
 ## Verzia
 
-Aktuálna: **v1.4.0** — Backlog zero: multi-step approval, confusion analysis, recovery tests, product identity.
+Aktuálna: **v1.4.1** — Bug-fix release for v1.4.0.
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.
