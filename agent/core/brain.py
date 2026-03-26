@@ -67,13 +67,27 @@ class AgentBrain:
         self._rag_index = None
         self._persistent_conv: Any = None
 
+        # Status model (optional)
+        self._status: Any = None
+        try:
+            from agent.core.status import AgentStatusModel
+            self._status = AgentStatusModel()
+        except ImportError:
+            pass
+
     async def process(self, message: IncomingMessage) -> str:
         """
         Process an incoming message from any channel.
         Returns response text.
         """
+        if self._status:
+            from agent.core.status import AgentState
+            self._status.transition(AgentState.THINKING, f"processing from {message.channel_type}")
+
         text = message.text.strip()
         if not text:
+            if self._status:
+                self._status.transition(AgentState.IDLE, "empty message")
             return "Prázdna správa."
 
         # Per-chat conversation
@@ -255,6 +269,10 @@ class AgentBrain:
             f"⬆{usage_input_tokens:,} ⬇{usage_output_tokens:,} tokens_"
         )
 
+        if self._status:
+            from agent.core.status import AgentState
+            self._status.transition(AgentState.IDLE, "response sent")
+
         return reply
 
     # ─────────────────────────────────────────────
@@ -301,3 +319,11 @@ class AgentBrain:
             "total_output_tokens": self._total_output_tokens,
             "total_cost_usd": round(self._total_cost_usd, 4),
         }
+
+    def get_agent_status(self) -> dict[str, Any]:
+        """Get current agent status including state model."""
+        result = self.get_usage()
+        if self._status:
+            result["status"] = self._status.get_status()
+            result["status_history"] = self._status.get_history(limit=10)
+        return result
