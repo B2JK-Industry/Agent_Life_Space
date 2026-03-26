@@ -90,8 +90,9 @@ class TestTaskAnalysis:
         assert any("database" in r.lower() or "schema" in r.lower() for r in analysis.risks)
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 class TestCodeReview:
-    """Review code for common issues."""
+    """Review code for common issues. Uses deprecated Programmer.review_file()."""
 
     def test_review_clean_file(self, programmer):
         """Clean file passes review."""

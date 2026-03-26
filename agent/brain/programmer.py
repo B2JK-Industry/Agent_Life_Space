@@ -138,9 +138,20 @@ class Programmer:
 
     def review_file(self, filepath: str) -> CodeReview:
         """
+        DEPRECATED: Use agent.review.service.ReviewService instead.
+
+        This method is kept for backward compatibility but is no longer
+        the primary review path. Telegram /review command now routes
+        through ReviewService.
+
         Skontroluj Python súbor — hľadaj bežné problémy.
-        Nie je to náhrada za LLM review, ale zachytí zjavné chyby.
         """
+        import warnings
+        warnings.warn(
+            "Programmer.review_file() is deprecated. Use ReviewService.run_review() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         review = CodeReview()
         path = self._root / filepath if not Path(filepath).is_absolute() else Path(filepath)
 
