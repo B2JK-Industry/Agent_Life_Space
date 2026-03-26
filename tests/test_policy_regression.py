@@ -13,10 +13,8 @@ import pytest
 
 from agent.core.tool_policy import (
     TOOL_CAPABILITIES,
-    SideEffectClass,
     ToolExecutionContext,
     ToolPolicy,
-    ToolRiskLevel,
 )
 
 
