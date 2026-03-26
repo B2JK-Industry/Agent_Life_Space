@@ -8,6 +8,25 @@ This project follows [Semantic Versioning](https://semver.org/):
 - MINOR (1.x.0) — nové features, spätne kompatibilné
 - MAJOR (x.0.0) — breaking changes (len so schválením)
 
+## [1.2.0] — 2026-03-26
+
+Operator-grade visibility and control release. 5 PR, 1000+ tests.
+
+### API & Communication
+- **API audit trail** — every request logged (sender, IP, status, duration)
+- **Replay protection wired** — nonce + timestamp check in API handler
+- **Rate-limit telemetry** — total requests/errors/rate-limited/auth-failures by sender
+
+### Finance
+- **Budget policy** — hard cap (block), soft cap (warn), single-tx approval cap
+- **Budget forecast** — remaining at each cap level
+
+### Operator Visibility
+- **Memory inspection API** — overview, provenance filter, stale report, conflict report
+- **Agent status wiring** — brain.py transitions IDLE → THINKING → IDLE per message
+- **get_agent_status()** — state + history + usage in one call
+- **Operator handbook** — practical guide: daily ops, security, troubleshooting
+
 ## [1.1.0] — 2026-03-26
 
 Breakthrough architecture release. 19 PR, 974+ tests, ~8000 lines added.
