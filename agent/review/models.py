@@ -274,6 +274,7 @@ class ReviewArtifact:
 
         Content is stored separately in artifact storage — this
         reconstructs the metadata graph only (id, type, job_id, format).
+        Full content is loaded via storage.get_artifacts().
         """
         return cls(
             id=d.get("id", ""),
