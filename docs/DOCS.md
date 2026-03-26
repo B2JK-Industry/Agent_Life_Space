@@ -18,6 +18,8 @@ Tento súbor je len rozcestník. Detailná dokumentácia je na wiki stránkach:
 | [Finance](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Finance) | Budget, proposals, approval flow |
 | [Roadmap](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Roadmap) | Backlog, priorities, known issues |
 | [Idea Review and Expansion](./IDEA_REVIEW_AND_EXPANSION_2026_03.md) | Koncept review, rozšírenia, aktuálne nálezy |
+| [Security Model](./SECURITY_MODEL.md) | Bezpečnostný model, execution boundaries, tool policy |
+| [Learning Model](./LEARNING_MODEL.md) | Definícia learning systému, 4 typy, safety rules |
 
 ## Rýchly štart
 
@@ -26,7 +28,7 @@ source .venv/bin/activate
 python -m agent              # Spusti agenta
 python -m agent --status     # Stav
 python -m agent --health     # Zdravie
-python -m pytest tests/ -q   # Testy (708+ testov)
+python -m pytest tests/ -q   # Testy (830+ testov)
 ```
 
 ## Verzia
