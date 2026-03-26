@@ -23,8 +23,11 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Callable, Coroutine
 
+import aiosqlite
+import orjson
 import structlog
 
 from agent.core.messages import (
@@ -36,6 +39,75 @@ from agent.core.messages import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+class MessagePersistence:
+    """SQLite-backed message persistence for crash recovery.
+
+    Messages are stored before delivery and removed after successful delivery.
+    On restart, undelivered messages are replayed into the queue.
+    """
+
+    def __init__(self, db_path: str = "agent/data/message_queue.db") -> None:
+        self._db_path = Path(db_path)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db: aiosqlite.Connection | None = None
+
+    async def init(self) -> None:
+        self._db = await aiosqlite.connect(str(self._db_path))
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS pending_messages (
+                id TEXT PRIMARY KEY,
+                priority INTEGER NOT NULL,
+                seq INTEGER NOT NULL,
+                message_json BLOB NOT NULL,
+                enqueued_at REAL NOT NULL
+            )
+        """)
+        await self._db.commit()
+
+    async def store(self, msg_id: str, priority: int, seq: int, message: Message) -> None:
+        """Persist message before delivery attempt."""
+        if self._db is None:
+            return
+        raw = orjson.dumps(message.model_dump(mode="json"))
+        await self._db.execute(
+            "INSERT OR REPLACE INTO pending_messages (id, priority, seq, message_json, enqueued_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (msg_id, priority, seq, raw, time.time()),
+        )
+        await self._db.commit()
+
+    async def remove(self, msg_id: str) -> None:
+        """Remove message after successful delivery."""
+        if self._db is None:
+            return
+        await self._db.execute("DELETE FROM pending_messages WHERE id = ?", (msg_id,))
+        await self._db.commit()
+
+    async def load_pending(self) -> list[tuple[int, int, Message]]:
+        """Load undelivered messages for replay (ordered by priority, seq)."""
+        if self._db is None:
+            return []
+        cursor = await self._db.execute(
+            "SELECT priority, seq, message_json FROM pending_messages ORDER BY priority, seq"
+        )
+        rows = await cursor.fetchall()
+        results: list[tuple[int, int, Message]] = []
+        for priority, seq, raw in rows:
+            try:
+                data = orjson.loads(raw)
+                msg = Message(**data)
+                if not msg.is_expired():
+                    results.append((priority, seq, msg))
+            except Exception:
+                logger.warning("message_persistence_skip_corrupt", priority=priority)
+        return results
+
+    async def close(self) -> None:
+        if self._db:
+            await self._db.close()
+            self._db = None
 
 MessageHandler = Callable[[Message], Coroutine[Any, Any, Message | None]]
 
@@ -98,6 +170,7 @@ class MessageRouter:
         delivery_timeout: float = DEFAULT_DELIVERY_TIMEOUT,
         retry_base_delay: float = 0.5,
         retry_max_delay: float = 10.0,
+        persistence_db: str = "agent/data/message_queue.db",
     ) -> None:
         self._handlers: dict[ModuleID, MessageHandler] = {}
         self._queue: asyncio.PriorityQueue[tuple[int, int, Message]] = (
@@ -111,6 +184,7 @@ class MessageRouter:
         self._retry_max_delay = retry_max_delay
         self._metrics: dict[str, int] = defaultdict(int)
         self._last_activity: dict[ModuleID, float] = {}
+        self._persistence = MessagePersistence(persistence_db)
 
     def _next_seq(self) -> int:
         self._seq += 1
@@ -127,6 +201,18 @@ class MessageRouter:
         self._handlers.pop(module_id, None)
         self._last_activity.pop(module_id, None)
         logger.info("handler_unregistered", module=module_id.value)
+
+    async def init(self) -> None:
+        """Initialize persistence and replay undelivered messages from previous run."""
+        await self._persistence.init()
+        pending = await self._persistence.load_pending()
+        if pending:
+            for priority, seq, msg in pending:
+                await self._queue.put((priority, seq, msg))
+            # Update seq counter to avoid collisions
+            if pending:
+                self._seq = max(s for _, s, _ in pending) + 1
+            logger.info("router_replayed_messages", count=len(pending))
 
     async def send(self, message: Message) -> None:
         """
@@ -146,9 +232,12 @@ class MessageRouter:
             return
 
         # (priority, sequence_number, message) — seq prevents Message comparison
+        seq = self._next_seq()
         await self._queue.put(
-            (message.priority.value, self._next_seq(), message)
+            (message.priority.value, seq, message)
         )
+        # Persist before delivery — survives crash
+        await self._persistence.store(message.id, message.priority.value, seq, message)
         self._metrics["enqueued"] += 1
 
     async def start(self) -> None:
@@ -198,6 +287,7 @@ class MessageRouter:
             except asyncio.QueueEmpty:
                 break
 
+        await self._persistence.close()
         logger.info("router_stopped", drained=drain_count)
 
     async def _deliver(self, message: Message) -> None:
@@ -216,6 +306,8 @@ class MessageRouter:
             )
             self._metrics["delivered"] += 1
             self._last_activity[message.target] = time.monotonic()
+            # Remove from persistence after successful delivery
+            await self._persistence.remove(message.id)
 
             if response is not None:
                 await self.send(response)

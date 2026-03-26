@@ -201,9 +201,11 @@ class PersistentConversation:
         if not words:
             return []
 
-        conditions = " AND ".join(f"content LIKE '%{w}%'" for w in words)
+        # Use parameterized LIKE queries to prevent SQL injection
+        conditions = " AND ".join("content LIKE ?" for _ in words)
+        params: list[Any] = [f"%{w}%" for w in words]
+
         sql = f"SELECT sender, content FROM messages WHERE {conditions}"
-        params: list[Any] = []
         if exclude:
             sql += " AND conversation_id != ?"
             params.append(exclude)

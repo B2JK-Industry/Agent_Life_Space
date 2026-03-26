@@ -24,10 +24,30 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
+import re
+
 import orjson
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# Characters that could break prompt structure or inject instructions
+_UNSAFE_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+# Max description length to prevent prompt flooding
+_MAX_DESCRIPTION_LEN = 2000
+
+
+def _sanitize_work_description(description: str) -> str:
+    """Sanitize work item description before injecting into prompt.
+
+    Removes control characters, trims length, and escapes prompt delimiters.
+    """
+    # Strip control characters (keep \n, \r, \t)
+    cleaned = _UNSAFE_PATTERN.sub("", description)
+    # Trim to max length
+    if len(cleaned) > _MAX_DESCRIPTION_LEN:
+        cleaned = cleaned[:_MAX_DESCRIPTION_LEN] + "... (skrátené)"
+    return cleaned.strip()
 
 
 class WorkItem:
@@ -197,10 +217,12 @@ class AgentLoop:
 
         claude_bin = os.path.expanduser("~/.local/bin/claude")
 
+        safe_description = _sanitize_work_description(item.description)
+
         prompt = (
             f"Si John, agent na serveri b2jk-agentlifespace. "
             f"Pracuješ v ~/agent-life-space.\n\n"
-            f"ÚLOHA: {item.description}\n\n"
+            f"ÚLOHA: {safe_description}\n\n"
             f"Urob to a na konci VŽDY napíš stručné zhrnutie čo si urobil. "
             f"Odpovedaj po slovensky."
         )

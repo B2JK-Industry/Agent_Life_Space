@@ -107,6 +107,13 @@ class TelegramHandler:
         text = sanitized
 
         if text.startswith("/"):
+            # SECURITY: Non-owner v skupine nemá prístup k privilegovaným príkazom
+            if getattr(self, "_force_safe_mode", False):
+                _SAFE_COMMANDS = frozenset(["/start", "/help", "/status", "/health"])
+                cmd = text.split()[0].lower().split("@")[0]
+                if cmd not in _SAFE_COMMANDS:
+                    logger.warning("command_blocked_non_owner", command=cmd, sender=self._current_sender)
+                    return f"Príkaz {cmd} je dostupný len pre ownera."
             return await self._handle_command(text)
 
         # SECURITY: V skupinách non-owner nemôže spúšťať programovacie úlohy

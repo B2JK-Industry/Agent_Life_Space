@@ -345,9 +345,12 @@ class LLMRouter:
                 # Synchronous call wrapped for now (will be async with httpx later)
                 import asyncio
 
+                # Use request.model if specified, otherwise default to sonnet (cost-effective)
+                model_id = request.model or "claude-sonnet-4-6"
+
                 response = await asyncio.to_thread(
                     client.messages.create,
-                    model="claude-opus-4-6",
+                    model=model_id,
                     max_tokens=request.max_tokens,
                     temperature=request.temperature,
                     system=system_prompt,

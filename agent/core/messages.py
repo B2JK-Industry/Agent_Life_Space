@@ -241,6 +241,10 @@ class LLMRequest(BaseModel):
         le=1.0,
         description="0.0 for deterministic tasks. Only raise for creative content.",
     )
+    model: str = Field(
+        default="",
+        description="Model ID override. Empty = use router default (respects task→model mapping).",
+    )
     require_json: bool = Field(
         default=True,
         description="Force JSON output mode. Almost always True.",
