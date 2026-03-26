@@ -34,6 +34,78 @@ _RATE_LIMIT = 10  # requests per minute per IP
 _MAX_MESSAGE_LENGTH = 2000
 
 
+class ApiAuditEntry:
+    """Single API request audit record."""
+
+    __slots__ = ("timestamp", "sender", "ip", "intent", "status_code", "duration_ms", "error")
+
+    def __init__(
+        self,
+        sender: str = "",
+        ip: str = "",
+        intent: str = "",
+        status_code: int = 200,
+        duration_ms: int = 0,
+        error: str = "",
+    ) -> None:
+        self.timestamp = time.monotonic()
+        self.sender = sender
+        self.ip = ip
+        self.intent = intent
+        self.status_code = status_code
+        self.duration_ms = duration_ms
+        self.error = error
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sender": self.sender,
+            "ip": self.ip,
+            "intent": self.intent,
+            "status_code": self.status_code,
+            "duration_ms": self.duration_ms,
+            "error": self.error,
+        }
+
+
+class ApiAuditLog:
+    """Ring buffer of API request audit entries."""
+
+    def __init__(self, max_entries: int = 1000) -> None:
+        self._entries: list[ApiAuditEntry] = []
+        self._max = max_entries
+        self._total_requests = 0
+        self._total_errors = 0
+        self._total_rate_limited = 0
+        self._total_auth_failures = 0
+
+    def record(self, entry: ApiAuditEntry) -> None:
+        self._entries.append(entry)
+        self._total_requests += 1
+        if entry.status_code >= 400:
+            self._total_errors += 1
+        if entry.status_code == 429:
+            self._total_rate_limited += 1
+        if entry.status_code == 401:
+            self._total_auth_failures += 1
+        if len(self._entries) > self._max:
+            self._entries.pop(0)
+
+    def get_recent(self, limit: int = 50) -> list[dict[str, Any]]:
+        return [e.to_dict() for e in self._entries[-limit:]]
+
+    def get_stats(self) -> dict[str, Any]:
+        by_sender: dict[str, int] = {}
+        for e in self._entries:
+            by_sender[e.sender] = by_sender.get(e.sender, 0) + 1
+        return {
+            "total_requests": self._total_requests,
+            "total_errors": self._total_errors,
+            "total_rate_limited": self._total_rate_limited,
+            "total_auth_failures": self._total_auth_failures,
+            "by_sender": by_sender,
+        }
+
+
 class AgentAPI:
     """
     HTTP API pre agent-to-agent komunikáciu.
@@ -57,6 +129,15 @@ class AgentAPI:
         self._api_keys: set[str] = set(api_keys or [])
         # Rate limiting
         self._request_times: dict[str, list[float]] = defaultdict(list)
+        # Audit + telemetry
+        self._audit = ApiAuditLog()
+        # Replay protection
+        from agent.social.request_identity import ReplayProtection
+        self._replay = ReplayProtection()
+
+    @property
+    def audit_log(self) -> ApiAuditLog:
+        return self._audit
 
     def add_api_key(self, key: str) -> None:
         """Pridaj autorizovaný API kľúč."""
@@ -97,14 +178,21 @@ class AgentAPI:
 
     async def _handle_message(self, request: web.Request) -> web.Response:
         """POST /api/message — prijmi správu od agenta. Vyžaduje API key."""
+        start = time.monotonic()
+        ip = request.remote or "unknown"
+
         # Auth check
         auth_error = self._check_auth(request)
         if auth_error:
+            self._audit.record(ApiAuditEntry(
+                ip=ip, status_code=401, error=auth_error,
+            ))
             return web.json_response({"error": auth_error}, status=401)
 
-        ip = request.remote or "unknown"
-
         if not self._check_rate_limit(ip):
+            self._audit.record(ApiAuditEntry(
+                ip=ip, status_code=429, error="rate_limited",
+            ))
             return web.json_response(
                 {"error": "Rate limit exceeded (10/min)"}, status=429
             )
@@ -112,6 +200,9 @@ class AgentAPI:
         try:
             data = await request.json()
         except Exception:
+            self._audit.record(ApiAuditEntry(
+                ip=ip, status_code=400, error="invalid_json",
+            ))
             return web.json_response(
                 {"error": "Invalid JSON"}, status=400
             )
@@ -120,7 +211,19 @@ class AgentAPI:
         text = data.get("message", "").strip()
         sender = data.get("sender", "unknown_agent")
         intent = data.get("intent", "")  # optional: "question", "collaboration", "ping"
-        data.get("metadata", {})  # optional: extra context
+        nonce = data.get("nonce", "")  # optional: replay protection
+        req_timestamp = data.get("timestamp", 0.0)
+
+        # Replay protection
+        replay_error = self._replay.check_and_record(nonce, req_timestamp)
+        if replay_error:
+            self._audit.record(ApiAuditEntry(
+                sender=sender, ip=ip, intent=intent,
+                status_code=409, error=replay_error,
+            ))
+            return web.json_response(
+                {"error": replay_error}, status=409
+            )
 
         if not text:
             return web.json_response(
@@ -149,14 +252,24 @@ class AgentAPI:
                         timeout=90,  # 90s max pre agent-to-agent
                     )
                 except TimeoutError:
+                    duration = int((time.monotonic() - start) * 1000)
+                    self._audit.record(ApiAuditEntry(
+                        sender=sender, ip=ip, intent=intent,
+                        status_code=200, duration_ms=duration, error="timeout",
+                    ))
                     logger.warning("agent_api_timeout", sender=sender)
                     return web.json_response({
                         "reply": "Premýšľam príliš dlho. Skús jednoduchšiu otázku.",
                         "agent": "john-b2jk",
                         "sender": sender,
                         "timeout": True,
-                    }, status=200)  # 200 nie 504 — partial response
+                    }, status=200)
 
+                duration = int((time.monotonic() - start) * 1000)
+                self._audit.record(ApiAuditEntry(
+                    sender=sender, ip=ip, intent=intent,
+                    status_code=200, duration_ms=duration,
+                ))
                 return web.json_response({
                     "reply": response,
                     "agent": "john-b2jk",
@@ -164,12 +277,19 @@ class AgentAPI:
                     "intent": intent,
                 })
             else:
+                self._audit.record(ApiAuditEntry(
+                    ip=ip, status_code=503, error="no_handler",
+                ))
                 return web.json_response(
                     {"error": "No handler configured"}, status=503
                 )
         except Exception as e:
+            duration = int((time.monotonic() - start) * 1000)
+            self._audit.record(ApiAuditEntry(
+                sender=sender, ip=ip, intent=intent,
+                status_code=500, duration_ms=duration, error="internal",
+            ))
             logger.error("agent_api_error", error=str(e))
-            # SECURITY: Nevracaj interné detaily chýb
             return web.json_response(
                 {"error": "Internal processing error"}, status=500
             )
