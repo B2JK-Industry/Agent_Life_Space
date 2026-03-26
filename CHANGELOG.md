@@ -4,6 +4,61 @@ All notable changes to Agent Life Space are documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.0.0] — 2026-03-26
+
+### Added
+- **SandboxExecutor** — high-level API: execute_python(), run_tests(), iterate() with auto-fix
+- **Tool use** — 10 tool definitions for LLM function calling (store_memory, query_memory, create_task, list_tasks, run_code, run_tests, web_fetch, check_health, get_status, search_knowledge)
+- **ToolExecutor** — maps tool calls to agent module methods, run_code ALWAYS through sandbox
+- **ToolUseLoop** — multi-turn conversation (LLM calls tools → execute → feed results back)
+- **Channel abstraction** — Channel ABC, IncomingMessage/OutgoingMessage, ChannelRegistry for multi-channel support
+- 44 new tests for tools, providers, channels
+
+## [2.0.0] — 2026-03-26
+
+### Added
+- **Provider-agnostic LLM layer** — ClaudeCliProvider, AnthropicProvider, OpenAiProvider
+- **ModelTier system** — FAST/BALANCED/POWERFUL mapped per provider (Anthropic, OpenAI, local)
+- **RequestContext** — per-request context prevents race conditions between concurrent messages
+- **Per-chat conversation** — buffer + session ID per chat_id (no cross-chat leaking)
+- `AGENT_SANDBOX_ONLY` env var — blocks host file access when set
+- `AGENT_PROJECT_ROOT` env var — configurable project root (no hardcoded paths)
+
+### Changed
+- Inline subprocess calls replaced with provider.generate() in agent_loop and telegram_handler
+- LLMRouter uses request.model instead of hardcoded Opus (cost savings)
+
+### Security
+- Race conditions fixed — shared instance vars replaced with RequestContext dataclass
+- Safe mode check moved before command dispatch (was bypassed on first call)
+- SQL injection fix in persistent_conversation (parameterized LIKE queries)
+- Vault fail-fast when encrypted secrets exist but key is missing
+
+## [1.3.0] — 2026-03-26
+
+### Added
+- Integration tests expanded: 14 → 34 (cross-module, finance lifecycle, consolidation, message priority)
+- GitHub Actions CI (lint + tests + security audit on every push/PR)
+- GitHub community standards (CoC, Contributing, Security policy, issue/PR templates)
+
+## [1.2.0] — 2026-03-26
+
+### Added
+- **test_e2e_effectiveness.py** — 44 tests verifying all modules are wired and used
+- **test_security_audit.py** — 50 automated security audit tests (replaces manual reviews)
+- Safe mode bug fix verified end-to-end
+
+## [1.1.0] — 2026-03-26
+
+### Added
+- Message queue persistence (SQLite) — messages survive crashes, replayed on restart
+- PID lockfile — prevents duplicate agent instances
+
+### Fixed
+- Prompt injection via work description (sanitization added)
+- LLM Router hardcoded model → uses request.model parameter
+- Vault refuses unencrypted storage without key
+
 ## [1.0.0] — 2026-03-25
 
 ### Added

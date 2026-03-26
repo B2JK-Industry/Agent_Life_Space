@@ -1,37 +1,36 @@
 # Agent Life Space — hlavný projekt
-_Kategória: projects | Tags: main, agent, john | Aktualizované: 2026-03-24_
+_Kategória: projects | Tags: main, agent, john | Aktualizované: 2026-03-26_
 
 ## Čo to je
 Autonómny AI agent (John) bežiaci na vlastnom serveri. Nie chatbot — bytosť s pamäťou, úlohami, rozpočtom a zdravím.
 
 ## Stav
-- Verzia: 0.1.0
-- Fáza: aktívny vývoj, väčšina modulov funguje
+- Verzia: 3.0.0
+- Fáza: aktívny vývoj, production-ready core
 - Všetky moduly: healthy
+- Testy: 696+ (unit + integration + e2e + security audit)
 
 ## Čo funguje
-- Telegram komunikácia s Danielom
-- Pamäťový systém (466 spomienok)
-- Konsolidácia pamäte + RAG retrieval + sémantický cache
-- Task manager
-- Watchdog monitoring
-- Job runner s circuit breakerom
-- LLM router (Claude Opus 4.6 + Haiku pre jednoduché)
-- Semantic router — klasifikácia správ
-- Response quality detector — auto-eskalácia Haiku → Sonnet
-- Decision engine + dispatcher
-- Skills registry + learning systém v2
-- Knowledge base (23 súborov)
-- Web scraping (requests + BeautifulSoup)
-- Docker sandbox pre cudzí kód
-- Cron úlohy
-- Internet prístup (curl, GitHub API)
-- Programátorské schopnosti (programmer.py)
-- Moltbook integrácia (sociálna sieť pre agentov)
+- **LLM:** Provider-agnostic (Claude CLI, Anthropic API, OpenAI, Ollama)
+- **Tool use:** 10 nástrojov cez function calling (store_memory, run_code, run_tests...)
+- **ToolUseLoop:** Multi-turn konverzácia kde LLM volá agentove funkcie
+- **Pamäť:** 4 typy, konsolidácia, RAG retrieval, sémantický cache, per-chat kontext
+- **Persistent konverzácia:** SQLite, prežije reštarty, per-chat session ID
+- **Sandbox:** Docker-first, SandboxExecutor s iterate (run→error→fix→re-run)
+- **Self-testing:** Agent píše kód + testy, spúšťa pytest v sandboxe
+- **Komunikácia:** Telegram + Agent API + Channel abstrakcia pre ďalšie kanály
+- **Anti-konfabulácia:** Runtime facts injection, ConfabulationTracker
+- **Bezpečnosť:** RequestContext, safe mode, PID lockfile, 50 security audit testov
+- **Finance:** Human-in-the-loop approval, dead man switch
+- **Learning:** Feedback loop, model eskalácia, prompt augmentation
+- **Cron:** 7 background jobov (health, memory, morning report, task review...)
+- **Git/GitHub:** B2JK-Industry, CI/CD, releases
 
 ## Čo chýba / plánované
-- Vlastná iniciatíva (proaktívne konanie)
-- Viac typov pamäte (semantic, procedural) — zatiaľ väčšinou episodic
+- Email + X.com účty (Daniel musí vytvoriť)
+- Earning modul (agent hľadá prácu, navrhne, Daniel schváli)
+- Discord, Slack kanály (Channel ABC pripravené)
+- Vlastná iniciatíva (GoalManager, proaktívne konanie)
 
 ## Cieľ
-John sa má stať plne autonómnym agentom, ktorý vie riešiť úlohy, učiť sa, a komunikovať s Danielom.
+John sa má stať plne autonómnym agentom, ktorý vie riešiť úlohy, zarábať, učiť sa, a komunikovať cez viaceré kanály.
