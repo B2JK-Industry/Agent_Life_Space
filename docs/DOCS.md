@@ -20,6 +20,7 @@ Tento súbor je len rozcestník. Detailná dokumentácia je na wiki stránkach:
 | [Idea Review and Expansion](./IDEA_REVIEW_AND_EXPANSION_2026_03.md) | Koncept review, rozšírenia, aktuálne nálezy |
 | [Security Model](./SECURITY_MODEL.md) | Bezpečnostný model, execution boundaries, tool policy |
 | [Learning Model](./LEARNING_MODEL.md) | Definícia learning systému, 4 typy, safety rules |
+| [Operator Handbook](./OPERATOR_HANDBOOK.md) | Praktický sprievodca pre vlastníka |
 
 ## Rýchly štart
 
