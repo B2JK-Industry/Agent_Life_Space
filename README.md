@@ -18,7 +18,7 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Tool governance** — capability manifest, policy engine, 4-step action pipeline with audit trail
 - **Workspace persistence** — SQLite-backed workspaces with audit trail, limits, TTL, recovery
 - **Approval queue** — structured propose → approve/deny → execute workflow for risk-sensitive actions
-- **830+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **1063+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -91,7 +91,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 830+ passed, ~19s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1063+ passed, ~19s, $0.00
 ```
 
 | Layer | Tests | What |
