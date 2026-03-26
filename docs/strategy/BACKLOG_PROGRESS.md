@@ -4,7 +4,7 @@ This file tracks current strategic execution progress against
 `MASTER_SOURCE_OF_TRUTH.md` and `THEMES_EPICS_STORIES.md`.
 
 Important:
-- This snapshot is based on reviewer v1 closure pass (post PR #45)
+- This snapshot is based on operator console skeleton closure (post PR #48)
 - Use this file to understand delivery progress, not merge state
 
 Status legend:
@@ -23,7 +23,8 @@ Status legend:
 - Telegram /review routes through ReviewService, not legacy Programmer
 - Platform foundations improved, but canonical system-wide job convergence is
   still open
-- Builder, Operator, External Gateway, and Enterprise Hardening remain future work
+- Operator console has mock-driven skeleton with typed views and CI typecheck
+- Builder, External Gateway remain future work
 
 ## Theme Status
 
@@ -32,11 +33,11 @@ Status legend:
 | T1 Platform Foundation | in_progress | ReviewJob with recovery, artifacts with full payloads, execution mode explicit. Not yet system-canonical. |
 | T2 Reviewer Product | complete_for_phase | Reviewer v1 closed: runtime adapter, recovery, delivery bundle, approval gating, client-safe redaction, verifier, execution mode. LLM analysis is v2 scope. |
 | T3 Builder Product | not_started | No first-class builder slice yet |
-| T4 Operator Product | not_started | No first-class intake/planning/delivery control plane yet |
+| T4 Operator Product | started | Mock-driven TS skeleton: job list, detail, delivery preview, approval queue. Client-safe model surface defined. No live backend. |
 | T5 Security, Governance, And Policy | mostly_complete | Delivery approval strict (no bypass), policy-driven redaction, client-safe export, secret redaction in analyzers |
 | T6 Cost, Usage, And Observability | started | Existing foundations exist; review-specific cost and quality ledgers remain open |
 | T7 External Capability Gateway | not_started | No gateway implementation yet |
-| T8 Enterprise Hardening | in_progress | ADR-001 execution sidecar design. TS operator contracts. Policy-driven redaction. Contract-first boundaries improving. |
+| T8 Enterprise Hardening | in_progress | ADR-001 execution sidecar design. TS operator contracts + skeleton with CI typecheck. Policy-driven redaction. Contract-first boundaries improving. |
 
 ## Epic Snapshot
 
@@ -71,14 +72,14 @@ Status legend:
 |------|--------|-------|
 | T4-E1 Intake And Qualification | not_started | Reviewer intake exists locally, not yet system control-plane intake |
 | T4-E2 Job Planning And Routing | not_started | No `JobPlan` layer yet |
-| T4-E3 Delivery Workflow | not_started | Delivery packaging and approval handoff remain future work |
+| T4-E3 Delivery Workflow | started | Mock-driven operator skeleton: job list/detail views, delivery bundle preview with readiness check, approval queue view. Client-safe model surface defined. No live backend yet. |
 
 ### T5 Security, Governance, And Policy
 
 | Epic | Status | Notes |
 |------|--------|-------|
 | T5-E1 Policy Control Plane | in_progress | Reviewer execution trace now includes execution_policy step with mode/source/access info (T5-E1-S5). Still not unified with tool policy engine. |
-| T5-E2 Approval Model | in_progress | Approval foundations exist, but review delivery approval is not yet wired |
+| T5-E2 Approval Model | mostly_complete | Delivery approval strict (no bypass without DEV_MODE). Operator approval queue view exists in TS skeleton. |
 | T5-E3 Client-Safe And Secret-Safe Output | mostly_complete | get_client_safe_bundle() redacts paths and strips trace. Secret evidence redacted in analyzers. |
 
 ### T6 Cost, Usage, And Observability

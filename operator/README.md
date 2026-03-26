@@ -1,41 +1,71 @@
 # Operator Delivery Console
 
-Contract-first TypeScript foundation for operator-facing review workflow surface.
+Mock-driven operator console skeleton for review workflow.
 
-## Status: Foundation / Mock-driven
+## Status: Skeleton / Mock-driven
 
-This is NOT a production application yet. It is:
-- typed DTO contracts derived from Python reviewer models
-- mock data for development
-- foundation for future live backend integration
+This is a **skeleton** — typed views over mock data. It is NOT a production
+application and has no live backend, no auth, and no deployment.
+
+What exists:
+- TypeScript DTOs mapped from Python reviewer domain
+- Client-safe model surface (fields excluded from external view)
+- Mock-driven view modules: job list, job detail, delivery preview, approval queue
+- Typecheck in CI (catches TS regressions)
 
 ## Structure
 
 ```
 operator/
+  package.json          # TS toolchain
+  tsconfig.json         # Strict TS config
   src/
     models/
-      review.ts       # DTOs: ReviewJobSummary, DeliveryBundleSummary, etc.
+      review.ts         # Full DTOs: ReviewJobSummary, DeliveryBundleSummary, etc.
+      client-safe.ts    # Client-safe subset (no requester, source, evidence, etc.)
     mock/
-      data.ts         # Mock data derived from Python reviewer output
-  MAPPING.md          # Python → TypeScript model mapping
+      data.ts           # Mock data derived from Python reviewer output
+    views/
+      job-list.ts       # List/filter review jobs, stats, client-safe projection
+      job-detail.ts     # Single job with findings breakdown
+      delivery-preview.ts  # Bundle preview, client-safe projection, readiness check
+      approval-queue.ts # Pending approvals, expiry check, queue stats
+    index.ts            # Barrel exports
+  MAPPING.md            # Python → TypeScript field mapping
   README.md
 ```
+
+## Client-Safe Surface
+
+Fields excluded from client-safe models (see `src/models/client-safe.ts`):
+
+| Field | Reason |
+|-------|--------|
+| `requester` | Internal identity |
+| `source` | Internal channel info (telegram/api) |
+| `execution_mode` | Infrastructure detail |
+| `started_at` | Internal performance metric |
+| `error` | May leak paths/stack traces |
+| `evidence` | May contain sensitive code snippets |
+| `proposed_by` | Internal agent identity |
+| `context` | Internal approval metadata |
 
 ## Python → TypeScript Mapping
 
 See [MAPPING.md](MAPPING.md) for detailed field mapping.
 
-## What this enables
+## Development
 
-- Operator can view pending review jobs
-- Operator can preview delivery bundles
-- Operator can see approval queue
-- Operator can inspect review findings
+```bash
+cd operator
+npm install
+npm run typecheck   # strict typecheck
+```
 
-## What this does NOT do yet
+## What this does NOT do
 
 - No live backend connection
+- No UI framework / rendering
 - No authentication
 - No real-time updates
 - No deployment configuration

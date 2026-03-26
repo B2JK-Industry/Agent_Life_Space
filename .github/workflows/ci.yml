@@ -79,6 +79,15 @@ jobs:
             echo "FAIL: Tests did not complete" && exit 1
           fi
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: TypeScript typecheck (operator contracts)
+        run: |
+          cd operator && npm ci && npm run typecheck
+
       - name: Architecture invariants
         run: |
           # No duplicate persona definitions — prompts must come from persona.py
