@@ -144,6 +144,14 @@ class FinanceTracker:
         self._initialized = False
         self._approval_queue = approval_queue  # Optional ApprovalQueue integration
 
+        # Budget policy (optional — provides hard/soft caps)
+        self._budget_policy: Any = None
+        try:
+            from agent.finance.budget_policy import BudgetPolicy
+            self._budget_policy = BudgetPolicy()
+        except ImportError:
+            pass
+
     async def initialize(self) -> None:
         if self._initialized:
             return
@@ -215,6 +223,25 @@ class FinanceTracker:
 
         self._transactions[tx.id] = tx
         await self._persist(tx)
+
+        # Budget policy check (hard cap enforcement)
+        if self._budget_policy is not None:
+            policy_result = self._budget_policy.check(
+                amount=amount_usd,
+                daily_spent=budget_check["daily_spent"],
+                monthly_spent=budget_check.get("monthly_spent", 0),
+            )
+            tx.metadata["budget_policy"] = policy_result.to_dict()
+            if not policy_result.allowed:
+                logger.warning("expense_hard_cap_blocked",
+                               amount=amount_usd, warnings=policy_result.warnings)
+
+        # Risk template validation
+        if category:
+            from agent.finance.risk_templates import validate_against_template
+            template_check = validate_against_template(category, amount_usd)
+            if template_check.get("template_found"):
+                tx.metadata["risk_template"] = template_check
 
         # Wire to approval queue if available
         if self._approval_queue is not None:
