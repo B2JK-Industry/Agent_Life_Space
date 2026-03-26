@@ -13,10 +13,12 @@ Bezpečnosť:
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import structlog
 
+from agent.core.action import ActionEnvelope, ActionLog, ActionPhase
 from agent.core.agent import AgentOrchestrator
 from agent.core.sandbox_executor import SandboxExecutor
 from agent.core.tool_policy import ToolExecutionContext, ToolPolicy
@@ -26,7 +28,13 @@ logger = structlog.get_logger(__name__)
 
 class ToolExecutor:
     """
-    Executes tool calls from LLM. Maps tool names to agent module methods.
+    Executes tool calls from LLM via 4-step pipeline:
+        1. REQUEST  — create ActionEnvelope
+        2. POLICY   — evaluate via ToolPolicy
+        3. EXECUTE  — run handler
+        4. RESULT   — record outcome
+
+    Every step is logged in the ActionLog for auditability.
     """
 
     def __init__(
@@ -38,6 +46,7 @@ class ToolExecutor:
         self._agent = agent
         self._sandbox = sandbox or SandboxExecutor()
         self._policy = policy or ToolPolicy()
+        self._action_log = ActionLog()
         self._handlers: dict[str, Any] = {
             "store_memory": self._store_memory,
             "query_memory": self._query_memory,
@@ -60,18 +69,47 @@ class ToolExecutor:
         tool_input: dict[str, Any],
         context: ToolExecutionContext | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Execute a tool call. Returns result dict."""
+        """
+        Execute a tool call through the 4-step pipeline.
+        Returns result dict.
+        """
         if isinstance(context, dict):
             context = ToolExecutionContext(**context)
+        ctx = context or ToolExecutionContext()
+
+        # ── Step 1: REQUEST ──
+        action = ActionEnvelope(
+            tool_name=tool_name,
+            tool_input=tool_input,
+            is_owner=ctx.is_owner,
+            safe_mode=ctx.safe_mode,
+            channel_type=ctx.channel_type,
+        )
 
         handler = self._handlers.get(tool_name)
         if not handler:
             self._error_count += 1
+            action.phase = ActionPhase.FAILED
+            action.error = f"Unknown tool: {tool_name}"
+            action.completed_at = time.time()
+            self._action_log.record(action)
             return {"error": f"Unknown tool: {tool_name}. Available: {list(self._handlers.keys())}"}
 
+        # ── Step 2: POLICY ──
         decision = self._policy.evaluate(tool_name, context)
+        action.phase = ActionPhase.POLICY_CHECKED
+        action.policy_allowed = decision.allowed
+        action.policy_reason = decision.reason
+        action.policy_risk_level = decision.risk_level.value
+        action.policy_side_effect = decision.side_effect.value
+        action.policy_audit_label = decision.audit_label
+        action.policy_decided_at = time.time()
+
         if not decision.allowed:
             self._blocked_count += 1
+            action.phase = ActionPhase.BLOCKED
+            action.completed_at = time.time()
+            self._action_log.record(action)
             return {
                 "error": decision.reason,
                 "blocked": True,
@@ -80,18 +118,47 @@ class ToolExecutor:
                 "audit_label": decision.audit_label,
             }
 
+        # ── Step 3: EXECUTE ──
+        action.phase = ActionPhase.EXECUTING
+        action.executed_at = time.time()
         try:
             self._call_count += 1
             result = await handler(**tool_input)
             if isinstance(result, dict):
                 result.setdefault("risk_level", decision.risk_level.value)
                 result.setdefault("audit_label", decision.audit_label)
-            logger.info("tool_executed", tool=tool_name, audit_label=decision.audit_label, success=True)
+
+            # ── Step 4: RESULT ──
+            action.phase = ActionPhase.COMPLETED
+            action.result = result if isinstance(result, dict) else {"value": str(result)}
+            action.completed_at = time.time()
+            action.duration_ms = int((action.completed_at - action.executed_at) * 1000)
+            self._action_log.record(action)
+
+            logger.info("tool_executed",
+                        tool=tool_name,
+                        audit_label=decision.audit_label,
+                        action_id=action.id,
+                        duration_ms=action.duration_ms,
+                        success=True)
             return result
         except Exception as e:
             self._error_count += 1
-            logger.error("tool_error", tool=tool_name, error=str(e))
+            action.phase = ActionPhase.FAILED
+            action.error = str(e)
+            action.completed_at = time.time()
+            action.duration_ms = int((action.completed_at - action.executed_at) * 1000)
+            self._action_log.record(action)
+
+            logger.error("tool_error",
+                         tool=tool_name,
+                         action_id=action.id,
+                         error=str(e))
             return {"error": f"Tool '{tool_name}' failed: {e!s}"}
+
+    @property
+    def action_log(self) -> ActionLog:
+        return self._action_log
 
     def get_stats(self) -> dict[str, int]:
         return {
