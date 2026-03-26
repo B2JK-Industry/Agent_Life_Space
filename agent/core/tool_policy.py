@@ -168,6 +168,7 @@ class DenialCode(str, Enum):
     OWNER_ONLY = "owner_only"         # Requires owner context
     UNKNOWN_TOOL = "unknown_tool"     # Tool not in manifest
     APPROVAL_REQUIRED = "approval_required"  # Needs explicit approval
+    RESTRICTED_CHANNEL = "restricted_channel"  # Channel does not allow this tool
 
 
 @dataclass(frozen=True)
@@ -274,7 +275,7 @@ class ToolPolicy:
                     f"Tool '{tool_name}' blocked on restricted channel '{ctx.channel_type}'. "
                     "Use private channel for this operation."
                 ),
-                denial_code=DenialCode.SAFE_MODE,
+                denial_code=DenialCode.RESTRICTED_CHANNEL,
                 timestamp=ts,
             )
             self._audit.record(decision, tool_name, ctx)
@@ -311,6 +312,23 @@ class ToolPolicy:
                     "external actions or code execution."
                 ),
                 denial_code=DenialCode.OWNER_ONLY,
+                timestamp=ts,
+            )
+            self._audit.record(decision, tool_name, ctx)
+            self._log_decision(decision, tool_name, ctx)
+            return decision
+
+        # Approval check — tools with ALWAYS approval block without explicit approval
+        if cap.approval == ApprovalRequirement.ALWAYS:
+            decision = ToolPolicyDecision(
+                allowed=False,
+                risk_level=cap.risk_level,
+                side_effect=cap.side_effect,
+                audit_label=cap.audit_label,
+                reason=(
+                    f"Tool '{tool_name}' requires explicit approval before execution."
+                ),
+                denial_code=DenialCode.APPROVAL_REQUIRED,
                 timestamp=ts,
             )
             self._audit.record(decision, tool_name, ctx)
@@ -383,16 +401,20 @@ class ToolPolicy:
         restricted_channels = {"agent_api", "webhook", "public"}
         if ctx.channel_type in restricted_channels and cap.safe_mode_blocked:
             would_allow = False
-            denial_code = "restricted_channel"
+            denial_code = DenialCode.RESTRICTED_CHANNEL.value
             denial_reason = f"Blocked on restricted channel '{ctx.channel_type}'"
         elif ctx.safe_mode and cap.safe_mode_blocked:
             would_allow = False
-            denial_code = "safe_mode"
+            denial_code = DenialCode.SAFE_MODE.value
             denial_reason = "Blocked in safe mode"
         elif not ctx.is_owner and cap.owner_only:
             would_allow = False
-            denial_code = "owner_only"
+            denial_code = DenialCode.OWNER_ONLY.value
             denial_reason = "Owner-only tool"
+        elif cap.approval == ApprovalRequirement.ALWAYS:
+            would_allow = False
+            denial_code = DenialCode.APPROVAL_REQUIRED.value
+            denial_reason = "Requires explicit approval"
 
         return {
             "tool": tool_name,

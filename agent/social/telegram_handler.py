@@ -1192,7 +1192,7 @@ class TelegramHandler:
 
             from agent.brain.skills import SkillRegistry
 
-            base = str(Path.home() / "agent-life-space")
+            base = os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / "agent-life-space"))
             registry = SkillRegistry(f"{base}/agent/brain/skills.json")
 
             reply_lower = reply.lower()

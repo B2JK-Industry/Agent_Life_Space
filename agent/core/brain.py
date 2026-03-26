@@ -92,14 +92,14 @@ class AgentBrain:
         Process an incoming message from any channel.
         Returns response text.
 
-        Full pipeline:
+        Pipeline (layers 1-4 can early-return, layers 5-9 always run together):
             1. Work queue (multi-task)
             2. Internal dispatch
-            3. Semantic cache
-            4. RAG retrieval
+            3. Semantic cache (early return on hit)
+            4. RAG retrieval (early return on direct hit)
             5. Classification + learning escalation
-            6. LLM call
-            7. Quality escalation
+            6. LLM call (channel-enforced)
+            7. Quality escalation (preserves execution mode)
             8. Learning feedback
             9. Channel policy + explanation
         """
@@ -107,10 +107,18 @@ class AgentBrain:
             from agent.core.status import AgentState
             self._status.transition(AgentState.THINKING, f"processing from {message.channel_type}")
 
+        try:
+            return await self._process_inner(message)
+        finally:
+            # ALWAYS reset status to IDLE — no stuck states
+            if self._status:
+                from agent.core.status import AgentState
+                self._status.transition(AgentState.IDLE, "process complete")
+
+    async def _process_inner(self, message: IncomingMessage) -> str:
+        """Inner processing — separated so try/finally in process() always resets status."""
         text = message.text.strip()
         if not text:
-            if self._status:
-                self._status.transition(AgentState.IDLE, "empty message")
             return "Prázdna správa."
 
         # Per-chat conversation
@@ -181,6 +189,14 @@ class AgentBrain:
         if message.is_group and not message.is_owner and task_type == "programming":
             task_type = "chat"
             model = get_model(task_type)
+
+        # Channel enforcement for CLI path — restricted channels block file access
+        # regardless of task_type (prevents API callers from getting host access)
+        restricted_channels = {"agent_api", "webhook", "public"}
+        cli_allow_file_access = (
+            task_type == "programming"
+            and message.channel_type not in restricted_channels
+        )
 
         # Learning-based model escalation
         learner = self._get_learner()
@@ -265,6 +281,7 @@ class AgentBrain:
         usage_cost = 0.0
         usage_input_tokens = 0
         usage_output_tokens = 0
+        used_tool_loop = False
 
         # API backend: use ToolUseLoop (multi-turn with function calling)
         if backend == "api" and provider.supports_tools() and hasattr(self, "_tool_executor") and self._tool_executor:
@@ -294,18 +311,20 @@ class AgentBrain:
             usage_cost = loop_result.total_cost
             usage_input_tokens = loop_result.total_input_tokens
             usage_output_tokens = loop_result.total_output_tokens
+            used_tool_loop = bool(loop_result.tool_calls)
 
-            if loop_result.tool_calls:
+            if used_tool_loop:
                 logger.info("brain_tool_use", tools_called=len(loop_result.tool_calls),
                             turns=loop_result.turns)
         else:
             # CLI backend or no tools: direct generate
+            # Channel enforcement: restricted channels never get file access
             response = await provider.generate(GenerateRequest(
                 messages=[{"role": "user", "content": prompt}],
                 model=model.model_id,
                 timeout=model.timeout,
                 max_turns=model.max_turns,
-                allow_file_access=task_type == "programming",
+                allow_file_access=cli_allow_file_access,
                 cwd=project_root,
             ))
 
@@ -322,10 +341,14 @@ class AgentBrain:
             usage_output_tokens = response.output_tokens
 
         # ── Layer 7: Post-routing quality escalation ──
+        # If original used tool loop, escalation must also use tool loop
+        # to preserve tool context (not fall back to single-shot generate)
         try:
             from agent.core.response_quality import assess_quality
             quality = assess_quality(text, reply, model.model_id)
-            if quality.should_escalate:
+            if quality.should_escalate and not used_tool_loop:
+                # Only escalate single-shot responses; tool-loop results
+                # already have rich context and re-running would lose it
                 logger.info("post_routing_escalation",
                             from_model=model.model_id,
                             score=quality.score,
@@ -336,6 +359,7 @@ class AgentBrain:
                     model=SONNET.model_id,
                     timeout=SONNET.timeout,
                     max_turns=SONNET.max_turns,
+                    allow_file_access=cli_allow_file_access,
                     cwd=project_root,
                 ))
                 if esc_response.success and esc_response.text:
@@ -458,10 +482,6 @@ class AgentBrain:
             f"⬆{usage_input_tokens:,} ⬇{usage_output_tokens:,} tokens_"
         )
 
-        if self._status:
-            from agent.core.status import AgentState
-            self._status.transition(AgentState.IDLE, "response sent")
-
         return reply
 
     # ─────────────────────────────────────────────
@@ -510,8 +530,11 @@ class AgentBrain:
 
             from agent.brain.skills import SkillRegistry
 
-            base = str(Path.home() / "agent-life-space")
-            registry = SkillRegistry(f"{base}/agent/brain/skills.json")
+            project_dir = os.environ.get(
+                "AGENT_PROJECT_ROOT",
+                str(self._agent._data_dir.parent) if hasattr(self._agent, "_data_dir") else str(Path.home() / "agent-life-space"),
+            )
+            registry = SkillRegistry(f"{project_dir}/agent/brain/skills.json")
             reply_lower = reply.lower()
 
             skill_signals = {
