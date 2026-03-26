@@ -147,18 +147,21 @@ class ClaudeCliProvider(LLMProvider):
     async def generate(self, request: GenerateRequest) -> GenerateResponse:
         start = time.monotonic()
 
-        # SECURITY: Warn if file access without sandbox enforcement
+        # SECURITY: Host file access is blocked by default.
+        # Only allowed when AGENT_SANDBOX_ONLY=0 is explicitly set AND allow_file_access=True.
         if request.allow_file_access:
-            sandbox_only = os.environ.get("AGENT_SANDBOX_ONLY", "0") == "1"
-            if sandbox_only:
+            sandbox_only = os.environ.get("AGENT_SANDBOX_ONLY", "1")  # Default: sandbox only
+            if sandbox_only != "0":
                 return GenerateResponse(
-                    error="AGENT_SANDBOX_ONLY=1: file access requires Docker sandbox. "
-                          "CLI --dangerously-skip-permissions is disabled.",
+                    error="Host file access is blocked by default. "
+                          "Set AGENT_SANDBOX_ONLY=0 to explicitly allow CLI host access. "
+                          "Prefer Docker sandbox for code execution.",
                     success=False,
                     model=request.model,
                 )
-            logger.info("cli_file_access_granted",
-                        hint="CLI runs on host FS. Set AGENT_SANDBOX_ONLY=1 to enforce Docker.")
+            logger.warning("cli_host_file_access",
+                           hint="CLI running on host FS with --dangerously-skip-permissions. "
+                                "This bypasses sandbox isolation.")
 
         # Build prompt from messages
         prompt = self._build_prompt(request)

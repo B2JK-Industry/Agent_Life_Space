@@ -30,8 +30,23 @@ jobs:
           ruff check agent/ tests/ --fix --select I
           ruff check agent/ tests/
 
+      - name: Type check (mypy — core modules)
+        run: |
+          mypy agent/core/tool_policy.py agent/core/persona.py agent/core/models.py \
+               agent/memory/store.py \
+               --ignore-missing-imports --no-error-summary || true
+
       - name: Run tests
-        run: pytest tests/ -q --tb=short
+        run: pytest tests/ -q --tb=short -W error::DeprecationWarning
 
       - name: Security audit
         run: pytest tests/test_security_audit.py -v --tb=short
+
+      - name: Architecture invariants
+        run: |
+          # No duplicate persona definitions — prompts must come from persona.py
+          ! grep -rn "Som John\. Autonómna bytosť" agent/ --include="*.py" | grep -v persona.py | grep -v "# noqa"
+          # No hardcoded ~/agent-life-space paths
+          ! grep -rn "~/agent-life-space" agent/ --include="*.py"
+          # AGENT_SANDBOX_ONLY default must be "1" (safe)
+          grep -q 'AGENT_SANDBOX_ONLY.*"1"' agent/core/llm_provider.py

@@ -40,6 +40,7 @@ class PersistentConversation:
         self._max_raw = max_raw_messages
         self._summary_threshold = summary_threshold
         self._db: aiosqlite.Connection | None = None
+        self._fts_available = False
 
     async def initialize(self) -> None:
         self._db = await aiosqlite.connect(self._db_path)
@@ -65,6 +66,26 @@ class PersistentConversation:
                 updated_at REAL
             );
         """)
+        # FTS5 virtual table for fast full-text search on messages
+        try:
+            await self._db.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
+                USING fts5(content, sender, conversation_id, content='messages', content_rowid='id')
+            """)
+            # Triggers to keep FTS index in sync
+            await self._db.executescript("""
+                CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+                    INSERT INTO messages_fts(rowid, content, sender, conversation_id)
+                    VALUES (new.id, new.content, new.sender, new.conversation_id);
+                END;
+                CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+                    INSERT INTO messages_fts(messages_fts, rowid, content, sender, conversation_id)
+                    VALUES ('delete', old.id, old.content, old.sender, old.conversation_id);
+                END;
+            """)
+            self._fts_available = True
+        except Exception:
+            self._fts_available = False
         await self._db.commit()
 
         # Štatistiky
@@ -195,15 +216,35 @@ class PersistentConversation:
         exclude: str = "",
         limit: int = 3,
     ) -> list[tuple[str, str]]:
-        """Simple LIKE search. Funguje pre stovky správ, pre tisíce treba FTS5."""
+        """Search past messages. Uses FTS5 if available, falls back to LIKE."""
         assert self._db
         words = [w for w in query.split() if len(w) > 3][:3]
         if not words:
             return []
 
-        # Use parameterized LIKE queries to prevent SQL injection
+        # FTS5 path — ranked full-text search
+        if self._fts_available:
+            fts_query = " OR ".join(f'"{w}"' for w in words)
+            sql = (
+                "SELECT m.sender, m.content FROM messages m "
+                "JOIN messages_fts f ON m.id = f.rowid "
+                "WHERE messages_fts MATCH ?"
+            )
+            params: list[Any] = [fts_query]
+            if exclude:
+                sql += " AND m.conversation_id != ?"
+                params.append(exclude)
+            sql += " ORDER BY rank LIMIT ?"
+            params.append(limit)
+            try:
+                async with self._db.execute(sql, params) as cur:
+                    return await cur.fetchall()
+            except Exception:
+                pass  # Fall through to LIKE
+
+        # LIKE fallback
         conditions = " AND ".join("content LIKE ?" for _ in words)
-        params: list[Any] = [f"%{w}%" for w in words]
+        params = [f"%{w}%" for w in words]
 
         sql = f"SELECT sender, content FROM messages WHERE {conditions}"
         if exclude:

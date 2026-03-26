@@ -18,8 +18,8 @@ from typing import Any
 import structlog
 
 from agent.core.agent import AgentOrchestrator
-from agent.core.tool_policy import ToolExecutionContext, ToolPolicy
 from agent.core.sandbox_executor import SandboxExecutor
+from agent.core.tool_policy import ToolExecutionContext, ToolPolicy
 
 logger = structlog.get_logger(__name__)
 
@@ -72,16 +72,12 @@ class ToolExecutor:
         decision = self._policy.evaluate(tool_name, context)
         if not decision.allowed:
             self._blocked_count += 1
-            logger.warning(
-                "tool_blocked",
-                tool=tool_name,
-                risk_level=decision.risk_level.value,
-                reason=decision.reason,
-            )
             return {
                 "error": decision.reason,
                 "blocked": True,
                 "risk_level": decision.risk_level.value,
+                "side_effect": decision.side_effect.value,
+                "audit_label": decision.audit_label,
             }
 
         try:
@@ -89,7 +85,8 @@ class ToolExecutor:
             result = await handler(**tool_input)
             if isinstance(result, dict):
                 result.setdefault("risk_level", decision.risk_level.value)
-            logger.info("tool_executed", tool=tool_name, success=True)
+                result.setdefault("audit_label", decision.audit_label)
+            logger.info("tool_executed", tool=tool_name, audit_label=decision.audit_label, success=True)
             return result
         except Exception as e:
             self._error_count += 1

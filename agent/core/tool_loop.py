@@ -23,8 +23,8 @@ from typing import Any
 import structlog
 
 from agent.core.llm_provider import GenerateRequest, LLMProvider
-from agent.core.tool_policy import ToolExecutionContext
 from agent.core.tool_executor import ToolExecutor
+from agent.core.tool_policy import ToolExecutionContext
 from agent.core.tools import AGENT_TOOLS
 
 logger = structlog.get_logger(__name__)

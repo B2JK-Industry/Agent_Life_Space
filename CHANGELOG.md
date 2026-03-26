@@ -8,6 +8,30 @@ This project follows [Semantic Versioning](https://semver.org/):
 - MINOR (1.x.0) — nové features, spätne kompatibilné
 - MAJOR (x.0.0) — breaking changes (len so schválením)
 
+## [Unreleased]
+
+### Added
+- **Memory provenance model** — epistemic status (observed/user_asserted/inferred/verified/stale) for all memory entries
+- **Memory expiry** — entries can have expires_at, auto-mark stale
+- **FTS5 retrieval** — full-text search for conversation memory (replaces LIKE)
+- **Tool capability manifest** — risk_level, side_effect_class, owner_only, approval, audit_label per tool
+- **Policy audit trail** — ring buffer of all policy decisions, queryable
+- **Workspace persistence** — SQLite-backed workspace lifecycle, audit trail, recovery after restart
+- **Centralized persona** — agent/core/persona.py, single source of truth for prompts
+- **Explainable routing** — classify_task_detailed returns signal breakdown
+- **Routing eval tests** — parametrized test suite for classification quality
+- **CI architecture invariants** — automated checks for persona duplication, hardcoded paths, sandbox default
+
+### Changed
+- **Host file access blocked by default** — AGENT_SANDBOX_ONLY default changed from "0" to "1"
+- **Routing scoring** — multi-signal with explicit weights instead of implicit thresholds
+- **Tool policy** — capability-driven decisions instead of flat risk bucket
+- **CI** — added mypy type check step, DeprecationWarning as error
+
+### Security
+- Host filesystem access via CLI now requires explicit AGENT_SANDBOX_ONLY=0
+- All tool executions logged with audit_label for traceability
+
 ## [1.0.0] — 2026-03-26
 
 First stable release. Všetko od 0.1-beta po predchádzajúce dev verzie zjednotené.

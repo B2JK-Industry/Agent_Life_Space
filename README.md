@@ -9,14 +9,15 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **7-layer cascade** — 5 layers of local processing before calling LLM (saves API calls)
 - **Docker sandbox** — `/sandbox` code runs in isolated containers (256MB, no network, read-only FS)
 - **Encrypted vault** — API keys, wallet keys (ETH/BTC) encrypted with Fernet AES-128
-- **Memory** — 4 types (episodic, semantic, procedural, working), consolidation, decay
-- **Persistent conversation** — SQLite-backed context, survives restarts
+- **Epistemic memory** — 4 types + provenance model (observed/asserted/inferred/verified/stale), expiry, decay
+- **Persistent conversation** — SQLite-backed context with FTS5 full-text search, survives restarts
 - **Agent-to-Agent API** — HTTP endpoint for inter-agent communication
 - **Learning system** — skill outcome tracking, model escalation, prompt augmentation
 - **Multi-provider LLM** — Claude CLI, Anthropic API, OpenAI, Ollama (any backend)
 - **Automated security** — 50-test security audit suite replaces manual reviews
-- **Tool policy gate** — deterministic authorization layer between tool requests and execution
-- **708+ tests** — unit + integration + e2e + security audit, $0.00 token cost
+- **Tool governance** — capability manifest, policy engine, audit trail for all tool decisions
+- **Workspace persistence** — SQLite-backed workspaces with audit trail, recovery after restart
+- **769+ tests** — unit + integration + e2e + security + routing evals, $0.00 token cost
 
 ## Quick Start
 
@@ -87,7 +88,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 708 passed, ~21s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 769 passed, ~19s, $0.00
 ```
 
 | Layer | Tests | What |
