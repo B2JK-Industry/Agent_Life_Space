@@ -704,6 +704,18 @@ class TestBuildService:
 
         assert VerificationKind.TYPECHECK in steps
 
+    def test_get_verification_steps_skips_typecheck_without_markers(self, service):
+        temp_repo = tempfile.mkdtemp()
+        (Path(temp_repo) / "app.py").write_text("def main():\n    return 1\n")
+        (Path(temp_repo) / "tests").mkdir()
+        (Path(temp_repo) / "tests" / "test_app.py").write_text("def test_ok():\n    assert True\n")
+
+        steps = service._get_verification_steps(temp_repo)
+
+        assert VerificationKind.TEST in steps
+        assert VerificationKind.LINT in steps
+        assert VerificationKind.TYPECHECK not in steps
+
     async def test_build_records_capability_id(self, service, monkeypatch):
         monkeypatch.setattr(
             "agent.build.service.run_verification_suite",
@@ -834,6 +846,111 @@ class TestBuildService:
         assert job.post_build_review_verdict == "fail"
         assert "critical findings" in job.error.lower()
         assert "finding_list" in [artifact.artifact_kind.value for artifact in job.artifacts]
+
+    async def test_post_build_review_high_or_critical_policy_blocks_high_findings(
+        self, workspace_manager, monkeypatch
+    ):
+        from agent.build.service import BuildService
+        from agent.build.storage import BuildStorage
+
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                )
+            ],
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        flagged_review = ReviewJob()
+        flagged_review.report = ReviewReport(
+            executive_summary="High-risk finding present.",
+            verdict="pass_with_findings",
+            findings=[
+                ReviewFinding(
+                    severity=Severity.HIGH,
+                    title="High issue",
+                )
+            ],
+        )
+
+        review_service = self._FakeReviewService(flagged_review)
+        service = BuildService(
+            storage=BuildStorage(db_path=db_path),
+            workspace_manager=workspace_manager,
+            review_service=review_service,
+        )
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Ship integration change",
+            acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
+            run_post_build_review=True,
+            review_gate_policy_id="high_or_critical",
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.BLOCKED
+        assert "high findings exceed policy" in job.error.lower()
+
+    async def test_post_build_review_advisory_policy_keeps_completion_open(
+        self, workspace_manager, monkeypatch
+    ):
+        from agent.build.service import BuildService
+        from agent.build.storage import BuildStorage
+
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                )
+            ],
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        advisory_review = ReviewJob()
+        advisory_review.report = ReviewReport(
+            executive_summary="Critical finding present.",
+            verdict="fail",
+            findings=[
+                ReviewFinding(
+                    severity=Severity.CRITICAL,
+                    title="Critical issue",
+                )
+            ],
+        )
+
+        review_service = self._FakeReviewService(advisory_review)
+        service = BuildService(
+            storage=BuildStorage(db_path=db_path),
+            workspace_manager=workspace_manager,
+            review_service=review_service,
+        )
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Ship advisory-only change",
+            acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
+            run_post_build_review=True,
+            review_gate_policy_id="advisory",
+            block_on_review_failure=False,
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.COMPLETED
+        assert job.post_build_review_verdict == "fail"
 
     async def test_resume_build_reruns_failed_verification(
         self, service, workspace_manager, monkeypatch

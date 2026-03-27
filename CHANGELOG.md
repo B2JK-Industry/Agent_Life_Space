@@ -10,6 +10,38 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-03-27
+
+Durable planning and delivery lifecycle release.
+
+### Operator / Control Plane
+- `JobPlan` preview/submit output is now persisted as a first-class handoff
+  record with stable plan IDs and orchestrator/CLI list/get surfaces
+- Planning decisions now emit durable control-plane traces for qualification,
+  budget, capability, delivery, verification discovery, and review-gate policy
+- Workspace records are now queryable as shared joins over jobs, artifacts,
+  approvals, and delivery bundles
+- Operator report now includes recent plans, traces, deliveries, and workspace
+  records in addition to jobs, approvals, and artifacts
+
+### Builder
+- Builder verification now performs repo-aware discovery for test, lint, and
+  typecheck surfaces before running the workspace verification suite
+- Post-build review thresholds are now governed by deterministic review-gate
+  policies instead of one hard-coded block rule
+- Build delivery now records persisted lifecycle state and audit events across
+  prepare, approval request, approval refresh, rejection, and handoff
+- CLI now exposes shared control-plane list/get surfaces for plans, traces,
+  workspaces, deliveries, and explicit build delivery handoff
+
+### Governance
+- Delivery approval context now includes deterministic delivery-policy identity
+- Builder planning and delivery metadata now surface explicit policy choices
+  instead of hiding them behind service-only defaults
+
+### Verification
+- Local release verification passed with `1260 passed, 4 skipped`
+
 ## [1.4.5] — 2026-03-27
 
 Builder delivery package and operator health release.

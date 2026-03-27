@@ -339,6 +339,132 @@ async def list_artifacts_command(
     await agent.stop()
 
 
+async def list_plans_command(
+    *,
+    data_dir: str = "agent",
+    status: str = "",
+    limit: int = 20,
+) -> None:
+    """List persisted operator plan records."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    plans = agent.list_operator_plans(status=status, limit=limit)
+    print(orjson.dumps(plans, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def show_plan_command(*, data_dir: str = "agent", plan_id: str) -> None:
+    """Show one persisted operator plan record."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    plan = agent.get_operator_plan(plan_id)
+    result = plan or {"error": f"Plan not found: {plan_id}"}
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def list_traces_command(
+    *,
+    data_dir: str = "agent",
+    trace_kind: str = "",
+    plan_id: str = "",
+    job_id: str = "",
+    workspace_id: str = "",
+    bundle_id: str = "",
+    limit: int = 50,
+) -> None:
+    """List persisted control-plane trace records."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    traces = agent.list_execution_traces(
+        trace_kind=trace_kind,
+        plan_id=plan_id,
+        job_id=job_id,
+        workspace_id=workspace_id,
+        bundle_id=bundle_id,
+        limit=limit,
+    )
+    print(orjson.dumps(traces, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def list_workspaces_command(
+    *,
+    data_dir: str = "agent",
+    status: str = "",
+    limit: int = 20,
+) -> None:
+    """List workspace records through the control-plane query surface."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    records = agent.list_workspace_records(status=status, limit=limit)
+    print(orjson.dumps(records, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def show_workspace_command(
+    *,
+    data_dir: str = "agent",
+    workspace_id: str,
+) -> None:
+    """Show one workspace record with linked jobs, artifacts, approvals, and bundles."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    record = agent.get_workspace_record(workspace_id)
+    result = record or {"error": f"Workspace not found: {workspace_id}"}
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def list_deliveries_command(
+    *,
+    data_dir: str = "agent",
+    status: str = "",
+    job_id: str = "",
+    workspace_id: str = "",
+    limit: int = 20,
+) -> None:
+    """List persisted delivery lifecycle records."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    deliveries = agent.list_delivery_records(
+        status=status,
+        job_id=job_id,
+        workspace_id=workspace_id,
+        limit=limit,
+    )
+    print(orjson.dumps(deliveries, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def handoff_build_delivery_command(
+    *,
+    data_dir: str = "agent",
+    job_id: str,
+    note: str = "",
+) -> None:
+    """Mark a build delivery package as handed off."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    result = agent.mark_build_delivery_handed_off(job_id, note=note)
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
 async def show_artifact_command(
     *,
     data_dir: str = "agent",
@@ -477,6 +603,133 @@ def main() -> None:
         "--report",
         action="store_true",
         help="Show operator report/inbox snapshot and exit",
+    )
+    parser.add_argument(
+        "--list-plans",
+        action="store_true",
+        help="List persisted operator plan records and exit",
+    )
+    parser.add_argument(
+        "--plan-id",
+        default="",
+        help="Show one persisted operator plan record by id and exit",
+    )
+    parser.add_argument(
+        "--plan-status",
+        default="",
+        choices=["", "preview", "submitted", "blocked", "executing", "completed"],
+        help="Optional status filter for --list-plans",
+    )
+    parser.add_argument(
+        "--plan-limit",
+        default=20,
+        type=int,
+        help="Limit for --list-plans (default: 20)",
+    )
+    parser.add_argument(
+        "--list-traces",
+        action="store_true",
+        help="List persisted control-plane traces and exit",
+    )
+    parser.add_argument(
+        "--trace-kind",
+        default="",
+        choices=[
+            "",
+            "qualification",
+            "budget",
+            "capability",
+            "delivery",
+            "review_policy",
+            "verification_discovery",
+            "execution",
+        ],
+        help="Optional kind filter for --list-traces",
+    )
+    parser.add_argument(
+        "--trace-plan-id",
+        default="",
+        help="Optional plan id filter for --list-traces",
+    )
+    parser.add_argument(
+        "--trace-job-id",
+        default="",
+        help="Optional job id filter for --list-traces",
+    )
+    parser.add_argument(
+        "--trace-workspace-id",
+        default="",
+        help="Optional workspace id filter for --list-traces",
+    )
+    parser.add_argument(
+        "--trace-bundle-id",
+        default="",
+        help="Optional bundle id filter for --list-traces",
+    )
+    parser.add_argument(
+        "--trace-limit",
+        default=50,
+        type=int,
+        help="Limit for --list-traces (default: 50)",
+    )
+    parser.add_argument(
+        "--list-workspaces",
+        action="store_true",
+        help="List workspace records through the control-plane query surface and exit",
+    )
+    parser.add_argument(
+        "--workspace-id",
+        default="",
+        help="Show one workspace record by id and exit",
+    )
+    parser.add_argument(
+        "--workspace-status",
+        default="",
+        choices=["", "created", "active", "completed", "failed", "cleaned"],
+        help="Optional status filter for --list-workspaces",
+    )
+    parser.add_argument(
+        "--workspace-limit",
+        default=20,
+        type=int,
+        help="Limit for --list-workspaces (default: 20)",
+    )
+    parser.add_argument(
+        "--list-deliveries",
+        action="store_true",
+        help="List persisted delivery lifecycle records and exit",
+    )
+    parser.add_argument(
+        "--delivery-status",
+        default="",
+        choices=["", "prepared", "awaiting_approval", "approved", "rejected", "handed_off"],
+        help="Optional status filter for --list-deliveries",
+    )
+    parser.add_argument(
+        "--delivery-job-id",
+        default="",
+        help="Optional job id filter for --list-deliveries",
+    )
+    parser.add_argument(
+        "--delivery-workspace-id",
+        default="",
+        help="Optional workspace id filter for --list-deliveries",
+    )
+    parser.add_argument(
+        "--delivery-limit",
+        default=20,
+        type=int,
+        help="Limit for --list-deliveries (default: 20)",
+    )
+    parser.add_argument(
+        "--handoff-build-delivery",
+        default="",
+        help="Mark the build delivery for this job id as handed off and exit",
+    )
+    parser.add_argument(
+        "--handoff-note",
+        default="",
+        help="Optional note for --handoff-build-delivery",
     )
     parser.add_argument(
         "--runtime-model",
@@ -630,6 +883,61 @@ def main() -> None:
         asyncio.run(show_health(args.data_dir))
     elif args.report:
         asyncio.run(show_operator_report(args.data_dir))
+    elif args.list_plans:
+        asyncio.run(
+            list_plans_command(
+                data_dir=args.data_dir,
+                status=args.plan_status,
+                limit=args.plan_limit,
+            )
+        )
+    elif args.plan_id:
+        asyncio.run(show_plan_command(data_dir=args.data_dir, plan_id=args.plan_id))
+    elif args.list_traces:
+        asyncio.run(
+            list_traces_command(
+                data_dir=args.data_dir,
+                trace_kind=args.trace_kind,
+                plan_id=args.trace_plan_id,
+                job_id=args.trace_job_id,
+                workspace_id=args.trace_workspace_id,
+                bundle_id=args.trace_bundle_id,
+                limit=args.trace_limit,
+            )
+        )
+    elif args.list_workspaces:
+        asyncio.run(
+            list_workspaces_command(
+                data_dir=args.data_dir,
+                status=args.workspace_status,
+                limit=args.workspace_limit,
+            )
+        )
+    elif args.workspace_id:
+        asyncio.run(
+            show_workspace_command(
+                data_dir=args.data_dir,
+                workspace_id=args.workspace_id,
+            )
+        )
+    elif args.list_deliveries:
+        asyncio.run(
+            list_deliveries_command(
+                data_dir=args.data_dir,
+                status=args.delivery_status,
+                job_id=args.delivery_job_id,
+                workspace_id=args.delivery_workspace_id,
+                limit=args.delivery_limit,
+            )
+        )
+    elif args.handoff_build_delivery:
+        asyncio.run(
+            handoff_build_delivery_command(
+                data_dir=args.data_dir,
+                job_id=args.handoff_build_delivery,
+                note=args.handoff_note,
+            )
+        )
     elif args.runtime_model:
         asyncio.run(show_runtime_model(args.data_dir))
     elif args.artifact_id:

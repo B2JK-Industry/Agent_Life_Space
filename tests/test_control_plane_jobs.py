@@ -452,6 +452,105 @@ class TestOrchestratorEntryPoints:
 
         await agent.stop()
 
+    @pytest.mark.asyncio
+    async def test_preview_persists_plan_record_and_traces(self, tmp_path):
+        from agent.core.agent import AgentOrchestrator
+
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        (repo_dir / "app.py").write_text("def main():\n    return 1\n")
+
+        agent = AgentOrchestrator(data_dir=str(tmp_path / "agent"), watchdog_interval=60.0)
+        await agent.initialize()
+
+        preview = agent.preview_operator_intake(
+            OperatorIntake(
+                repo_path=str(repo_dir),
+                work_type="build",
+                description="Implement endpoint",
+                acceptance_criteria=["Tests pass"],
+            )
+        )
+
+        assert preview["accepted"] is True
+        assert preview["plan_record"]["status"] == "preview"
+        assert preview["plan_traces"]
+        persisted = agent.get_operator_plan(preview["plan_record"]["plan_id"])
+        traces = agent.list_execution_traces(
+            plan_id=preview["plan_record"]["plan_id"],
+            limit=10,
+        )
+
+        assert persisted is not None
+        assert persisted["plan"]["title"].startswith("Build plan:")
+        assert {trace["trace_kind"] for trace in traces} >= {
+            "qualification",
+            "budget",
+            "capability",
+            "delivery",
+        }
+
+        await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_workspace_and_delivery_queries_link_runtime_records(
+        self, tmp_path, monkeypatch
+    ):
+        from agent.core.agent import AgentOrchestrator
+
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        (repo_dir / "app.py").write_text("def main():\n    return 1\n")
+        (repo_dir / "tests").mkdir()
+        (repo_dir / "tests" / "test_app.py").write_text("def test_ok():\n    assert True\n")
+
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [],
+        )
+
+        agent = AgentOrchestrator(data_dir=str(tmp_path / "agent"), watchdog_interval=60.0)
+        agent.workspaces._root = tmp_path / "workspaces"
+        agent.workspaces._db_path = str(tmp_path / "workspaces" / "workspaces.db")
+        await agent.initialize()
+
+        build_job = await agent.run_build_job(
+            BuildIntake(
+                repo_path=str(repo_dir),
+                description="Prepare delivery package",
+                acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
+            )
+        )
+        bundle = agent.get_build_delivery_bundle(build_job.id)
+        approval = agent.request_build_delivery_approval(build_job.id)
+        delivery = agent.get_build_delivery_record(build_job.id)
+        workspace = agent.get_workspace_record(build_job.workspace_id)
+
+        assert bundle is not None
+        assert delivery is not None
+        assert delivery["status"] == "awaiting_approval"
+        assert workspace is not None
+        assert build_job.id in workspace["job_ids"]
+        assert approval["approval_request_id"] in workspace["approval_ids"]
+        assert bundle["bundle_id"] in workspace["bundle_ids"]
+        assert workspace["artifact_ids"]
+
+        agent.approval_queue.approve(approval["approval_request_id"])
+        approved = agent.get_build_delivery_record(build_job.id)
+        handed_off = agent.mark_build_delivery_handed_off(
+            build_job.id,
+            note="Sent to operator",
+        )
+        report = agent.get_operator_report(limit=10)
+
+        assert approved is not None
+        assert approved["status"] == "approved"
+        assert handed_off["status"] == "handed_off"
+        assert report["recent_deliveries"]
+        assert report["recent_workspace_records"]
+
+        await agent.stop()
+
 
 class TestUnifiedOperatorIntake:
     def test_qualification_routes_diff_to_review(self):

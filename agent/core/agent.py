@@ -36,9 +36,12 @@ from agent.brain.decision_engine import DecisionEngine
 from agent.control.artifact_queries import ArtifactQueryService
 from agent.control.intake import OperatorIntakeService, OperatorWorkType
 from agent.control.job_queries import JobQueryService
-from agent.control.models import JobKind
+from agent.control.models import JobKind, PlanRecordStatus
 from agent.control.reporting import OperatorReportService
 from agent.control.runtime_model import RuntimeModelService
+from agent.control.state import ControlPlaneStateService
+from agent.control.storage import ControlPlaneStorage
+from agent.control.workspace_queries import WorkspaceQueryService
 from agent.core.approval import ApprovalQueue
 from agent.core.approval_storage import ApprovalStorage
 from agent.core.job_runner import JobConfig, JobRunner
@@ -109,6 +112,11 @@ class AgentOrchestrator:
         )
         self.workspaces = WorkspaceManager()
         self.agent_loop: Any = None
+        self.control_plane = ControlPlaneStateService(
+            storage=ControlPlaneStorage(
+                db_path=str(self._data_dir / "control" / "control.db")
+            )
+        )
 
         # Review service
         from agent.review.service import ReviewService
@@ -131,6 +139,7 @@ class AgentOrchestrator:
             workspace_manager=self.workspaces,
             review_service=self.review,
             approval_queue=self.approval_queue,
+            control_plane_state=self.control_plane,
         )
         self.jobs = JobQueryService(
             build_service=self.build,
@@ -147,12 +156,21 @@ class AgentOrchestrator:
             budget_status_provider=self.finance.check_budget,
         )
         self.runtime_model = RuntimeModelService()
+        self.workspace_queries = WorkspaceQueryService(
+            workspace_manager=self.workspaces,
+            build_service=self.build,
+            review_service=self.review,
+            approval_queue=self.approval_queue,
+            control_plane_state=self.control_plane,
+        )
         self.reporting = OperatorReportService(
             job_queries=self.jobs,
             artifact_queries=self.artifacts,
             approval_queue=self.approval_queue,
             operator_controls=self.operator_controls,
             status_provider=self.get_status,
+            control_plane_state=self.control_plane,
+            workspace_queries=self.workspace_queries,
         )
 
         # Background tasks
@@ -173,6 +191,7 @@ class AgentOrchestrator:
         (self._data_dir / "logs").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "approval").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "build").mkdir(parents=True, exist_ok=True)
+        (self._data_dir / "control").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "review").mkdir(parents=True, exist_ok=True)
 
         # Initialize persistent stores
@@ -183,6 +202,7 @@ class AgentOrchestrator:
         self.workspaces.initialize()
         self.build.initialize()
         self.review.initialize()
+        self.control_plane.initialize()
 
         # Register message handlers
         self.router.register_handler(ModuleID.BRAIN, self._handle_brain_message)
@@ -487,7 +507,23 @@ class AgentOrchestrator:
 
     def preview_operator_intake(self, intake: Any) -> dict[str, Any]:
         """Return qualification plus planner output for unified intake."""
-        return self.intake_router.preview(intake)
+        qualification = self.intake_router.qualify(intake)
+        plan = self.intake_router.create_plan(intake, qualification=qualification)
+        status = "preview" if qualification.supported else "blocked"
+        record = self.control_plane.record_plan(
+            intake=intake.to_dict(),
+            qualification=qualification.to_dict(),
+            plan=plan.to_dict(),
+            status=self._plan_status(status),
+        )
+        traces = self.control_plane.capture_plan_traces(record)
+        return {
+            "accepted": qualification.supported,
+            "qualification": qualification.to_dict(),
+            "plan": plan.to_dict(),
+            "plan_record": record.to_dict(),
+            "plan_traces": [trace.to_dict() for trace in traces],
+        }
 
     async def submit_operator_intake(self, intake: Any) -> dict[str, Any]:
         """Route unified operator intake into review/build runtime flows."""
@@ -501,12 +537,28 @@ class AgentOrchestrator:
             "qualification": qualification.to_dict(),
             "plan": plan.to_dict(),
         }
+        plan_record = self.control_plane.record_plan(
+            intake=intake.to_dict(),
+            qualification=qualification.to_dict(),
+            plan=plan.to_dict(),
+            status=self._plan_status(
+                "submitted" if qualification.supported else "blocked"
+            ),
+        )
+        traces = self.control_plane.capture_plan_traces(plan_record)
+        result["plan_record"] = plan_record.to_dict()
+        result["plan_traces"] = [trace.to_dict() for trace in traces]
         if not qualification.supported:
             result["error"] = "; ".join(qualification.blockers)
             return result
 
         if qualification.resolved_work_type == OperatorWorkType.BUILD:
             job = await self.run_build_job(self.intake_router.to_build_intake(intake))
+            self.control_plane.update_plan_status(
+                plan_record.plan_id,
+                status=self._plan_status("completed"),
+                linked_job_id=job.id,
+            )
             result.update(
                 {
                     "job_id": job.id,
@@ -517,6 +569,11 @@ class AgentOrchestrator:
             return result
 
         job = await self.run_review_job(self.intake_router.to_review_intake(intake))
+        self.control_plane.update_plan_status(
+            plan_record.plan_id,
+            status=self._plan_status("completed"),
+            linked_job_id=job.id,
+        )
         result.update(
             {
                 "job_id": job.id,
@@ -525,6 +582,89 @@ class AgentOrchestrator:
             }
         )
         return result
+
+    def list_operator_plans(
+        self,
+        *,
+        status: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List persisted planner handoff records."""
+        return [
+            record.to_dict()
+            for record in self.control_plane.list_plans(status=status, limit=limit)
+        ]
+
+    def get_operator_plan(self, plan_id: str) -> dict[str, Any] | None:
+        """Load one persisted planner handoff record."""
+        record = self.control_plane.get_plan(plan_id)
+        if record is None:
+            return None
+        return record.to_dict()
+
+    def list_execution_traces(
+        self,
+        *,
+        trace_kind: str = "",
+        plan_id: str = "",
+        job_id: str = "",
+        workspace_id: str = "",
+        bundle_id: str = "",
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """List shared control-plane trace records."""
+        return [
+            record.to_dict()
+            for record in self.control_plane.list_traces(
+                trace_kind=trace_kind,
+                plan_id=plan_id,
+                job_id=job_id,
+                workspace_id=workspace_id,
+                bundle_id=bundle_id,
+                limit=limit,
+            )
+        ]
+
+    def list_workspace_records(
+        self,
+        *,
+        status: str = "",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """List workspace records through the shared query surface."""
+        return [
+            record.to_dict()
+            for record in self.workspace_queries.list_workspaces(
+                status=status,
+                limit=limit,
+            )
+        ]
+
+    def get_workspace_record(self, workspace_id: str) -> dict[str, Any] | None:
+        """Load one workspace record with linked job/artifact/approval/bundle joins."""
+        record = self.workspace_queries.get_workspace(workspace_id)
+        if record is None:
+            return None
+        return record.to_dict()
+
+    def list_delivery_records(
+        self,
+        *,
+        status: str = "",
+        job_id: str = "",
+        workspace_id: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List persisted delivery lifecycle records."""
+        return [
+            record.to_dict()
+            for record in self.control_plane.list_deliveries(
+                status=status,
+                job_id=job_id,
+                workspace_id=workspace_id,
+                limit=limit,
+            )
+        ]
 
     def list_approval_requests(
         self,
@@ -552,9 +692,22 @@ class AgentOrchestrator:
         """Return a builder delivery package preview."""
         return self.build.get_delivery_bundle(job_id)
 
+    def get_build_delivery_record(self, job_id: str) -> dict[str, Any] | None:
+        """Return persisted delivery lifecycle state for a build package."""
+        return self.build.get_delivery_record(job_id)
+
     def request_build_delivery_approval(self, job_id: str) -> dict[str, Any]:
         """Request approval for external delivery of a build package."""
         return self.build.request_delivery_approval(job_id)
+
+    def mark_build_delivery_handed_off(
+        self,
+        job_id: str,
+        *,
+        note: str = "",
+    ) -> dict[str, Any]:
+        """Mark a build delivery package as handed off after approval."""
+        return self.build.mark_delivery_handed_off(job_id, note=note)
 
     def list_product_jobs(
         self,
@@ -634,6 +787,7 @@ class AgentOrchestrator:
                 reverse=True,
             )[:10]
         ]
+        control_stats = self.control_plane.get_stats()
         return {
             "running": self._running,
             "memory": self.memory.get_stats(),
@@ -658,9 +812,12 @@ class AgentOrchestrator:
                     "patch",
                     "diff",
                     "verification_report",
-                    "acceptance_report",
-                    "execution_trace",
+                "acceptance_report",
+                "execution_trace",
                 ],
+                "persisted_plans": control_stats["plans"],
+                "persisted_traces": control_stats["traces"],
+                "persisted_deliveries": control_stats["deliveries"],
                 "operator_intake_work_types": ["auto", "review", "build"],
                 "runtime_model_status": self.runtime_model.get_model()["status"],
             },
@@ -673,3 +830,6 @@ class AgentOrchestrator:
             "watchdog": self.watchdog.get_stats(),
             "router": self.router.get_metrics(),
         }
+
+    def _plan_status(self, value: str) -> PlanRecordStatus:
+        return PlanRecordStatus(value)

@@ -45,7 +45,19 @@ from agent.build.models import (
 )
 from agent.build.storage import BuildStorage
 from agent.build.verification import run_verification_suite
-from agent.control.models import DeliveryPackage, ExecutionMode, JobStatus
+from agent.control.models import (
+    DeliveryLifecycleStatus,
+    DeliveryPackage,
+    ExecutionMode,
+    JobStatus,
+    TraceRecordKind,
+)
+from agent.control.policy import (
+    get_delivery_policy,
+    get_review_gate_policy,
+    list_delivery_policies,
+    list_review_gate_policies,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -65,11 +77,13 @@ class BuildService:
         workspace_manager: Any = None,
         review_service: Any = None,
         approval_queue: Any = None,
+        control_plane_state: Any = None,
     ) -> None:
         self._storage = storage or BuildStorage()
         self._workspace_manager = workspace_manager
         self._review_service = review_service
         self._approval_queue = approval_queue
+        self._control_plane_state = control_plane_state
         self._initialized = False
 
     def initialize(self) -> None:
@@ -290,9 +304,21 @@ class BuildService:
         else:
             t_verify = job.trace("verify")
 
-            verification_steps = self._get_verification_steps(
+            verification_plan = self._discover_verification_plan(
                 workspace_path=workspace_path,
                 capability_id=job.capability_id,
+            )
+            verification_steps = verification_plan["steps"]
+            self._record_control_trace(
+                trace_kind=TraceRecordKind.VERIFICATION_DISCOVERY,
+                title="Verification discovery",
+                detail=(
+                    "Discovered verification steps: "
+                    + ", ".join(step.value for step in verification_steps)
+                ),
+                job_id=job.id,
+                workspace_id=job.workspace_id,
+                metadata=verification_plan,
             )
             results = run_verification_suite(
                 workspace_path=workspace_path,
@@ -349,10 +375,7 @@ class BuildService:
                     "verdict": review_job.report.verdict,
                     "finding_counts": review_job.report.finding_counts,
                     "executive_summary": review_job.report.executive_summary,
-                    "blocking": bool(
-                        job.intake.block_on_review_failure
-                        and review_job.report.verdict == "fail"
-                    ),
+                    "review_gate_policy_id": self._review_gate_policy(job).id,
                 },
                 format="json",
             )
@@ -372,18 +395,32 @@ class BuildService:
                 job.artifacts.append(findings_artifact)
                 self._storage.save_artifact(findings_artifact)
 
-            if (
-                job.intake.block_on_review_failure
-                and review_job.report.verdict == "fail"
-            ):
+            blocked_by_policy, block_reason = self._apply_review_gate_policy(job)
+            review_artifact.content_json["blocking"] = blocked_by_policy
+            review_artifact.content_json["blocking_reason"] = block_reason
+            self._storage.save_artifact(review_artifact)
+            self._record_control_trace(
+                trace_kind=TraceRecordKind.REVIEW_POLICY,
+                title="Post-build review gate policy",
+                detail=block_reason,
+                job_id=job.id,
+                workspace_id=job.workspace_id,
+                metadata={
+                    "policy_id": self._review_gate_policy(job).id,
+                    "verdict": review_job.report.verdict,
+                    "finding_counts": review_job.report.finding_counts,
+                    "blocked": blocked_by_policy,
+                },
+            )
+
+            if blocked_by_policy:
                 job.status = JobStatus.BLOCKED
-                job.error = (
-                    "Post-build review blocked completion: "
-                    f"{review_job.report.finding_counts.get('critical', 0)} critical findings"
-                )
+                job.error = block_reason
                 t_review.fail(job.error)
             else:
-                t_review.complete(f"review verdict={review_job.report.verdict}")
+                t_review.complete(
+                    f"review verdict={review_job.report.verdict}; policy={self._review_gate_policy(job).id}"
+                )
             self._record_checkpoint(
                 job,
                 BuildCheckpointPhase.REVIEWED,
@@ -480,39 +517,171 @@ class BuildService:
         self._workspace_manager.record_file(job.workspace_id, str(marker))
         return True
 
+    def _discover_verification_plan(
+        self,
+        workspace_path: str,
+        capability_id: str = "",
+    ) -> dict[str, Any]:
+        """Determine which verification steps to run and why."""
+        wp = Path(workspace_path)
+        capability = next(
+            (item for item in list_capabilities() if item.id == capability_id),
+            None,
+        )
+        default_steps = (
+            list(capability.verification_defaults)
+            if capability is not None
+            else [VerificationKind.TEST, VerificationKind.LINT]
+        )
+        step_details: dict[str, list[str]] = {
+            VerificationKind.TEST.value: [],
+            VerificationKind.LINT.value: [],
+            VerificationKind.TYPECHECK.value: [],
+        }
+
+        tests_markers = [
+            "tests/",
+            "pytest.ini",
+            "tox.ini",
+            "noxfile.py",
+        ]
+        lint_markers = [
+            "pyproject.toml",
+            "ruff.toml",
+            ".ruff.toml",
+            ".flake8",
+            "eslint.config.js",
+            ".eslintrc",
+        ]
+        typecheck_markers = [
+            "mypy.ini",
+            ".mypy.ini",
+            "pyrightconfig.json",
+            "tsconfig.json",
+            "setup.cfg",
+        ]
+
+        steps: list[VerificationKind] = []
+
+        if VerificationKind.TEST in default_steps and self._has_test_surface(wp):
+            steps.append(VerificationKind.TEST)
+            step_details[VerificationKind.TEST.value] = [
+                marker
+                for marker in tests_markers
+                if self._workspace_has_marker(wp, marker)
+            ] or ["test-like files present"]
+
+        if VerificationKind.LINT in default_steps and self._has_lint_surface(wp):
+            steps.append(VerificationKind.LINT)
+            step_details[VerificationKind.LINT.value] = [
+                marker
+                for marker in lint_markers
+                if self._workspace_has_marker(wp, marker)
+            ] or ["source files present"]
+
+        if self._has_typecheck_surface(wp):
+            steps.append(VerificationKind.TYPECHECK)
+            step_details[VerificationKind.TYPECHECK.value] = [
+                marker
+                for marker in typecheck_markers
+                if self._workspace_has_marker(wp, marker)
+            ] or ["typed source files present"]
+
+        deduped: list[VerificationKind] = []
+        for step in steps:
+            if step not in deduped:
+                deduped.append(step)
+
+        if not deduped and default_steps:
+            deduped.append(default_steps[0])
+            step_details[default_steps[0].value] = ["default capability fallback"]
+
+        return {
+            "steps": deduped,
+            "capability_id": capability_id,
+            "default_steps": [step.value for step in default_steps],
+            "step_details": step_details,
+        }
+
     def _get_verification_steps(
         self,
         workspace_path: str,
         capability_id: str = "",
     ) -> list[VerificationKind]:
-        """Determine which verification steps to run."""
-        steps = [VerificationKind.TEST, VerificationKind.LINT]
-        if capability_id:
-            capability = next(
-                (item for item in list_capabilities() if item.id == capability_id),
-                None,
-            )
-            if capability is not None:
-                steps = [step for step in capability.verification_defaults if step != VerificationKind.TYPECHECK]
-                if VerificationKind.TYPECHECK not in steps:
-                    steps.append(VerificationKind.TYPECHECK)
-        wp = Path(workspace_path)
-        typecheck_markers = (
+        """Backward-compatible wrapper over verification discovery."""
+        return self._discover_verification_plan(
+            workspace_path=workspace_path,
+            capability_id=capability_id,
+        )["steps"]
+
+    def _workspace_has_marker(self, workspace_path: Path, marker: str) -> bool:
+        candidate = workspace_path / marker
+        if marker.endswith("/"):
+            return candidate.is_dir()
+        return candidate.exists()
+
+    def _has_test_surface(self, workspace_path: Path) -> bool:
+        if self._workspace_has_marker(workspace_path, "tests/"):
+            return True
+        return self._workspace_has_glob(
+            workspace_path,
+            ("test_*.py", "*_test.py", "*.spec.ts", "*.test.ts", "*.test.js"),
+        )
+
+    def _has_lint_surface(self, workspace_path: Path) -> bool:
+        markers = (
             "pyproject.toml",
+            "ruff.toml",
+            ".ruff.toml",
+            ".flake8",
+            "eslint.config.js",
+            ".eslintrc",
+        )
+        if any(self._workspace_has_marker(workspace_path, marker) for marker in markers):
+            return True
+        return self._workspace_has_glob(
+            workspace_path,
+            ("*.py", "*.ts", "*.tsx", "*.js", "*.jsx"),
+        )
+
+    def _has_typecheck_surface(self, workspace_path: Path) -> bool:
+        markers = (
             "mypy.ini",
             ".mypy.ini",
-            "setup.cfg",
+            "pyrightconfig.json",
+            "tsconfig.json",
         )
-        if any((wp / marker).exists() for marker in typecheck_markers):
-            if VerificationKind.TYPECHECK not in steps:
-                steps.append(VerificationKind.TYPECHECK)
-        else:
-            steps = [step for step in steps if step != VerificationKind.TYPECHECK]
-        deduped: list[VerificationKind] = []
-        for step in steps:
-            if step not in deduped:
-                deduped.append(step)
-        return deduped
+        if any(self._workspace_has_marker(workspace_path, marker) for marker in markers):
+            return True
+        if self._file_contains(
+            workspace_path / "pyproject.toml",
+            ("[tool.mypy]", "mypy", "pyright"),
+        ):
+            return True
+        return self._file_contains(
+            workspace_path / "setup.cfg",
+            ("[mypy]", "mypy", "pyright"),
+        )
+
+    def _workspace_has_glob(
+        self,
+        workspace_path: Path,
+        patterns: tuple[str, ...],
+    ) -> bool:
+        for pattern in patterns:
+            if next(workspace_path.rglob(pattern), None) is not None:
+                return True
+        return False
+
+    def _file_contains(self, path: Path, needles: tuple[str, ...]) -> bool:
+        if not path.exists() or not path.is_file():
+            return False
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception:
+            return False
+        normalized = content.casefold()
+        return any(needle.casefold() in normalized for needle in needles)
 
     def _evaluate_acceptance(
         self,
@@ -682,6 +851,65 @@ class BuildService:
         kind: VerificationKind,
     ):
         return next((result for result in job.verification_results if result.kind == kind), None)
+
+    def _review_gate_policy(self, job: BuildJob):
+        policy_id = job.intake.review_gate_policy_id or "critical_findings"
+        if not job.intake.block_on_review_failure and policy_id == "critical_findings":
+            policy_id = "advisory"
+        return get_review_gate_policy(policy_id)
+
+    def _apply_review_gate_policy(self, job: BuildJob) -> tuple[bool, str]:
+        policy = self._review_gate_policy(job)
+        counts = job.post_build_review_findings
+        critical = counts.get("critical", 0)
+        high = counts.get("high", 0)
+        verdict = job.post_build_review_verdict or "unknown"
+
+        if policy.advisory_only:
+            return False, f"Review gate policy {policy.id} recorded findings without blocking completion"
+        if policy.block_fail_verdict and verdict == "fail":
+            return True, (
+                "Post-build review blocked completion: "
+                f"{critical} critical findings; verdict={verdict}; "
+                f"high={high}; policy={policy.id}"
+            )
+        if critical > policy.max_critical:
+            return True, (
+                "Post-build review blocked completion: "
+                f"{critical} critical findings exceed policy {policy.id}"
+            )
+        if high > policy.max_high:
+            return True, (
+                "Post-build review blocked completion: "
+                f"{high} high findings exceed policy {policy.id}"
+            )
+        return False, (
+            f"Review gate passed under policy {policy.id}: "
+            f"verdict={verdict}; critical={critical}; high={high}"
+        )
+
+    def _record_control_trace(
+        self,
+        *,
+        trace_kind: TraceRecordKind,
+        title: str,
+        detail: str,
+        job_id: str = "",
+        workspace_id: str = "",
+        bundle_id: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if self._control_plane_state is None:
+            return
+        self._control_plane_state.record_trace(
+            trace_kind=trace_kind,
+            title=title,
+            detail=detail,
+            job_id=job_id,
+            workspace_id=workspace_id,
+            bundle_id=bundle_id,
+            metadata=metadata or {},
+        )
 
     def _evaluate_verification_backed_criterion(
         self,
@@ -1290,6 +1518,12 @@ class BuildService:
                 "error": job.error,
             },
         )
+        self._sync_delivery_record(
+            bundle=package,
+            status=DeliveryLifecycleStatus.PREPARED,
+            event_type="prepared",
+            detail="Build delivery package assembled",
+        )
         return package.to_dict()
 
     def request_delivery_approval(self, job_id: str) -> dict[str, Any]:
@@ -1327,6 +1561,7 @@ class BuildService:
 
         from agent.core.approval import ApprovalCategory
 
+        delivery_policy = get_delivery_policy(job.intake.delivery_policy_id)
         req = self._approval_queue.propose(
             category=ApprovalCategory.EXTERNAL,
             description=f"Deliver build package for job {job_id[:8]} ({job.build_type.value})",
@@ -1343,7 +1578,32 @@ class BuildService:
                 "artifact_ids": bundle["artifact_ids"],
                 "requester": job.requester,
                 "capability_id": job.capability_id,
+                "delivery_policy_id": delivery_policy.id,
             },
+        )
+        self._sync_delivery_record(
+            bundle=DeliveryPackage(
+                bundle_id=bundle["bundle_id"],
+                job_id=job.id,
+                job_kind=job.job_kind,
+                package_type=bundle["package_type"],
+                title=bundle["title"],
+                status=job.status.value,
+                requester=job.requester,
+                workspace_id=job.workspace_id,
+                artifact_ids=list(bundle["artifact_ids"]),
+                artifact_count=bundle["artifact_count"],
+                delivery_ready=False,
+                created_at=bundle["created_at"],
+                completed_at=bundle["completed_at"],
+                summary=dict(bundle["summary"]),
+                payload=dict(bundle["payload"]),
+            ),
+            status=DeliveryLifecycleStatus.AWAITING_APPROVAL,
+            event_type="approval_requested",
+            detail=f"Approval requested under delivery policy {delivery_policy.id}",
+            approval_request_id=req.id,
+            metadata={"delivery_policy_id": delivery_policy.id},
         )
         logger.info(
             "build_delivery_approval_requested",
@@ -1359,8 +1619,79 @@ class BuildService:
             "delivery_ready": False,
         }
 
+    def get_delivery_record(self, job_id: str) -> dict[str, Any] | None:
+        """Return persisted delivery lifecycle state for a build job."""
+        bundle_id = self._delivery_bundle_id(job_id)
+        record = self._refresh_delivery_record(bundle_id)
+        if record is None:
+            return None
+        return record.to_dict()
+
+    def mark_delivery_handed_off(self, job_id: str, *, note: str = "") -> dict[str, Any]:
+        """Record final handoff after approval."""
+        bundle_id = self._delivery_bundle_id(job_id)
+        record = self._refresh_delivery_record(bundle_id)
+        if record is None:
+            return {"error": f"Delivery record not found for job '{job_id}'"}
+        if record.status not in {
+            DeliveryLifecycleStatus.APPROVED,
+            DeliveryLifecycleStatus.HANDED_OFF,
+        }:
+            return {
+                "error": (
+                    f"Delivery record '{bundle_id}' is {record.status.value}, "
+                    "not approved for handoff"
+                ),
+                "bundle_id": bundle_id,
+            }
+        if (
+            self._approval_queue is not None
+            and record.approval_request_id
+        ):
+            self._approval_queue.mark_executed(record.approval_request_id)
+        record = self._control_plane_state.mark_delivery_handed_off(
+            bundle_id,
+            detail=note or f"Build delivery for job {job_id[:8]} handed off",
+        ) if self._control_plane_state is not None else record
+        if record is None:
+            return {"error": f"Delivery record not found for bundle '{bundle_id}'"}
+        return record.to_dict()
+
     def _delivery_bundle_id(self, job_id: str) -> str:
         return f"build-delivery-{job_id}"
+
+    def _sync_delivery_record(
+        self,
+        *,
+        bundle: DeliveryPackage,
+        status: DeliveryLifecycleStatus,
+        event_type: str,
+        detail: str,
+        approval_request_id: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if self._control_plane_state is None:
+            return
+        self._control_plane_state.record_delivery_bundle(
+            bundle=bundle,
+            status=status,
+            event_type=event_type,
+            detail=detail,
+            approval_request_id=approval_request_id,
+            metadata=metadata or {},
+        )
+
+    def _refresh_delivery_record(self, bundle_id: str):
+        if self._control_plane_state is None:
+            return None
+        return self._control_plane_state.refresh_delivery_status(
+            bundle_id,
+            approval_lookup=(
+                self._approval_queue.get_request
+                if self._approval_queue is not None
+                else None
+            ),
+        )
 
     # ── Query methods ──
 
@@ -1407,5 +1738,11 @@ class BuildService:
             "initialized": self._initialized,
             "approval_queue_configured": self._approval_queue is not None,
             "capabilities": [capability.id for capability in list_capabilities()],
+            "review_gate_policies": [
+                policy.id for policy in list_review_gate_policies()
+            ],
+            "delivery_policies": [
+                policy.id for policy in list_delivery_policies()
+            ],
             **stats,
         }

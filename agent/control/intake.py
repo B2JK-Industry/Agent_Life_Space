@@ -14,6 +14,7 @@ from typing import Any
 
 from agent.build.capabilities import get_capability
 from agent.build.models import AcceptanceCriterion, BuildIntake, BuildJobType
+from agent.control.policy import get_delivery_policy, get_review_gate_policy
 from agent.finance.budget_policy import BudgetPolicy
 from agent.review.models import ReviewIntake, ReviewJobType
 
@@ -387,6 +388,8 @@ class OperatorIntakeService:
     def to_build_intake(self, intake: OperatorIntake) -> BuildIntake:
         self._normalize_intake_enums(intake)
         build_capability = self._build_phase_capability(intake)
+        review_gate_policy = self._build_review_gate_policy(intake)
+        delivery_policy = self._build_delivery_policy(intake)
         return BuildIntake(
             repo_path=intake.repo_path,
             build_type=intake.build_type,
@@ -398,6 +401,9 @@ class OperatorIntakeService:
                 for item in intake.acceptance_criteria
             ],
             run_post_build_review=intake.run_post_build_review,
+            block_on_review_failure=not review_gate_policy.advisory_only,
+            review_gate_policy_id=review_gate_policy.id,
+            delivery_policy_id=delivery_policy.id,
             requester=intake.requester,
             context=intake.context,
         )
@@ -946,6 +952,7 @@ class OperatorIntakeService:
                 )
             )
             if intake.run_post_build_review:
+                review_policy = self._build_review_gate_policy(intake)
                 assignments.append(
                     JobPlanCapability(
                         phase=PlanPhase.REVIEW,
@@ -957,13 +964,34 @@ class OperatorIntakeService:
                         ),
                     )
                 )
+                assignments.append(
+                    JobPlanCapability(
+                        phase=PlanPhase.REVIEW,
+                        capability_id=review_policy.id,
+                        label="Review Gate Policy",
+                        source="policy_profile",
+                        reason=(
+                            "Build completion is gated by a deterministic review threshold policy."
+                        ),
+                        metadata={
+                            "policy_id": review_policy.id,
+                            "description": review_policy.description,
+                        },
+                    )
+                )
+            delivery_policy = self._build_delivery_policy(intake)
             assignments.append(
                 JobPlanCapability(
                     phase=PlanPhase.DELIVER,
-                    capability_id="artifact_recovery_bundle_v1",
-                    label="Artifact Recovery Bundle",
-                    source="planner_profile",
-                    reason="Build output should be queryable and recovery-safe for operator handoff.",
+                    capability_id=delivery_policy.id,
+                    label="Delivery Policy",
+                    source="policy_profile",
+                    reason="Build delivery should remain approval-gated and queryable for operator handoff.",
+                    metadata={
+                        "approval_required": delivery_policy.approval_required,
+                        "allow_external_send": delivery_policy.allow_external_send,
+                        "gateway_required": delivery_policy.gateway_required,
+                    },
                 )
             )
             return assignments
@@ -1019,6 +1047,16 @@ class OperatorIntakeService:
                 ],
             },
         )
+
+    def _build_review_gate_policy(self, intake: OperatorIntake):
+        if not intake.run_post_build_review:
+            return get_review_gate_policy("advisory")
+        if intake.build_type in {BuildJobType.INTEGRATION, BuildJobType.DEVOPS}:
+            return get_review_gate_policy("high_or_critical")
+        return get_review_gate_policy("critical_findings")
+
+    def _build_delivery_policy(self, intake: OperatorIntake):
+        return get_delivery_policy("approval_required")
 
     def _capability_ids_by_phase(
         self,

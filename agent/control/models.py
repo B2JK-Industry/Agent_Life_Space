@@ -301,6 +301,289 @@ class DeliveryPackage:
 
 
 # ─────────────────────────────────────────────
+# Planner State — durable operator handoff
+# ─────────────────────────────────────────────
+
+class PlanRecordStatus(str, Enum):
+    """Lifecycle state for persisted planner output."""
+
+    PREVIEW = "preview"
+    SUBMITTED = "submitted"
+    BLOCKED = "blocked"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+
+
+@dataclass
+class JobPlanRecord:
+    """Persisted planner output for operator handoff and recovery."""
+
+    plan_id: str
+    status: PlanRecordStatus = PlanRecordStatus.PREVIEW
+    title: str = ""
+    resolved_work_type: str = ""
+    requester: str = ""
+    repo_path: str = ""
+    git_url: str = ""
+    linked_job_id: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    intake: dict[str, Any] = field(default_factory=dict)
+    qualification: dict[str, Any] = field(default_factory=dict)
+    plan: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "plan_id": self.plan_id,
+            "status": self.status.value,
+            "title": self.title,
+            "resolved_work_type": self.resolved_work_type,
+            "requester": self.requester,
+            "repo_path": self.repo_path,
+            "git_url": self.git_url,
+            "linked_job_id": self.linked_job_id,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "intake": self.intake,
+            "qualification": self.qualification,
+            "plan": self.plan,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> JobPlanRecord:
+        return cls(
+            plan_id=data.get("plan_id", ""),
+            status=PlanRecordStatus(data.get("status", "preview")),
+            title=data.get("title", ""),
+            resolved_work_type=data.get("resolved_work_type", ""),
+            requester=data.get("requester", ""),
+            repo_path=data.get("repo_path", ""),
+            git_url=data.get("git_url", ""),
+            linked_job_id=data.get("linked_job_id", ""),
+            created_at=data.get("created_at", ""),
+            updated_at=data.get("updated_at", ""),
+            intake=data.get("intake", {}),
+            qualification=data.get("qualification", {}),
+            plan=data.get("plan", {}),
+        )
+
+
+class TraceRecordKind(str, Enum):
+    """Kind of shared planning/control-plane trace."""
+
+    QUALIFICATION = "qualification"
+    BUDGET = "budget"
+    CAPABILITY = "capability"
+    DELIVERY = "delivery"
+    REVIEW_POLICY = "review_policy"
+    VERIFICATION_DISCOVERY = "verification_discovery"
+    EXECUTION = "execution"
+
+
+@dataclass
+class ExecutionTraceRecord:
+    """Durable, queryable control-plane trace record."""
+
+    trace_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    trace_kind: TraceRecordKind = TraceRecordKind.EXECUTION
+    title: str = ""
+    detail: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    plan_id: str = ""
+    job_id: str = ""
+    workspace_id: str = ""
+    bundle_id: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "trace_id": self.trace_id,
+            "trace_kind": self.trace_kind.value,
+            "title": self.title,
+            "detail": self.detail,
+            "created_at": self.created_at,
+            "plan_id": self.plan_id,
+            "job_id": self.job_id,
+            "workspace_id": self.workspace_id,
+            "bundle_id": self.bundle_id,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ExecutionTraceRecord:
+        return cls(
+            trace_id=data.get("trace_id", ""),
+            trace_kind=TraceRecordKind(data.get("trace_kind", "execution")),
+            title=data.get("title", ""),
+            detail=data.get("detail", ""),
+            created_at=data.get("created_at", ""),
+            plan_id=data.get("plan_id", ""),
+            job_id=data.get("job_id", ""),
+            workspace_id=data.get("workspace_id", ""),
+            bundle_id=data.get("bundle_id", ""),
+            metadata=data.get("metadata", {}),
+        )
+
+
+class DeliveryLifecycleStatus(str, Enum):
+    """Lifecycle state for a persisted delivery package."""
+
+    PREPARED = "prepared"
+    AWAITING_APPROVAL = "awaiting_approval"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    HANDED_OFF = "handed_off"
+
+
+@dataclass
+class DeliveryEvent:
+    """Single auditable event in the delivery lifecycle."""
+
+    event_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    event_type: str = ""
+    status: str = ""
+    detail: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "event_type": self.event_type,
+            "status": self.status,
+            "detail": self.detail,
+            "created_at": self.created_at,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DeliveryEvent:
+        return cls(
+            event_id=data.get("event_id", ""),
+            event_type=data.get("event_type", ""),
+            status=data.get("status", ""),
+            detail=data.get("detail", ""),
+            created_at=data.get("created_at", ""),
+            metadata=data.get("metadata", {}),
+        )
+
+
+@dataclass
+class DeliveryRecord:
+    """Durable lifecycle state for a shared delivery bundle."""
+
+    bundle_id: str
+    job_id: str
+    job_kind: JobKind
+    title: str = ""
+    status: DeliveryLifecycleStatus = DeliveryLifecycleStatus.PREPARED
+    requester: str = ""
+    workspace_id: str = ""
+    artifact_ids: list[str] = field(default_factory=list)
+    approval_request_id: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    summary: dict[str, Any] = field(default_factory=dict)
+    events: list[DeliveryEvent] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "bundle_id": self.bundle_id,
+            "job_id": self.job_id,
+            "job_kind": self.job_kind.value,
+            "title": self.title,
+            "status": self.status.value,
+            "requester": self.requester,
+            "workspace_id": self.workspace_id,
+            "artifact_ids": list(self.artifact_ids),
+            "approval_request_id": self.approval_request_id,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "summary": self.summary,
+            "events": [event.to_dict() for event in self.events],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DeliveryRecord:
+        return cls(
+            bundle_id=data.get("bundle_id", ""),
+            job_id=data.get("job_id", ""),
+            job_kind=JobKind(data.get("job_kind", "delivery")),
+            title=data.get("title", ""),
+            status=DeliveryLifecycleStatus(data.get("status", "prepared")),
+            requester=data.get("requester", ""),
+            workspace_id=data.get("workspace_id", ""),
+            artifact_ids=data.get("artifact_ids", []),
+            approval_request_id=data.get("approval_request_id", ""),
+            created_at=data.get("created_at", ""),
+            updated_at=data.get("updated_at", ""),
+            summary=data.get("summary", {}),
+            events=[
+                DeliveryEvent.from_dict(item)
+                for item in data.get("events", [])
+            ],
+        )
+
+
+# ─────────────────────────────────────────────
+# Workspace Queries — shared joins
+# ─────────────────────────────────────────────
+
+@dataclass
+class WorkspaceQuerySummary:
+    """Normalized workspace view linked into the control plane."""
+
+    workspace_id: str
+    name: str
+    status: str
+    created_at: str = ""
+    completed_at: str = ""
+    task_id: str = ""
+    owner_id: str = ""
+    job_ids: list[str] = field(default_factory=list)
+    artifact_ids: list[str] = field(default_factory=list)
+    approval_ids: list[str] = field(default_factory=list)
+    bundle_ids: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "workspace_id": self.workspace_id,
+            "name": self.name,
+            "status": self.status,
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+            "task_id": self.task_id,
+            "owner_id": self.owner_id,
+            "job_ids": list(self.job_ids),
+            "artifact_ids": list(self.artifact_ids),
+            "approval_ids": list(self.approval_ids),
+            "bundle_ids": list(self.bundle_ids),
+        }
+
+
+@dataclass
+class WorkspaceQueryDetail(WorkspaceQuerySummary):
+    """Detailed workspace view with audit trail and linked records."""
+
+    path: str = ""
+    commands_run: list[str] = field(default_factory=list)
+    files_created: list[str] = field(default_factory=list)
+    output: str = ""
+    error: str = ""
+    audit_trail: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        base = super().to_dict()
+        base["path"] = self.path
+        base["commands_run"] = list(self.commands_run)
+        base["files_created"] = list(self.files_created)
+        base["output"] = self.output
+        base["error"] = self.error
+        base["audit_trail"] = list(self.audit_trail)
+        return base
+
+
+# ─────────────────────────────────────────────
 # Usage Summary — cost/token tracking foundation
 # ─────────────────────────────────────────────
 
