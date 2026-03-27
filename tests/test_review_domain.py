@@ -1128,6 +1128,23 @@ class TestAuditV4Regressions:
         assert job.artifacts[0].id == "art-1"
         assert job.artifacts[1].artifact_type.value == "execution_trace"
 
+    def test_job_roundtrip_preserves_include_and_exclude_patterns(self):
+        from agent.review.models import ReviewIntake, ReviewJob, ReviewJobType
+
+        job = ReviewJob(
+            job_type=ReviewJobType.REPO_AUDIT,
+            intake=ReviewIntake(
+                repo_path="/tmp/test",
+                include_patterns=["*.py"],
+                exclude_patterns=["tests/**"],
+            ),
+        )
+
+        recovered = ReviewJob.from_dict(job.to_dict())
+
+        assert recovered.intake.include_patterns == ["*.py"]
+        assert recovered.intake.exclude_patterns == ["tests/**"]
+
 
 # ─────────────────────────────────────────────
 # Legacy Deprecation

@@ -18,6 +18,10 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+!agent/build/
+!agent/build/**
+agent/build/**/__pycache__/
+agent/build/**/*.pyc
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

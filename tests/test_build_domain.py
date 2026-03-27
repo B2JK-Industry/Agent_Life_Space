@@ -1,6 +1,7 @@
 """Tests for builder bounded context (agent.build)."""
 
 import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -385,10 +386,12 @@ class TestBuildService:
     def workspace_manager(self):
         """Mock workspace manager that creates real temp dirs."""
         mgr = MagicMock()
-        self._tmpdir = tempfile.mkdtemp()
+        self._workspace_dir = tempfile.mkdtemp()
+        self._repo_dir = tempfile.mkdtemp()
+        (Path(self._repo_dir) / "app.py").write_text("def main():\n    return 1\n")
         ws = MagicMock()
         ws.id = "ws-test-123"
-        ws.path = self._tmpdir
+        ws.path = self._workspace_dir
         mgr.create.return_value = ws
         return mgr
 
@@ -425,23 +428,25 @@ class TestBuildService:
 
     async def test_successful_build_with_acceptance(self, service):
         intake = BuildIntake(
-            repo_path=self._tmpdir,
+            repo_path=self._repo_dir,
             description="Add feature",
             acceptance_criteria=[
                 AcceptanceCriterion(description="Build completes"),
             ],
         )
         job = await service.run_build(intake)
-        # Job completes — workspace exists, marker written
+        # Repo is materialized into workspace and the placeholder build runs.
         assert job.workspace_id == "ws-test-123"
         assert job.execution_mode == ExecutionMode.WORKSPACE_BOUND
         assert len(job.execution_trace) >= 4  # validate, workspace, build, verify...
         assert len(job.artifacts) >= 2  # verification + acceptance + trace
         assert job.acceptance.evaluated_at != ""
+        assert (Path(self._workspace_dir) / "app.py").exists()
+        assert (Path(self._workspace_dir) / ".build_job").exists()
 
     async def test_build_creates_artifacts(self, service):
         intake = BuildIntake(
-            repo_path=self._tmpdir,
+            repo_path=self._repo_dir,
             description="Add feature",
         )
         job = await service.run_build(intake)
@@ -452,7 +457,7 @@ class TestBuildService:
 
     async def test_build_job_recovery(self, service):
         intake = BuildIntake(
-            repo_path=self._tmpdir,
+            repo_path=self._repo_dir,
             description="Add feature",
         )
         job = await service.run_build(intake)
@@ -463,7 +468,7 @@ class TestBuildService:
 
     async def test_execution_trace_has_analysis_steps(self, service):
         intake = BuildIntake(
-            repo_path=self._tmpdir,
+            repo_path=self._repo_dir,
             description="Add feature",
         )
         job = await service.run_build(intake)
@@ -473,3 +478,84 @@ class TestBuildService:
         assert "build" in steps
         assert "verify" in steps
         assert "acceptance" in steps
+
+    async def test_unknown_acceptance_criterion_is_not_auto_met(
+        self, service, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                ),
+                VerificationResult(
+                    kind=VerificationKind.LINT,
+                    passed=True,
+                    command="ruff check .",
+                    exit_code=0,
+                ),
+            ],
+        )
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Add feature",
+            acceptance_criteria=[
+                AcceptanceCriterion(description="Ship to production"),
+            ],
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.FAILED
+        assert job.acceptance.criteria[0].status == CriterionStatus.UNMET
+        assert "No evaluator available" in job.acceptance.criteria[0].evidence
+
+    async def test_verify_acceptance_runs_inside_workspace(
+        self, service, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                ),
+                VerificationResult(
+                    kind=VerificationKind.LINT,
+                    passed=True,
+                    command="ruff check .",
+                    exit_code=0,
+                ),
+            ],
+        )
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Add feature",
+            acceptance_criteria=[
+                AcceptanceCriterion(
+                    description=(
+                        'verify: python3 -c "from pathlib import Path; '
+                        "raise SystemExit(0 if Path('app.py').exists() else 1)\""
+                    )
+                ),
+            ],
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.COMPLETED
+        assert job.acceptance.criteria[0].status == CriterionStatus.MET
+        assert "exit=0" in job.acceptance.criteria[0].evidence
+
+    def test_get_verification_steps_adds_typecheck_when_config_present(self, service):
+        temp_repo = tempfile.mkdtemp()
+        (Path(temp_repo) / "pyproject.toml").write_text("[tool.mypy]\npython_version='3.12'\n")
+
+        steps = service._get_verification_steps(temp_repo)
+
+        assert VerificationKind.TYPECHECK in steps
