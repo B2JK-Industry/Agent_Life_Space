@@ -17,8 +17,10 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Automated security** — 127-test security audit + invariant suite
 - **Tool governance** — capability manifest, policy engine, 4-step action pipeline with audit trail
 - **Workspace persistence** — SQLite-backed workspaces with audit trail, limits, TTL, recovery
-- **Approval queue** — structured propose → approve/deny → execute workflow for risk-sensitive actions
-- **1064+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **Approval queue** — structured propose → approve/deny → execute workflow with persistent storage and linkage
+- **Control-plane queries** — shared inspection across build, review, task, job-runner, and agent-loop state
+- **Operator CLI surfaces** — `--report`, unified `--intake-*`, and resumable `--build-resume`
+- **1241+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -91,7 +93,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 1064+ passed, ~19s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1241+ passed, ~22s, $0.00
 ```
 
 | Layer | Tests | What |
@@ -140,11 +142,11 @@ This project is honest about what works and what doesn't yet.
 | Area | Status | What's missing |
 |------|--------|---------------|
 | Memory provenance | Working | Conflict detection is tag-based, not semantic. No auto-consolidation pipeline yet. |
-| Tool governance | Working | Approval queue is in-memory. No persistent approval storage. |
+| Tool governance | Working | Persistent approval storage exists, but approvals are not yet unified with full delivery/workspace policy. |
 | Workspace | Working | No cleanup scheduler (must call `cleanup_expired()` manually). |
 | Routing | Working | Keyword + signal heuristics. No ML-based classification. |
 | Learning | Partial | Model failure tracking resets on restart. No eval set. |
-| Finance | Foundation | Propose/approve flow exists, but no UI/inbox. |
+| Finance | Foundation | Propose/approve flow exists and approvals are queryable, but no live operator UI. |
 | Multi-channel | Foundation | Telegram only in production. Discord/email are interfaces, not implemented. |
 | Dashboard | Not started | No operator UI. Everything via Telegram or CLI. |
 

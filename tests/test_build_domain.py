@@ -423,6 +423,7 @@ class TestBuildService:
         ws.id = "ws-test-123"
         ws.path = self._workspace_dir
         mgr.create.return_value = ws
+        mgr.get.return_value = ws
         return mgr
 
     @pytest.fixture()
@@ -590,6 +591,24 @@ class TestBuildService:
 
         assert VerificationKind.TYPECHECK in steps
 
+    async def test_build_records_capability_id(self, service, monkeypatch):
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [],
+        )
+
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            build_type=BuildJobType.DEVOPS,
+            description="Update workflow",
+            acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.capability_id == "devops_safe"
+        assert "devops_safe" in service.get_stats()["capabilities"]
+
     async def test_post_build_review_passes_through_review_service(
         self, workspace_manager, monkeypatch
     ):
@@ -702,3 +721,44 @@ class TestBuildService:
         assert job.post_build_review_verdict == "fail"
         assert "critical findings" in job.error.lower()
         assert "finding_list" in [artifact.artifact_kind.value for artifact in job.artifacts]
+
+    async def test_resume_build_reruns_failed_verification(
+        self, service, workspace_manager, monkeypatch
+    ):
+        verification_runs = {"count": 0}
+
+        def fake_suite(**kwargs):
+            verification_runs["count"] += 1
+            passed = verification_runs["count"] > 1
+            return [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=passed,
+                    command="pytest",
+                    exit_code=0 if passed else 1,
+                ),
+                VerificationResult(
+                    kind=VerificationKind.LINT,
+                    passed=passed,
+                    command="ruff check .",
+                    exit_code=0 if passed else 1,
+                ),
+            ]
+
+        monkeypatch.setattr("agent.build.service.run_verification_suite", fake_suite)
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Retry after interruption",
+            acceptance_criteria=[AcceptanceCriterion(description="Tests pass")],
+        )
+
+        first_job = await service.run_build(intake)
+        resumed_job = await service.resume_build(first_job.id)
+
+        assert first_job.status == JobStatus.FAILED
+        assert resumed_job is not None
+        assert resumed_job.resumed_from_job_id == first_job.id
+        assert resumed_job.resume_count == 1
+        assert resumed_job.status == JobStatus.COMPLETED
+        assert resumed_job.verification_passed is True
+        assert verification_runs["count"] == 2

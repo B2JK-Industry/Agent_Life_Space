@@ -10,11 +10,37 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
-### Builder / Control Plane
-- Builder now has a real shared-runtime entrypoint via `AgentOrchestrator.run_build_job()`
-- `python -m agent --build-repo ...` now provides a thin CLI build adapter
-- Successful build jobs can invoke deterministic review-after-build gating
-- Build and review jobs are now queryable through one shared control-plane surface
+## [1.4.2] — 2026-03-27
+
+Control-plane expansion release.
+
+### Platform / Control Plane
+- `ReviewJob` now uses shared control-plane primitives (`JobKind`, `JobStatus`,
+  `JobTiming`, `ExecutionStep`, `UsageSummary`)
+- Shared job queries now cover build, review, task, job-runner, and agent-loop
+  runtime records
+- Approval requests are now persistent and queryable with job/artifact linkage
+- Operator reporting now has a real runtime surface via `OperatorReportService`
+  and `python -m agent --report`
+
+### Builder
+- Builder capability catalog added for implementation, integration, devops, and
+  testing work
+- Build jobs now record resumable checkpoints and can resume through
+  `BuildService.resume_build()` and `python -m agent --build-resume ...`
+- Build query metadata now surfaces capabilities, checkpoints, and resume state
+
+### Operator
+- Unified operator intake model added for repo path, git URL, diff, and work
+  type routing
+- `AgentOrchestrator` now exposes qualification/submission methods for unified
+  build/review intake
+- `python -m agent --intake-*` now provides a CLI preview/submit path for the
+  shared intake model
+- TypeScript operator skeleton now includes a mock reporting/inbox surface
+
+### Verification
+- Local release verification passed with `1241 passed, 4 skipped`
 
 ## [1.4.1] — 2026-03-27
 

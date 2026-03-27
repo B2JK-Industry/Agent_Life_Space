@@ -8,8 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agent.build.models import AcceptanceCriterion, BuildIntake, BuildJob
+from agent.control.intake import OperatorIntake, OperatorIntakeService
 from agent.control.job_queries import JobQueryService
 from agent.control.models import JobKind, JobStatus
+from agent.control.reporting import OperatorReportService
+from agent.core.job_runner import JobRecord
+from agent.core.job_runner import JobStatus as RunnerJobStatus
 from agent.review.models import (
     ReviewIntake,
     ReviewJob,
@@ -17,6 +21,7 @@ from agent.review.models import (
     ReviewJobType,
     ReviewReport,
 )
+from agent.tasks.manager import Task, TaskStatus
 
 
 class TestJobQueryService:
@@ -101,6 +106,114 @@ class TestJobQueryService:
         assert detail.status == "blocked"
         assert detail.metadata["post_build_review"]["verdict"] == "fail"
         assert detail.blocked_reason == "Post-build review blocked completion"
+
+    def test_list_jobs_includes_operate_runtime_surfaces(self, services):
+        build_service, review_service = services
+
+        task = Task(
+            id="task-123",
+            name="Follow up approval",
+            status=TaskStatus.BLOCKED,
+            tags=["ops", "approval"],
+            requires_approval=True,
+            error="Waiting on owner",
+        )
+        task_manager = MagicMock()
+        task_manager.list_tasks.return_value = [task]
+        task_manager.get_task.side_effect = (
+            lambda job_id: task if job_id == task.id else None
+        )
+
+        job_record = JobRecord(
+            id="runner-123",
+            name="health_check",
+            status=RunnerJobStatus.FAILED,
+            error="timeout",
+            retry_count=1,
+        )
+        job_runner = MagicMock()
+        job_runner.get_recent_jobs.return_value = [job_record]
+        job_runner.get_job_status.side_effect = (
+            lambda job_id: job_record if job_id == job_record.id else None
+        )
+
+        loop = MagicMock()
+        loop.get_status.return_value = {"running": True, "queue_size": 2}
+        loop.get_queue_snapshot.return_value = [
+            {"action_id": "act-1", "status": "queued"}
+        ]
+
+        query = JobQueryService(
+            build_service=build_service,
+            review_service=review_service,
+            task_manager=task_manager,
+            job_runner=job_runner,
+            agent_loop_provider=lambda: loop,
+        )
+
+        jobs = query.list_jobs(kind=JobKind.OPERATE, limit=10)
+        assert {job.subkind for job in jobs} == {"task", "job_runner", "agent_loop"}
+
+        task_detail = query.get_job("task-123", kind=JobKind.OPERATE)
+        runner_detail = query.get_job("runner-123", kind=JobKind.OPERATE)
+        loop_detail = query.get_job("agent_loop", kind=JobKind.OPERATE)
+
+        assert task_detail is not None
+        assert task_detail.metadata["requires_approval"] is True
+        assert runner_detail is not None
+        assert runner_detail.metadata["retry_count"] == 1
+        assert loop_detail is not None
+        assert loop_detail.metadata["status"]["queue_size"] == 2
+
+    def test_operator_report_builds_inbox_from_jobs_and_approvals(self):
+        job_query_service = MagicMock()
+        job_query_service.list_jobs.return_value = [
+            MagicMock(
+                to_dict=lambda: {
+                    "job_id": "build-1",
+                    "job_kind": "build",
+                    "status": "blocked",
+                    "title": "Ship build",
+                    "blocked_reason": "review failed",
+                    "outcome": "review=fail",
+                }
+            ),
+            MagicMock(
+                to_dict=lambda: {
+                    "job_id": "review-1",
+                    "job_kind": "review",
+                    "status": "completed",
+                    "title": "Audit release",
+                    "blocked_reason": "",
+                    "outcome": "pass",
+                }
+            ),
+        ]
+        approval_queue = MagicMock()
+        approval_queue.get_pending.return_value = [
+            {
+                "id": "apr-1",
+                "status": "pending",
+                "description": "Deliver report",
+                "reason": "External delivery",
+            }
+        ]
+        controls = MagicMock()
+        controls.get_status.return_value = {"total_disabled": 1}
+
+        report = OperatorReportService(
+            job_queries=job_query_service,
+            approval_queue=approval_queue,
+            operator_controls=controls,
+            status_provider=lambda: {"running": False},
+        ).get_report(limit=10)
+
+        assert report["summary"]["blocked_jobs"] == 1
+        assert report["summary"]["pending_approvals"] == 1
+        assert {item["kind"] for item in report["inbox"]} == {
+            "approval",
+            "job_attention",
+        }
 
 
 class TestBuilderCliAdapter:
@@ -189,3 +302,78 @@ class TestOrchestratorEntryPoints:
         assert loaded_review["job_kind"] == "review"
 
         await agent.stop()
+
+
+class TestUnifiedOperatorIntake:
+    def test_qualification_routes_diff_to_review(self):
+        service = OperatorIntakeService()
+        intake = OperatorIntake(
+            repo_path="/tmp/repo",
+            diff_spec="main..feature",
+            work_type="auto",
+            requester="daniel",
+        )
+
+        qualification = service.qualify(intake)
+
+        assert qualification.supported is True
+        assert qualification.resolved_work_type.value == "review"
+
+    def test_qualification_requires_description_for_build(self):
+        service = OperatorIntakeService()
+        intake = OperatorIntake(
+            repo_path="/tmp/repo",
+            work_type="build",
+        )
+
+        qualification = service.qualify(intake)
+
+        assert qualification.supported is False
+        assert any("description" in item for item in qualification.blockers)
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_submit_operator_intake_routes_to_build(
+        self, monkeypatch
+    ):
+        from agent.core.agent import AgentOrchestrator
+
+        agent = AgentOrchestrator(data_dir="agent-test", watchdog_interval=60.0)
+        agent._initialized = True
+        agent.initialize = AsyncMock()
+        agent.run_build_job = AsyncMock(return_value=BuildJob(id="build-789"))
+        agent.get_product_job = MagicMock(
+            return_value={"job_id": "build-789", "job_kind": "build"}
+        )
+
+        result = await agent.submit_operator_intake(
+            OperatorIntake(
+                repo_path="/tmp/repo",
+                work_type="build",
+                description="Implement endpoint",
+                acceptance_criteria=["Tests pass"],
+            )
+        )
+
+        assert result["accepted"] is True
+        assert result["job_kind"] == "build"
+        assert result["job"]["job_id"] == "build-789"
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_submit_operator_intake_rejects_git_only(
+        self, monkeypatch
+    ):
+        from agent.core.agent import AgentOrchestrator
+
+        agent = AgentOrchestrator(data_dir="agent-test", watchdog_interval=60.0)
+        agent._initialized = True
+        agent.initialize = AsyncMock()
+
+        result = await agent.submit_operator_intake(
+            OperatorIntake(
+                git_url="https://github.com/example/repo.git",
+                work_type="auto",
+            )
+        )
+
+        assert result["accepted"] is False
+        assert "git_url intake" in result["error"]

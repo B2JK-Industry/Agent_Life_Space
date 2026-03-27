@@ -86,6 +86,23 @@ class JobRecord:
     last_heartbeat: float = 0.0
     execution_time_ms: int = 0
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "status": self.status.value,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "retry_count": self.retry_count,
+            "execution_time_ms": self.execution_time_ms,
+            "error": self.error,
+            "result": self.result,
+            "priority": self.config.priority.name.lower(),
+            "timeout_seconds": self.config.timeout_seconds,
+            "max_retries": self.config.max_retries,
+        }
+
 
 class JobRunner:
     """
@@ -349,6 +366,16 @@ class JobRunner:
 
     def get_active_jobs(self) -> list[JobRecord]:
         return list(self._active_jobs.values())
+
+    def get_recent_jobs(self, limit: int = 20) -> list[JobRecord]:
+        """Return recent active/completed/dead-letter jobs."""
+        records = [
+            *self._active_jobs.values(),
+            *self._completed_jobs.values(),
+            *self._dead_letters.values(),
+        ]
+        records.sort(key=lambda record: record.created_at, reverse=True)
+        return records[:limit]
 
     def get_dead_letters(self) -> list[JobRecord]:
         return list(self._dead_letters.values())

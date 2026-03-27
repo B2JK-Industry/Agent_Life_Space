@@ -11,6 +11,7 @@ What exists:
 - TypeScript DTOs mapped from Python reviewer domain
 - Client-safe model surface (fields excluded from external view)
 - Mock-driven view modules: job list, job detail, delivery preview, approval queue
+- Mock-driven operator reporting/inbox view over shared control-plane jobs
 - Typecheck in CI (catches TS regressions)
 
 ## Structure
@@ -30,6 +31,7 @@ operator/
       job-detail.ts     # Single job with findings breakdown
       delivery-preview.ts  # Bundle preview, client-safe projection, readiness check
       approval-queue.ts # Pending approvals, expiry check, queue stats
+      reporting.ts      # Operator inbox/report over shared control-plane jobs
     index.ts            # Barrel exports
   MAPPING.md            # Python → TypeScript field mapping
   README.md

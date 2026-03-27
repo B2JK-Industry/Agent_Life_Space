@@ -30,9 +30,12 @@ from typing import Any
 
 import structlog
 
+from agent.build.capabilities import get_capability, list_capabilities
 from agent.build.models import (
+    AcceptanceCriterion,
     ArtifactKind,
     BuildArtifact,
+    BuildCheckpointPhase,
     BuildIntake,
     BuildJob,
     BuildPhase,
@@ -88,8 +91,21 @@ class BuildService:
             job.error = f"Validation failed: {'; '.join(errors)}"
             self._storage.save_job(job)
             return job
+        try:
+            capability = self._resolve_capability(intake)
+        except ValueError as e:
+            t_validate.fail(str(e))
+            job.status = JobStatus.FAILED
+            job.error = str(e)
+            self._storage.save_job(job)
+            return job
+        job.capability_id = capability.id
         t_validate.complete(f"input valid: {intake.build_type.value}")
         job.status = JobStatus.VALIDATING
+        job.record_checkpoint(
+            BuildCheckpointPhase.VALIDATED,
+            detail=f"capability={capability.id}",
+        )
 
         # ── Step 2: Workspace setup ──
         t_ws = job.trace("workspace")
@@ -111,6 +127,11 @@ class BuildService:
             job.workspace_id = ws.id
             job.execution_mode = ExecutionMode.WORKSPACE_BOUND
             t_ws.complete(f"workspace {ws.id} at {ws.path}")
+            self._record_checkpoint(
+                job,
+                BuildCheckpointPhase.WORKSPACE_READY,
+                detail=f"workspace={ws.id}",
+            )
         except Exception as e:
             t_ws.fail(str(e))
             job.status = JobStatus.FAILED
@@ -128,6 +149,11 @@ class BuildService:
                 workspace_path=workspace_path,
             )
             t_sync.complete(f"repo synced: {intake.repo_path} -> {workspace_path}")
+            self._record_checkpoint(
+                job,
+                BuildCheckpointPhase.REPO_SYNCED,
+                detail=f"workspace={workspace_path}",
+            )
         except Exception as e:
             t_sync.fail(str(e))
             job.status = JobStatus.FAILED
@@ -135,39 +161,151 @@ class BuildService:
             self._finalize(job, workspace_path)
             return job
 
+        job.timing.mark_started()
+        return await self._continue_from_workspace(
+            job=job,
+            workspace_path=workspace_path,
+            can_skip_completed_steps=False,
+        )
+
+    async def resume_build(self, job_id: str) -> BuildJob | None:
+        """Resume a previously interrupted build from its latest checkpoint."""
+        self.initialize()
+        previous = self.load_job(job_id)
+        if previous is None:
+            return None
+        if previous.status == JobStatus.COMPLETED:
+            return previous
+
+        job = BuildJob(
+            build_type=previous.build_type,
+            capability_id=previous.capability_id,
+            requester=previous.requester,
+            intake=previous.intake,
+            source="resume",
+            resumed_from_job_id=previous.id,
+            resume_count=previous.resume_count + 1,
+            verification_results=list(previous.verification_results),
+            acceptance=previous.acceptance,
+            checkpoints=list(previous.checkpoints),
+        )
+        job.trace("resume").complete(
+            f"resumed_from={previous.id}; last_checkpoint="
+            f"{previous.last_checkpoint.phase.value if previous.last_checkpoint else 'none'}"
+        )
+
+        workspace_path = ""
+        reusable_workspace = False
+        if self._workspace_manager is not None and previous.workspace_id:
+            ws = self._workspace_manager.get(previous.workspace_id)
+            if ws is not None and Path(ws.path).is_dir():
+                self._workspace_manager.activate(ws.id)
+                job.workspace_id = ws.id
+                job.execution_mode = ExecutionMode.WORKSPACE_BOUND
+                workspace_path = ws.path
+                reusable_workspace = True
+
+        if not reusable_workspace:
+            if self._workspace_manager is None:
+                job.status = JobStatus.FAILED
+                job.error = "Build jobs require a workspace manager."
+                self._storage.save_job(job)
+                return job
+            ws = self._workspace_manager.create(
+                name=f"build-{job.id[:8]}",
+                task_id=job.id,
+            )
+            self._workspace_manager.activate(ws.id)
+            job.workspace_id = ws.id
+            job.execution_mode = ExecutionMode.WORKSPACE_BOUND
+            workspace_path = ws.path
+            self._sync_repo_into_workspace(
+                job=job,
+                repo_path=job.intake.repo_path,
+                workspace_path=workspace_path,
+            )
+            self._record_checkpoint(
+                job,
+                BuildCheckpointPhase.WORKSPACE_READY,
+                detail=f"workspace={ws.id}",
+            )
+            self._record_checkpoint(
+                job,
+                BuildCheckpointPhase.REPO_SYNCED,
+                detail=f"workspace={workspace_path}",
+            )
+
+        job.timing.mark_started()
+        return await self._continue_from_workspace(
+            job=job,
+            workspace_path=workspace_path,
+            can_skip_completed_steps=reusable_workspace,
+        )
+
+    async def _continue_from_workspace(
+        self,
+        *,
+        job: BuildJob,
+        workspace_path: str,
+        can_skip_completed_steps: bool,
+    ) -> BuildJob:
         # ── Step 3: Build (execute implementation) ──
         job.status = JobStatus.RUNNING
         job.phase = BuildPhase.BUILDING
-        job.timing.mark_started()
 
-        t_build = job.trace("build")
-        build_ok = self._execute_build(job, workspace_path)
-        if build_ok:
-            t_build.complete("build step completed")
+        if can_skip_completed_steps and self._can_reuse_checkpoint(
+            job, BuildCheckpointPhase.BUILT
+        ):
+            job.trace("resume:build").complete("build checkpoint reused")
         else:
-            t_build.fail(job.error or "build failed")
-            job.status = JobStatus.FAILED
-            self._finalize(job, workspace_path)
-            return job
+            t_build = job.trace("build")
+            build_ok = self._execute_build(job, workspace_path)
+            if build_ok:
+                t_build.complete("build step completed")
+                self._record_checkpoint(
+                    job,
+                    BuildCheckpointPhase.BUILT,
+                    detail=f"capability={job.capability_id}",
+                )
+            else:
+                t_build.fail(job.error or "build failed")
+                job.status = JobStatus.FAILED
+                self._finalize(job, workspace_path)
+                return job
 
         # ── Step 4: Verify ──
         job.status = JobStatus.VERIFYING
-        t_verify = job.trace("verify")
-
-        verification_steps = self._get_verification_steps(workspace_path)
-        results = run_verification_suite(
-            workspace_path=workspace_path,
-            steps=verification_steps,
-            timeout_seconds=120,
-        )
-        job.verification_results = results
-
-        passed = all(r.passed for r in results)
-        failed_kinds = [r.kind.value for r in results if not r.passed]
-        if passed:
-            t_verify.complete(f"{len(results)} checks passed")
+        if can_skip_completed_steps and self._can_reuse_checkpoint(
+            job, BuildCheckpointPhase.VERIFIED
+        ):
+            results = job.verification_results
+            passed = all(r.passed for r in results)
+            job.trace("resume:verify").complete("verification checkpoint reused")
         else:
-            t_verify.fail(f"failed: {', '.join(failed_kinds)}")
+            t_verify = job.trace("verify")
+
+            verification_steps = self._get_verification_steps(
+                workspace_path=workspace_path,
+                capability_id=job.capability_id,
+            )
+            results = run_verification_suite(
+                workspace_path=workspace_path,
+                steps=verification_steps,
+                timeout_seconds=120,
+            )
+            job.verification_results = results
+
+            passed = all(r.passed for r in results)
+            failed_kinds = [r.kind.value for r in results if not r.passed]
+            if passed:
+                t_verify.complete(f"{len(results)} checks passed")
+            else:
+                t_verify.fail(f"failed: {', '.join(failed_kinds)}")
+            self._record_checkpoint(
+                job,
+                BuildCheckpointPhase.VERIFIED,
+                detail=f"passed={passed}",
+            )
 
         # ── Step 5: Create verification artifact ──
         verification_artifact = BuildArtifact(
@@ -183,24 +321,37 @@ class BuildService:
         self._storage.save_artifact(verification_artifact)
 
         # ── Step 6: Evaluate acceptance criteria ──
-        t_accept = job.trace("acceptance")
-        job.acceptance.criteria = list(intake.acceptance_criteria)
-
-        if not passed:
-            # Verification failed — auto-fail acceptance
-            for c in job.acceptance.criteria:
-                if c.status.value == "pending":
-                    c.fail("Verification did not pass")
+        if can_skip_completed_steps and self._can_reuse_checkpoint(
+            job, BuildCheckpointPhase.ACCEPTANCE_EVALUATED
+        ):
+            job.trace("resume:acceptance").complete("acceptance checkpoint reused")
         else:
-            # Evaluate each criterion
-            self._evaluate_acceptance(job, workspace_path)
+            t_accept = job.trace("acceptance")
+            job.acceptance.criteria = [
+                AcceptanceCriterion.from_dict(item.to_dict())
+                for item in job.intake.acceptance_criteria
+            ]
 
-        job.acceptance.evaluate()
+            if not passed:
+                # Verification failed — auto-fail acceptance
+                for c in job.acceptance.criteria:
+                    if c.status.value == "pending":
+                        c.fail("Verification did not pass")
+            else:
+                # Evaluate each criterion
+                self._evaluate_acceptance(job, workspace_path)
 
-        if job.acceptance.accepted:
-            t_accept.complete(job.acceptance.summary)
-        else:
-            t_accept.fail(job.acceptance.summary)
+            job.acceptance.evaluate()
+
+            if job.acceptance.accepted:
+                t_accept.complete(job.acceptance.summary)
+            else:
+                t_accept.fail(job.acceptance.summary)
+            self._record_checkpoint(
+                job,
+                BuildCheckpointPhase.ACCEPTANCE_EVALUATED,
+                detail=f"accepted={job.acceptance.accepted}",
+            )
 
         # Acceptance report artifact
         acceptance_artifact = BuildArtifact(
@@ -213,7 +364,7 @@ class BuildService:
         self._storage.save_artifact(acceptance_artifact)
 
         # ── Step 7: Deterministic post-build review (optional) ──
-        if job.acceptance.accepted and intake.run_post_build_review:
+        if job.acceptance.accepted and job.intake.run_post_build_review:
             t_review = job.trace("post_build_review")
             review_job = await self._run_post_build_review(job, workspace_path)
             if review_job is None:
@@ -234,7 +385,7 @@ class BuildService:
                     "finding_counts": review_job.report.finding_counts,
                     "executive_summary": review_job.report.executive_summary,
                     "blocking": bool(
-                        intake.block_on_review_failure
+                        job.intake.block_on_review_failure
                         and review_job.report.verdict == "fail"
                     ),
                 },
@@ -256,7 +407,10 @@ class BuildService:
                 job.artifacts.append(findings_artifact)
                 self._storage.save_artifact(findings_artifact)
 
-            if intake.block_on_review_failure and review_job.report.verdict == "fail":
+            if (
+                job.intake.block_on_review_failure
+                and review_job.report.verdict == "fail"
+            ):
                 job.status = JobStatus.BLOCKED
                 job.error = (
                     "Post-build review blocked completion: "
@@ -267,11 +421,21 @@ class BuildService:
                 t_review.complete(
                     f"review verdict={review_job.report.verdict}"
                 )
+            self._record_checkpoint(
+                job,
+                BuildCheckpointPhase.REVIEWED,
+                detail=f"verdict={job.post_build_review_verdict or 'skipped'}",
+            )
 
         # ── Step 8: Produce diff/patch artifact ──
         t_artifacts = job.trace("artifacts")
         self._capture_diff_artifact(job, workspace_path)
         t_artifacts.complete(f"{len(job.artifacts)} artifacts created")
+        self._record_checkpoint(
+            job,
+            BuildCheckpointPhase.ARTIFACTS_CAPTURED,
+            detail=f"artifacts={len(job.artifacts)}",
+        )
 
         # ── Step 9: Execution trace artifact ──
         trace_artifact = BuildArtifact(
@@ -306,9 +470,22 @@ class BuildService:
         self._workspace_manager.record_file(job.workspace_id, str(marker))
         return True
 
-    def _get_verification_steps(self, workspace_path: str) -> list[VerificationKind]:
+    def _get_verification_steps(
+        self,
+        workspace_path: str,
+        capability_id: str = "",
+    ) -> list[VerificationKind]:
         """Determine which verification steps to run."""
         steps = [VerificationKind.TEST, VerificationKind.LINT]
+        if capability_id:
+            capability = next(
+                (item for item in list_capabilities() if item.id == capability_id),
+                None,
+            )
+            if capability is not None:
+                steps = [step for step in capability.verification_defaults if step != VerificationKind.TYPECHECK]
+                if VerificationKind.TYPECHECK not in steps:
+                    steps.append(VerificationKind.TYPECHECK)
         wp = Path(workspace_path)
         typecheck_markers = (
             "pyproject.toml",
@@ -317,8 +494,15 @@ class BuildService:
             "setup.cfg",
         )
         if any((wp / marker).exists() for marker in typecheck_markers):
-            steps.append(VerificationKind.TYPECHECK)
-        return steps
+            if VerificationKind.TYPECHECK not in steps:
+                steps.append(VerificationKind.TYPECHECK)
+        else:
+            steps = [step for step in steps if step != VerificationKind.TYPECHECK]
+        deduped: list[VerificationKind] = []
+        for step in steps:
+            if step not in deduped:
+                deduped.append(step)
+        return deduped
 
     def _evaluate_acceptance(
         self, job: BuildJob, workspace_path: str
@@ -584,6 +768,53 @@ class BuildService:
         )
         return await self._review_service.run_review(review_intake)
 
+    def _resolve_capability(self, intake: BuildIntake):
+        capability = get_capability(intake.build_type)
+        if intake.capability_id and intake.capability_id != capability.id:
+            msg = (
+                f"Unsupported capability '{intake.capability_id}' for "
+                f"build_type '{intake.build_type.value}'"
+            )
+            raise ValueError(msg)
+        return capability
+
+    def _record_checkpoint(
+        self,
+        job: BuildJob,
+        phase: BuildCheckpointPhase,
+        detail: str,
+    ) -> None:
+        job.checkpoints = [
+            checkpoint
+            for checkpoint in job.checkpoints
+            if checkpoint.phase != phase
+        ]
+        job.record_checkpoint(phase, detail=detail)
+
+    def _can_reuse_checkpoint(
+        self,
+        job: BuildJob,
+        phase: BuildCheckpointPhase,
+    ) -> bool:
+        if not job.has_checkpoint(phase):
+            return False
+        if phase == BuildCheckpointPhase.BUILT:
+            return True
+        if phase == BuildCheckpointPhase.VERIFIED:
+            return job.verification_passed
+        if phase == BuildCheckpointPhase.ACCEPTANCE_EVALUATED:
+            return job.acceptance.accepted
+        if phase == BuildCheckpointPhase.REVIEWED:
+            if not job.intake.run_post_build_review:
+                return True
+            return bool(job.post_build_review_verdict) and not (
+                job.intake.block_on_review_failure
+                and job.post_build_review_verdict == "fail"
+            )
+        if phase == BuildCheckpointPhase.COMPLETED:
+            return job.status == JobStatus.COMPLETED
+        return True
+
     def _finalize(self, job: BuildJob, workspace_path: str) -> None:
         """Finalize job — set status, persist, complete workspace."""
         if job.status not in {JobStatus.FAILED, JobStatus.BLOCKED}:
@@ -598,6 +829,11 @@ class BuildService:
                     )
 
         job.timing.mark_completed()
+        self._record_checkpoint(
+            job,
+            BuildCheckpointPhase.COMPLETED,
+            detail=f"status={job.status.value}",
+        )
         self._storage.save_job(job)
 
         # Complete or fail workspace
@@ -644,5 +880,6 @@ class BuildService:
         stats = self._storage.get_stats()
         return {
             "initialized": self._initialized,
+            "capabilities": [capability.id for capability in list_capabilities()],
             **stats,
         }

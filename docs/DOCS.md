@@ -34,11 +34,18 @@ source .venv/bin/activate
 python -m agent              # Spusti agenta
 python -m agent --status     # Stav
 python -m agent --health     # Zdravie
-python -m pytest tests/ -q   # Testy (1064+ testov)
+python -m agent --report     # Operator report / inbox
+python -m pytest tests/ -q   # Testy (1241+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.4.1** — Bug-fix release for v1.4.0.
+Aktuálna: **v1.4.2** — Control-plane expansion release.
+
+Nové v `v1.4.2`:
+- shared job queries teraz pokrývajú aj `Task`, `JobRunner` a `AgentLoop`
+- approvals sú perzistentné a queryovateľné s väzbou na `job_id` / `artifact_ids`
+- builder má capability catalog a resumable checkpoints
+- pribudol unified operator intake a `python -m agent --report`
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

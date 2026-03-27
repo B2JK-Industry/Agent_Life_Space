@@ -132,6 +132,7 @@ async def run_agent(data_dir: str = "agent") -> None:
             from agent.core.agent_loop import AgentLoop
             owner_id = int(tg_user_id.split(",")[0]) if tg_user_id else 0
             work_loop = AgentLoop(telegram_bot=bot)
+            agent.agent_loop = work_loop
             work_loop_task = asyncio.create_task(work_loop.start())
 
             # Initialize AgentBrain (channel-agnostic) + ToolExecutor
@@ -198,6 +199,7 @@ async def run_agent(data_dir: str = "agent") -> None:
             logger.info("cron_enabled", owner_chat_id=owner_id)
         else:
             work_loop = None
+            agent.agent_loop = None
             work_loop_task = None
             cron = None
             cron_task = None
@@ -293,6 +295,17 @@ async def show_health(data_dir: str = "agent") -> None:
     await agent.stop()
 
 
+async def show_operator_report(data_dir: str = "agent") -> None:
+    """Show a compact operator-facing report/inbox snapshot."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    report = agent.get_operator_report()
+    print(orjson.dumps(report, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
 async def run_build_command(
     *,
     data_dir: str = "agent",
@@ -330,6 +343,68 @@ async def run_build_command(
     await agent.stop()
 
 
+async def resume_build_command(*, data_dir: str = "agent", job_id: str) -> None:
+    """Resume a previously interrupted build job and print normalized output."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    job = await agent.resume_build_job(job_id)
+    if job is None:
+        result = {"error": f"Build job not found: {job_id}", "job_id": job_id}
+    else:
+        result = agent.get_product_job(job.id, kind="build") or {"job_id": job.id}
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def run_intake_command(
+    *,
+    data_dir: str = "agent",
+    repo_path: str = "",
+    git_url: str = "",
+    diff_spec: str = "",
+    work_type: str = "auto",
+    build_type: str = "implementation",
+    description: str = "",
+    requester: str = "cli",
+    context: str = "",
+    focus_areas: list[str] | None = None,
+    target_files: list[str] | None = None,
+    acceptance_criteria: list[str] | None = None,
+    preview_only: bool = False,
+) -> None:
+    """Qualify and optionally execute unified operator intake."""
+    import orjson
+
+    from agent.build.models import BuildJobType
+    from agent.control.intake import OperatorIntake, OperatorWorkType
+
+    intake = OperatorIntake(
+        repo_path=repo_path,
+        git_url=git_url,
+        diff_spec=diff_spec,
+        work_type=OperatorWorkType(work_type),
+        build_type=BuildJobType(build_type),
+        description=description,
+        requester=requester,
+        context=context,
+        focus_areas=focus_areas or [],
+        target_files=target_files or [],
+        acceptance_criteria=acceptance_criteria or [],
+    )
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    if preview_only:
+        qualification = agent.qualify_operator_intake(intake)
+        result = {"accepted": qualification["supported"], "qualification": qualification}
+    else:
+        result = await agent.submit_operator_intake(intake)
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Agent Life Space — Self-hosted autonomous agent"
@@ -350,9 +425,19 @@ def main() -> None:
         help="Show system health and exit",
     )
     parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Show operator report/inbox snapshot and exit",
+    )
+    parser.add_argument(
         "--build-repo",
         default="",
         help="Run a builder job against this repository path and exit",
+    )
+    parser.add_argument(
+        "--build-resume",
+        default="",
+        help="Resume a previously interrupted build job by id and exit",
     )
     parser.add_argument(
         "--build-description",
@@ -386,12 +471,81 @@ def main() -> None:
         action="store_true",
         help="Disable the post-build reviewer pass for --build-repo execution",
     )
+    parser.add_argument(
+        "--intake-repo",
+        default="",
+        help="Unified operator intake: local repository path",
+    )
+    parser.add_argument(
+        "--intake-git-url",
+        default="",
+        help="Unified operator intake: git URL (modeled but not yet executable)",
+    )
+    parser.add_argument(
+        "--intake-diff",
+        default="",
+        help="Unified operator intake: optional git diff/range for review routing",
+    )
+    parser.add_argument(
+        "--intake-work-type",
+        default="auto",
+        choices=["auto", "review", "build"],
+        help="Unified operator intake: route selection",
+    )
+    parser.add_argument(
+        "--intake-build-type",
+        default="implementation",
+        choices=["implementation", "integration", "devops", "testing"],
+        help="Unified operator intake: build subtype when build routing is chosen",
+    )
+    parser.add_argument(
+        "--intake-description",
+        default="",
+        help="Unified operator intake: description/context for the requested work",
+    )
+    parser.add_argument(
+        "--intake-requester",
+        default="cli",
+        help="Unified operator intake: requester label",
+    )
+    parser.add_argument(
+        "--intake-context",
+        default="",
+        help="Unified operator intake: optional free-text context",
+    )
+    parser.add_argument(
+        "--intake-focus-area",
+        action="append",
+        default=[],
+        help="Unified operator intake: review focus area; repeatable",
+    )
+    parser.add_argument(
+        "--intake-target-file",
+        action="append",
+        default=[],
+        help="Unified operator intake: target file/glob; repeatable",
+    )
+    parser.add_argument(
+        "--intake-acceptance",
+        action="append",
+        default=[],
+        help="Unified operator intake: acceptance criterion; repeatable",
+    )
+    parser.add_argument(
+        "--intake-preview",
+        action="store_true",
+        help="Unified operator intake: only show qualification, do not execute",
+    )
     args = parser.parse_args()
 
     if args.status:
         asyncio.run(show_status(args.data_dir))
     elif args.health:
         asyncio.run(show_health(args.data_dir))
+    elif args.report:
+        asyncio.run(show_operator_report(args.data_dir))
+    elif args.build_resume:
+        asyncio.run(resume_build_command(data_dir=args.data_dir, job_id=args.build_resume))
     elif args.build_repo:
         if not args.build_description:
             parser.error("--build-description is required with --build-repo")
@@ -405,6 +559,24 @@ def main() -> None:
                 requester=args.build_requester,
                 context=args.build_context,
                 skip_review=args.build_skip_review,
+            )
+        )
+    elif args.intake_repo or args.intake_git_url:
+        asyncio.run(
+            run_intake_command(
+                data_dir=args.data_dir,
+                repo_path=args.intake_repo,
+                git_url=args.intake_git_url,
+                diff_spec=args.intake_diff,
+                work_type=args.intake_work_type,
+                build_type=args.intake_build_type,
+                description=args.intake_description,
+                requester=args.intake_requester,
+                context=args.intake_context,
+                focus_areas=args.intake_focus_area,
+                target_files=args.intake_target_file,
+                acceptance_criteria=args.intake_acceptance,
+                preview_only=args.intake_preview,
             )
         )
     else:

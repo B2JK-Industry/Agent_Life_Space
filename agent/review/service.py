@@ -22,11 +22,11 @@ This service does NOT:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 
+from agent.control.models import ExecutionMode, JobStatus
 from agent.review.analyzers import (
     analyze_diff,
     analyze_repo_structure,
@@ -35,13 +35,13 @@ from agent.review.analyzers import (
 from agent.review.models import (
     ArtifactType,
     Confidence,
-    ExecutionMode,
     ReviewArtifact,
     ReviewFinding,
     ReviewIntake,
     ReviewJob,
     ReviewJobStatus,
     ReviewJobType,
+    ReviewPhase,
     ReviewReport,
     Severity,
 )
@@ -89,13 +89,14 @@ class ReviewService:
         errors = intake.validate()
         if errors:
             t_validate.fail("; ".join(errors))
-            job.status = ReviewJobStatus.FAILED
+            job.status = JobStatus.FAILED
             job.error = f"Validation failed: {'; '.join(errors)}"
             self._storage.save_job(job)
             return job
 
         t_validate.complete(f"input valid: {intake.review_type.value}")
-        job.status = ReviewJobStatus.VALIDATING
+        job.status = JobStatus.VALIDATING
+        job.phase = ReviewPhase.VALIDATING
         self._storage.save_job(job)
 
         # ── Step 1b: Workspace + execution mode ──
@@ -134,8 +135,9 @@ class ReviewService:
         )
 
         # ── Step 2: Analyze ──
-        job.status = ReviewJobStatus.ANALYZING
-        job.started_at = datetime.now(UTC).isoformat()
+        job.status = JobStatus.RUNNING
+        job.phase = ReviewPhase.ANALYZING
+        job.timing.mark_started()
 
         if intake.review_type == ReviewJobType.REPO_AUDIT:
             report = await self._run_repo_audit(job)
@@ -152,7 +154,8 @@ class ReviewService:
         job.report = report
 
         # ── Step 3: Verify ──
-        job.status = ReviewJobStatus.VERIFYING
+        job.status = JobStatus.VERIFYING
+        job.phase = ReviewPhase.VERIFYING
         t_verify = job.trace("verify")
         pre_count = len(report.findings)
         verify_report(report)
@@ -170,6 +173,7 @@ class ReviewService:
         t_verdict.complete(f"verdict: {report.verdict}")
 
         # ── Step 5: Create artifacts ──
+        job.phase = ReviewPhase.REPORTING
         t_artifacts = job.trace("artifacts")
 
         # Markdown report
@@ -219,8 +223,9 @@ class ReviewService:
         t_artifacts.complete(f"{len(job.artifacts)} artifacts created")
 
         # ── Step 6: Complete ──
-        job.status = ReviewJobStatus.COMPLETED
-        job.completed_at = datetime.now(UTC).isoformat()
+        job.status = JobStatus.COMPLETED
+        job.phase = ReviewPhase.COMPLETED
+        job.timing.mark_completed()
         self._storage.save_job(job)
 
         logger.info(
@@ -514,9 +519,11 @@ class ReviewService:
             reason=f"Review of {job.intake.repo_path} — {len(job.report.findings)} findings",
             context={
                 "job_id": job_id,
+                "job_kind": job.job_kind.value,
                 "verdict": job.report.verdict,
                 "finding_counts": job.report.finding_counts,
                 "requester": job.requester,
+                "artifact_ids": [artifact.id for artifact in job.artifacts],
             },
         )
         logger.info("review_delivery_approval_requested",

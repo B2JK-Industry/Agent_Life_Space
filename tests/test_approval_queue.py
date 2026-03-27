@@ -4,6 +4,8 @@ Tests for approval queue — structured approval workflow for risk-sensitive act
 
 from __future__ import annotations
 
+import tempfile
+
 import pytest
 
 from agent.core.approval import (
@@ -12,6 +14,7 @@ from agent.core.approval import (
     ApprovalRequest,
     ApprovalStatus,
 )
+from agent.core.approval_storage import ApprovalStorage
 
 
 class TestApprovalRequest:
@@ -144,3 +147,48 @@ class TestApprovalQueue:
         pending = queue.get_pending()
         categories = {p["category"] for p in pending}
         assert categories == {"finance", "host", "external"}
+
+    def test_list_requests_filters_by_job_and_artifact(self, queue):
+        req = queue.propose(
+            ApprovalCategory.EXTERNAL,
+            "deliver build report",
+            context={
+                "job_id": "build-123",
+                "artifact_ids": ["artifact-1", "artifact-2"],
+            },
+        )
+        queue.approve(req.id)
+
+        by_job = queue.list_requests(job_id="build-123")
+        by_artifact = queue.list_requests(artifact_id="artifact-2")
+
+        assert len(by_job) == 1
+        assert by_job[0]["id"] == req.id
+        assert len(by_artifact) == 1
+        assert by_artifact[0]["id"] == req.id
+
+    def test_persistent_storage_recovers_pending_and_history(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            storage = ApprovalStorage(db_path=f.name)
+            queue = ApprovalQueue(storage=storage)
+            pending_req = queue.propose(
+                ApprovalCategory.TOOL,
+                "dangerous tool",
+                context={"job_id": "job-pending"},
+            )
+            approved_req = queue.propose(
+                ApprovalCategory.EXTERNAL,
+                "deliver artifact",
+                context={
+                    "job_id": "job-approved",
+                    "artifact_ids": ["artifact-1"],
+                },
+            )
+            queue.approve(approved_req.id)
+
+        recovered = ApprovalQueue(storage=ApprovalStorage(db_path=f.name))
+
+        assert recovered.get_request(pending_req.id) is not None
+        assert recovered.get_request(approved_req.id) is not None
+        assert recovered.list_requests(job_id="job-approved")[0]["id"] == approved_req.id
+        assert recovered.list_requests(artifact_id="artifact-1")[0]["id"] == approved_req.id

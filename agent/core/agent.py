@@ -33,9 +33,12 @@ from typing import Any
 import structlog
 
 from agent.brain.decision_engine import DecisionEngine
+from agent.control.intake import OperatorIntakeService, OperatorWorkType
 from agent.control.job_queries import JobQueryService
 from agent.control.models import JobKind
+from agent.control.reporting import OperatorReportService
 from agent.core.approval import ApprovalQueue
+from agent.core.approval_storage import ApprovalStorage
 from agent.core.job_runner import JobConfig, JobRunner
 from agent.core.llm_router import LLMRouter
 from agent.core.messages import Message, MessageType, ModuleID
@@ -88,7 +91,11 @@ class AgentOrchestrator:
             db_path=str(self._data_dir / "tasks" / "tasks.db")
         )
         # Governance
-        self.approval_queue = ApprovalQueue()
+        self.approval_queue = ApprovalQueue(
+            storage=ApprovalStorage(
+                db_path=str(self._data_dir / "approval" / "approvals.db")
+            )
+        )
         self.operator_controls = OperatorControls()
 
         self.finance = FinanceTracker(
@@ -99,6 +106,7 @@ class AgentOrchestrator:
             db_path=str(self._data_dir / "projects" / "projects.db")
         )
         self.workspaces = WorkspaceManager()
+        self.agent_loop: Any = None
 
         # Review service
         from agent.review.service import ReviewService
@@ -124,6 +132,16 @@ class AgentOrchestrator:
         self.jobs = JobQueryService(
             build_service=self.build,
             review_service=self.review,
+            task_manager=self.tasks,
+            job_runner=self.job_runner,
+            agent_loop_provider=lambda: self.agent_loop,
+        )
+        self.intake_router = OperatorIntakeService()
+        self.reporting = OperatorReportService(
+            job_queries=self.jobs,
+            approval_queue=self.approval_queue,
+            operator_controls=self.operator_controls,
+            status_provider=self.get_status,
         )
 
         # Background tasks
@@ -142,6 +160,7 @@ class AgentOrchestrator:
         (self._data_dir / "finance").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "projects").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "logs").mkdir(parents=True, exist_ok=True)
+        (self._data_dir / "approval").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "build").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "review").mkdir(parents=True, exist_ok=True)
 
@@ -445,6 +464,69 @@ class AgentOrchestrator:
             await self.initialize()
         return await self.review.run_review(intake)
 
+    async def resume_build_job(self, job_id: str):
+        """Resume a previously interrupted build job."""
+        if not self._initialized:
+            await self.initialize()
+        return await self.build.resume_build(job_id)
+
+    def qualify_operator_intake(self, intake: Any) -> dict[str, Any]:
+        """Return routing/qualification result for unified operator intake."""
+        return self.intake_router.qualify(intake).to_dict()
+
+    async def submit_operator_intake(self, intake: Any) -> dict[str, Any]:
+        """Route unified operator intake into review/build runtime flows."""
+        if not self._initialized:
+            await self.initialize()
+
+        qualification = self.intake_router.qualify(intake)
+        result: dict[str, Any] = {
+            "accepted": qualification.supported,
+            "qualification": qualification.to_dict(),
+        }
+        if not qualification.supported:
+            result["error"] = "; ".join(qualification.blockers)
+            return result
+
+        if qualification.resolved_work_type == OperatorWorkType.BUILD:
+            job = await self.run_build_job(self.intake_router.to_build_intake(intake))
+            result.update(
+                {
+                    "job_id": job.id,
+                    "job_kind": "build",
+                    "job": self.get_product_job(job.id, kind="build"),
+                }
+            )
+            return result
+
+        job = await self.run_review_job(self.intake_router.to_review_intake(intake))
+        result.update(
+            {
+                "job_id": job.id,
+                "job_kind": "review",
+                "job": self.get_product_job(job.id, kind="review"),
+            }
+        )
+        return result
+
+    def list_approval_requests(
+        self,
+        *,
+        status: str = "",
+        category: str = "",
+        job_id: str = "",
+        artifact_id: str = "",
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Query approval requests with optional job/artifact linkage filters."""
+        return self.approval_queue.list_requests(
+            status=status or None,
+            category=category or None,
+            job_id=job_id,
+            artifact_id=artifact_id,
+            limit=limit,
+        )
+
     def list_product_jobs(
         self,
         kind: JobKind | str | None = None,
@@ -468,6 +550,10 @@ class AgentOrchestrator:
             return None
         return job.to_dict()
 
+    def get_operator_report(self, limit: int = 20) -> dict[str, Any]:
+        """Return a compact operator-facing report/inbox."""
+        return self.reporting.get_report(limit=limit)
+
     def get_status(self) -> dict[str, Any]:
         """Get overall agent status."""
         return {
@@ -476,10 +562,12 @@ class AgentOrchestrator:
             "tasks": self.tasks.get_stats(),
             "brain": self.brain.get_stats(),
             "finance": self.finance.get_stats(),
+            "approvals": self.approval_queue.get_stats(),
             "build": self.build.get_stats(),
             "review": self.review.get_stats(),
             "control_plane": {
-                "queryable_job_kinds": ["build", "review"],
+                "queryable_job_kinds": ["build", "review", "operate"],
+                "operator_intake_work_types": ["auto", "review", "build"],
             },
             "jobs": self.job_runner.get_stats(),
             "watchdog": self.watchdog.get_stats(),

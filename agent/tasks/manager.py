@@ -327,6 +327,17 @@ class TaskManager:
     def get_task(self, task_id: str) -> Task | None:
         return self._tasks.get(task_id)
 
+    def list_tasks(
+        self,
+        status: TaskStatus | None = None,
+        limit: int = 50,
+    ) -> list[Task]:
+        tasks = list(self._tasks.values())
+        if status is not None:
+            tasks = [task for task in tasks if task.status == status]
+        tasks.sort(key=lambda task: task.created_at, reverse=True)
+        return tasks[:limit]
+
     def _get_task(self, task_id: str) -> Task:
         task = self._tasks.get(task_id)
         if not task:
