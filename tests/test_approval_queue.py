@@ -167,6 +167,27 @@ class TestApprovalQueue:
         assert len(by_artifact) == 1
         assert by_artifact[0]["id"] == req.id
 
+    def test_list_requests_filters_by_workspace_and_bundle(self, queue):
+        req = queue.propose(
+            ApprovalCategory.EXTERNAL,
+            "deliver build bundle",
+            context={
+                "job_id": "build-123",
+                "workspace_id": "ws-123",
+                "bundle_id": "build-delivery-build-123",
+                "artifact_ids": ["artifact-1"],
+            },
+        )
+        queue.approve(req.id)
+
+        by_workspace = queue.list_requests(workspace_id="ws-123")
+        by_bundle = queue.list_requests(bundle_id="build-delivery-build-123")
+
+        assert len(by_workspace) == 1
+        assert by_workspace[0]["id"] == req.id
+        assert len(by_bundle) == 1
+        assert by_bundle[0]["id"] == req.id
+
     def test_persistent_storage_recovers_pending_and_history(self):
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             storage = ApprovalStorage(db_path=f.name)

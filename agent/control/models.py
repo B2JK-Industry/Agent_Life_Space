@@ -257,6 +257,50 @@ class ArtifactQueryDetail(ArtifactQuerySummary):
 
 
 # ─────────────────────────────────────────────
+# Delivery Package — shared handoff envelope
+# ─────────────────────────────────────────────
+
+@dataclass
+class DeliveryPackage:
+    """Shared preview/delivery envelope for operator-facing handoff packages."""
+
+    bundle_id: str
+    job_id: str
+    job_kind: JobKind
+    package_type: str = ""
+    title: str = ""
+    status: str = ""
+    requester: str = ""
+    workspace_id: str = ""
+    artifact_ids: list[str] = field(default_factory=list)
+    artifact_count: int = 0
+    delivery_ready: bool = False
+    created_at: str = ""
+    completed_at: str = ""
+    summary: dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "bundle_id": self.bundle_id,
+            "job_id": self.job_id,
+            "job_kind": self.job_kind.value,
+            "package_type": self.package_type,
+            "title": self.title,
+            "status": self.status,
+            "requester": self.requester,
+            "workspace_id": self.workspace_id,
+            "artifact_ids": list(self.artifact_ids),
+            "artifact_count": self.artifact_count,
+            "delivery_ready": self.delivery_ready,
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+            "summary": self.summary,
+            "payload": self.payload,
+        }
+
+
+# ─────────────────────────────────────────────
 # Usage Summary — cost/token tracking foundation
 # ─────────────────────────────────────────────
 

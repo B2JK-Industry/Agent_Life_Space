@@ -287,6 +287,8 @@ class ApprovalQueue:
         category: ApprovalCategory | str | None = None,
         job_id: str = "",
         artifact_id: str = "",
+        workspace_id: str = "",
+        bundle_id: str = "",
         limit: int = 200,
     ) -> list[dict[str, Any]]:
         """Query approval requests across pending and history with linkage filters."""
@@ -317,6 +319,8 @@ class ApprovalQueue:
                 category=normalized_category,
                 job_id=job_id,
                 artifact_id=artifact_id,
+                workspace_id=workspace_id,
+                bundle_id=bundle_id,
             )
         ]
         if self._storage is not None:
@@ -336,6 +340,8 @@ class ApprovalQueue:
                     category=normalized_category,
                     job_id=job_id,
                     artifact_id=artifact_id,
+                    workspace_id=workspace_id,
+                    bundle_id=bundle_id,
                 )
             ]
         return filtered[:limit]
@@ -383,12 +389,18 @@ class ApprovalQueue:
         category: str = "",
         job_id: str = "",
         artifact_id: str = "",
+        workspace_id: str = "",
+        bundle_id: str = "",
     ) -> bool:
         if status and req.status.value != status:
             return False
         if category and req.category.value != category:
             return False
         if job_id and req.context.get("job_id") != job_id:
+            return False
+        if workspace_id and req.context.get("workspace_id") != workspace_id:
+            return False
+        if bundle_id and req.context.get("bundle_id") != bundle_id:
             return False
         if artifact_id:
             artifact_ids = req.context.get("artifact_ids", [])

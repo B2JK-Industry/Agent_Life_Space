@@ -22,6 +22,7 @@ This service does NOT:
 
 from __future__ import annotations
 
+import difflib
 import shlex
 import shutil
 import subprocess
@@ -39,13 +40,16 @@ from agent.build.models import (
     BuildIntake,
     BuildJob,
     BuildPhase,
+    CriterionKind,
     VerificationKind,
 )
 from agent.build.storage import BuildStorage
 from agent.build.verification import run_verification_suite
-from agent.control.models import ExecutionMode, JobStatus
+from agent.control.models import DeliveryPackage, ExecutionMode, JobStatus
 
 logger = structlog.get_logger(__name__)
+
+_INTERNAL_WORKSPACE_FILES = {".build_job"}
 
 
 class BuildService:
@@ -60,10 +64,12 @@ class BuildService:
         storage: BuildStorage | None = None,
         workspace_manager: Any = None,
         review_service: Any = None,
+        approval_queue: Any = None,
     ) -> None:
         self._storage = storage or BuildStorage()
         self._workspace_manager = workspace_manager
         self._review_service = review_service
+        self._approval_queue = approval_queue
         self._initialized = False
 
     def initialize(self) -> None:
@@ -320,51 +326,10 @@ class BuildService:
         job.artifacts.append(verification_artifact)
         self._storage.save_artifact(verification_artifact)
 
-        # ── Step 6: Evaluate acceptance criteria ──
-        if can_skip_completed_steps and self._can_reuse_checkpoint(
-            job, BuildCheckpointPhase.ACCEPTANCE_EVALUATED
-        ):
-            job.trace("resume:acceptance").complete("acceptance checkpoint reused")
-        else:
-            t_accept = job.trace("acceptance")
-            job.acceptance.criteria = [
-                AcceptanceCriterion.from_dict(item.to_dict())
-                for item in job.intake.acceptance_criteria
-            ]
+        change_set = self._collect_workspace_changes(job, workspace_path)
 
-            if not passed:
-                # Verification failed — auto-fail acceptance
-                for c in job.acceptance.criteria:
-                    if c.status.value == "pending":
-                        c.fail("Verification did not pass")
-            else:
-                # Evaluate each criterion
-                self._evaluate_acceptance(job, workspace_path)
-
-            job.acceptance.evaluate()
-
-            if job.acceptance.accepted:
-                t_accept.complete(job.acceptance.summary)
-            else:
-                t_accept.fail(job.acceptance.summary)
-            self._record_checkpoint(
-                job,
-                BuildCheckpointPhase.ACCEPTANCE_EVALUATED,
-                detail=f"accepted={job.acceptance.accepted}",
-            )
-
-        # Acceptance report artifact
-        acceptance_artifact = BuildArtifact(
-            artifact_kind=ArtifactKind.ACCEPTANCE_REPORT,
-            job_id=job.id,
-            content_json=job.acceptance.to_dict(),
-            format="json",
-        )
-        job.artifacts.append(acceptance_artifact)
-        self._storage.save_artifact(acceptance_artifact)
-
-        # ── Step 7: Deterministic post-build review (optional) ──
-        if job.acceptance.accepted and job.intake.run_post_build_review:
+        # ── Step 6: Deterministic post-build review (optional) ──
+        if passed and job.intake.run_post_build_review:
             t_review = job.trace("post_build_review")
             review_job = await self._run_post_build_review(job, workspace_path)
             if review_job is None:
@@ -418,18 +383,63 @@ class BuildService:
                 )
                 t_review.fail(job.error)
             else:
-                t_review.complete(
-                    f"review verdict={review_job.report.verdict}"
-                )
+                t_review.complete(f"review verdict={review_job.report.verdict}")
             self._record_checkpoint(
                 job,
                 BuildCheckpointPhase.REVIEWED,
                 detail=f"verdict={job.post_build_review_verdict or 'skipped'}",
             )
 
+        # ── Step 7: Evaluate acceptance criteria ──
+        if can_skip_completed_steps and self._can_reuse_checkpoint(
+            job, BuildCheckpointPhase.ACCEPTANCE_EVALUATED
+        ):
+            job.trace("resume:acceptance").complete("acceptance checkpoint reused")
+        else:
+            t_accept = job.trace("acceptance")
+            job.acceptance.criteria = [
+                AcceptanceCriterion.from_dict(item.to_dict())
+                for item in job.intake.acceptance_criteria
+            ]
+
+            if not passed:
+                # Verification failed — auto-fail acceptance
+                for c in job.acceptance.criteria:
+                    if c.status.value == "pending":
+                        c.fail("Verification did not pass")
+            else:
+                # Evaluate each criterion
+                self._evaluate_acceptance(
+                    job,
+                    workspace_path,
+                    change_set=change_set,
+                )
+
+            job.acceptance.evaluate()
+
+            if job.acceptance.accepted:
+                t_accept.complete(job.acceptance.summary)
+            else:
+                t_accept.fail(job.acceptance.summary)
+            self._record_checkpoint(
+                job,
+                BuildCheckpointPhase.ACCEPTANCE_EVALUATED,
+                detail=f"accepted={job.acceptance.accepted}",
+            )
+
+        # Acceptance report artifact
+        acceptance_artifact = BuildArtifact(
+            artifact_kind=ArtifactKind.ACCEPTANCE_REPORT,
+            job_id=job.id,
+            content_json=job.acceptance.to_dict(),
+            format="json",
+        )
+        job.artifacts.append(acceptance_artifact)
+        self._storage.save_artifact(acceptance_artifact)
+
         # ── Step 8: Produce diff/patch artifact ──
         t_artifacts = job.trace("artifacts")
-        self._capture_diff_artifact(job, workspace_path)
+        self._capture_diff_artifact(job, change_set)
         t_artifacts.complete(f"{len(job.artifacts)} artifacts created")
         self._record_checkpoint(
             job,
@@ -505,7 +515,11 @@ class BuildService:
         return deduped
 
     def _evaluate_acceptance(
-        self, job: BuildJob, workspace_path: str
+        self,
+        job: BuildJob,
+        workspace_path: str,
+        *,
+        change_set: dict[str, Any],
     ) -> None:
         """Evaluate acceptance criteria against build result.
 
@@ -514,8 +528,12 @@ class BuildService:
               inside the workspace without a shell.
             - text mentioning tests/lint/typecheck is bound to the
               matching verification result.
-            - text mentioning build/workspace is bound to the
-              placeholder build step completing.
+            - text mentioning review/security/finding is bound to the
+              deterministic post-build review result.
+            - text mentioning docs/patch/diff/target files is bound to
+              the captured workspace change set.
+            - quality/security criterion kinds reuse verification/review
+              signals when no explicit text rule is present.
             - any other criterion fails closed instead of being
               auto-marked met.
         """
@@ -557,8 +575,50 @@ class BuildService:
                 )
                 continue
 
+            if (
+                "review" in normalized
+                or "security" in normalized
+                or "audit" in normalized
+                or "finding" in normalized
+            ):
+                self._evaluate_review_backed_criterion(
+                    job=job,
+                    criterion=criterion,
+                    normalized=normalized,
+                )
+                continue
+
+            if (
+                "patch" in normalized
+                or "diff" in normalized
+                or "change" in normalized
+                or "target file" in normalized
+                or "docs" in normalized
+                or "documentation" in normalized
+                or "readme" in normalized
+            ):
+                self._evaluate_change_backed_criterion(
+                    job=job,
+                    criterion=criterion,
+                    normalized=normalized,
+                    change_set=change_set,
+                )
+                continue
+
             if "build" in normalized or "workspace" in normalized:
                 criterion.meet("Workspace synchronized and build step completed")
+                continue
+
+            if criterion.kind == CriterionKind.QUALITY:
+                self._evaluate_quality_backed_criterion(job=job, criterion=criterion)
+                continue
+
+            if criterion.kind == CriterionKind.SECURITY:
+                self._evaluate_review_backed_criterion(
+                    job=job,
+                    criterion=criterion,
+                    normalized=normalized,
+                )
                 continue
 
             criterion.fail(f"No evaluator available for criterion: {description}")
@@ -638,6 +698,120 @@ class BuildService:
         else:
             criterion.fail(evidence)
 
+    def _evaluate_quality_backed_criterion(self, *, job: BuildJob, criterion) -> None:
+        if not job.verification_results:
+            criterion.fail("Quality verification did not run")
+            return
+        failed = [result.kind.value for result in job.verification_results if not result.passed]
+        if failed:
+            criterion.fail(f"Quality gates failed: {', '.join(failed)}")
+            return
+        passed = ", ".join(result.kind.value for result in job.verification_results)
+        criterion.meet(f"Quality gates passed: {passed}")
+
+    def _evaluate_review_backed_criterion(
+        self,
+        *,
+        job: BuildJob,
+        criterion,
+        normalized: str,
+    ) -> None:
+        if not job.intake.run_post_build_review:
+            criterion.fail(
+                "Criterion requires post-build review, but run_post_build_review is disabled"
+            )
+            return
+        if not job.post_build_review_verdict:
+            criterion.fail("Post-build review did not complete")
+            return
+
+        counts = job.post_build_review_findings
+        critical = counts.get("critical", 0)
+        high = counts.get("high", 0)
+        total_findings = sum(counts.values())
+        verdict = job.post_build_review_verdict
+
+        if "no findings" in normalized or "zero findings" in normalized:
+            passed = total_findings == 0
+            evidence = f"review verdict={verdict}; total_findings={total_findings}"
+        elif "no critical" in normalized:
+            passed = critical == 0
+            evidence = f"review verdict={verdict}; critical={critical}"
+        elif "no high" in normalized or "no severe" in normalized:
+            passed = critical == 0 and high == 0
+            evidence = f"review verdict={verdict}; critical={critical}; high={high}"
+        else:
+            passed = verdict != "fail"
+            evidence = (
+                f"review verdict={verdict}; critical={critical}; "
+                f"high={high}; total_findings={total_findings}"
+            )
+
+        if passed:
+            criterion.meet(evidence)
+        else:
+            criterion.fail(evidence)
+
+    def _evaluate_change_backed_criterion(
+        self,
+        *,
+        job: BuildJob,
+        criterion,
+        normalized: str,
+        change_set: dict[str, Any],
+    ) -> None:
+        deliverable_changed = list(change_set.get("deliverable_changed_files", []))
+        all_changed = list(change_set.get("changed_files", []))
+        internal_changed = list(change_set.get("internal_files", []))
+
+        def _evidence(prefix: str) -> str:
+            changed_summary = ", ".join(deliverable_changed[:5]) or "none"
+            internal_summary = ", ".join(internal_changed[:3]) or "none"
+            return (
+                f"{prefix}; deliverable_changed={changed_summary}; "
+                f"internal_changed={internal_summary}; files_changed={len(all_changed)}"
+            )
+
+        if "target file" in normalized:
+            if not job.intake.target_files:
+                criterion.fail("Criterion references target files, but intake.target_files is empty")
+                return
+            changed_lookup = {path.casefold() for path in deliverable_changed}
+            missing = [
+                path for path in job.intake.target_files
+                if path.casefold() not in changed_lookup
+            ]
+            if missing:
+                criterion.fail(_evidence(f"Missing target file changes: {', '.join(missing)}"))
+            else:
+                criterion.meet(_evidence("All target files changed"))
+            return
+
+        if "readme" in normalized:
+            passed = any("readme" in path.casefold() for path in deliverable_changed)
+            if passed:
+                criterion.meet(_evidence("README changed"))
+            else:
+                criterion.fail(_evidence("README was not changed"))
+            return
+
+        if "docs" in normalized or "documentation" in normalized:
+            passed = any(
+                path.casefold().startswith("docs/") or path.casefold().endswith(".md")
+                for path in deliverable_changed
+            )
+            if passed:
+                criterion.meet(_evidence("Documentation changed"))
+            else:
+                criterion.fail(_evidence("No documentation changes captured"))
+            return
+
+        if deliverable_changed:
+            criterion.meet(_evidence("Workspace changes captured"))
+            return
+
+        criterion.fail(_evidence("No deliverable file changes captured"))
+
     def _evaluate_verify_command(
         self,
         job: BuildJob,
@@ -705,44 +879,186 @@ class BuildService:
             return f"{summary}; output={compact}"
         return summary
 
-    def _capture_diff_artifact(
-        self, job: BuildJob, workspace_path: str
-    ) -> None:
-        """Capture a diff artifact showing what changed in workspace."""
-        wp = Path(workspace_path)
+    def _collect_workspace_changes(
+        self,
+        job: BuildJob,
+        workspace_path: str,
+    ) -> dict[str, Any]:
+        source_root = Path(job.intake.repo_path).resolve()
+        workspace_root = Path(workspace_path).resolve()
+        relative_paths = sorted(
+            set(self._list_relative_files(source_root))
+            | set(self._list_relative_files(workspace_root))
+        )
+
+        patch_chunks: list[str] = []
+        stat_lines: list[str] = []
+        changed_files: list[str] = []
+        deliverable_changed_files: list[str] = []
+        internal_files: list[str] = []
+        added_files: list[str] = []
+        removed_files: list[str] = []
+        modified_files: list[str] = []
+        binary_files: list[str] = []
+        insertions = 0
+        deletions = 0
+
+        for relative_path in relative_paths:
+            source_file = source_root / relative_path
+            workspace_file = workspace_root / relative_path
+            source_exists = source_file.exists()
+            workspace_exists = workspace_file.exists()
+
+            source_bytes = source_file.read_bytes() if source_exists else b""
+            workspace_bytes = workspace_file.read_bytes() if workspace_exists else b""
+
+            if source_exists and workspace_exists and source_bytes == workspace_bytes:
+                continue
+
+            changed_files.append(relative_path)
+            if relative_path in _INTERNAL_WORKSPACE_FILES:
+                internal_files.append(relative_path)
+            else:
+                deliverable_changed_files.append(relative_path)
+
+            if not source_exists:
+                added_files.append(relative_path)
+                change_code = "A"
+            elif not workspace_exists:
+                removed_files.append(relative_path)
+                change_code = "D"
+            else:
+                modified_files.append(relative_path)
+                change_code = "M"
+
+            source_text = self._decode_patch_text(source_bytes)
+            workspace_text = self._decode_patch_text(workspace_bytes)
+
+            if source_text is None or workspace_text is None:
+                binary_files.append(relative_path)
+                patch_chunks.append(
+                    f"diff --binary a/{relative_path} b/{relative_path}\n"
+                    f"Binary files differ: {relative_path}"
+                )
+                stat_lines.append(f"{change_code} {relative_path} (binary)")
+                continue
+
+            diff_lines = list(
+                difflib.unified_diff(
+                    source_text.splitlines(),
+                    workspace_text.splitlines(),
+                    fromfile=f"a/{relative_path}",
+                    tofile=f"b/{relative_path}",
+                    lineterm="",
+                )
+            )
+            file_insertions = sum(
+                1 for line in diff_lines
+                if line.startswith("+") and not line.startswith("+++")
+            )
+            file_deletions = sum(
+                1 for line in diff_lines
+                if line.startswith("-") and not line.startswith("---")
+            )
+            insertions += file_insertions
+            deletions += file_deletions
+            if diff_lines:
+                patch_chunks.append("\n".join(diff_lines))
+            stat_lines.append(
+                f"{change_code} {relative_path} (+{file_insertions} -{file_deletions})"
+            )
+
+        stat_header = (
+            f"{len(changed_files)} files changed, "
+            f"{insertions} insertions(+), {deletions} deletions(-)"
+        )
+        if binary_files:
+            stat_header += f", {len(binary_files)} binary"
+
+        return {
+            "patch": "\n\n".join(chunk for chunk in patch_chunks if chunk) or "(no workspace changes)",
+            "stat": "\n".join([stat_header, *stat_lines]) if stat_lines else stat_header,
+            "changed_files": changed_files,
+            "deliverable_changed_files": deliverable_changed_files,
+            "internal_files": internal_files,
+            "added_files": added_files,
+            "removed_files": removed_files,
+            "modified_files": modified_files,
+            "binary_files": binary_files,
+            "files_changed": len(changed_files),
+            "deliverable_files_changed": len(deliverable_changed_files),
+            "insertions": insertions,
+            "deletions": deletions,
+        }
+
+    def _list_relative_files(self, root: Path) -> list[str]:
+        if not root.exists():
+            return []
+        relative_paths: list[str] = []
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            relative_path = path.relative_to(root).as_posix()
+            if self._should_skip_change_path(relative_path):
+                continue
+            relative_paths.append(relative_path)
+        return relative_paths
+
+    def _should_skip_change_path(self, relative_path: str) -> bool:
+        skip_parts = {
+            ".git",
+            "__pycache__",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".venv",
+            "venv",
+        }
+        return any(part in skip_parts for part in Path(relative_path).parts)
+
+    def _decode_patch_text(self, data: bytes) -> str | None:
         try:
-            result = subprocess.run(  # noqa: S603, S607
-                ["git", "diff", "--stat"],
-                cwd=str(wp),
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            diff_content = result.stdout or "(no diff)"
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
 
-            full_diff = subprocess.run(  # noqa: S603, S607
-                ["git", "diff"],
-                cwd=str(wp),
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-
-            diff_artifact = BuildArtifact(
-                artifact_kind=ArtifactKind.DIFF,
-                job_id=job.id,
-                content=full_diff.stdout[:50000] if full_diff.stdout else "(no diff)",
-                content_json={
-                    "stat": diff_content,
-                    "files_changed": diff_content.count("|"),
-                },
-                format="text",
-            )
-            job.artifacts.append(diff_artifact)
-            self._storage.save_artifact(diff_artifact)
-        except Exception:
-            # Git not initialized or not available — skip diff
-            pass
+    def _capture_diff_artifact(
+        self,
+        job: BuildJob,
+        change_set: dict[str, Any],
+    ) -> None:
+        """Capture deterministic patch and diff artifacts for workspace output."""
+        patch_artifact = BuildArtifact(
+            artifact_kind=ArtifactKind.PATCH,
+            job_id=job.id,
+            content=change_set.get("patch", "(no workspace changes)"),
+            content_json={
+                "files_changed": change_set.get("files_changed", 0),
+                "deliverable_files_changed": change_set.get("deliverable_files_changed", 0),
+                "changed_files": change_set.get("changed_files", []),
+                "internal_files": change_set.get("internal_files", []),
+                "binary_files": change_set.get("binary_files", []),
+                "insertions": change_set.get("insertions", 0),
+                "deletions": change_set.get("deletions", 0),
+            },
+            format="diff",
+        )
+        diff_artifact = BuildArtifact(
+            artifact_kind=ArtifactKind.DIFF,
+            job_id=job.id,
+            content=change_set.get("stat", "(no workspace changes)"),
+            content_json={
+                "files_changed": change_set.get("files_changed", 0),
+                "deliverable_files_changed": change_set.get("deliverable_files_changed", 0),
+                "added_files": change_set.get("added_files", []),
+                "removed_files": change_set.get("removed_files", []),
+                "modified_files": change_set.get("modified_files", []),
+            },
+            format="text",
+        )
+        job.artifacts.extend([patch_artifact, diff_artifact])
+        self._storage.save_artifact(patch_artifact)
+        self._storage.save_artifact(diff_artifact)
 
     async def _run_post_build_review(
         self,
@@ -857,6 +1173,195 @@ class BuildService:
             artifacts=len(job.artifacts),
         )
 
+    def get_delivery_bundle(self, job_id: str) -> dict[str, Any] | None:
+        """Assemble a build delivery package preview.
+
+        delivery_ready is always False here. External delivery still requires
+        explicit approval via request_delivery_approval().
+        """
+        self.initialize()
+        job = self.load_job(job_id)
+        if job is None:
+            return None
+
+        artifacts = self._storage.get_artifacts(job_id)
+        patch_artifact = next(
+            (artifact for artifact in artifacts if artifact.get("artifact_kind") == ArtifactKind.PATCH.value),
+            None,
+        )
+        diff_artifact = next(
+            (artifact for artifact in artifacts if artifact.get("artifact_kind") == ArtifactKind.DIFF.value),
+            None,
+        )
+        verification_artifact = next(
+            (
+                artifact for artifact in artifacts
+                if artifact.get("artifact_kind") == ArtifactKind.VERIFICATION_REPORT.value
+            ),
+            None,
+        )
+        acceptance_artifact = next(
+            (
+                artifact for artifact in artifacts
+                if artifact.get("artifact_kind") == ArtifactKind.ACCEPTANCE_REPORT.value
+            ),
+            None,
+        )
+        review_artifact = next(
+            (
+                artifact for artifact in artifacts
+                if artifact.get("artifact_kind") == ArtifactKind.REVIEW_REPORT.value
+            ),
+            None,
+        )
+        findings_artifact = next(
+            (
+                artifact for artifact in artifacts
+                if artifact.get("artifact_kind") == ArtifactKind.FINDING_LIST.value
+            ),
+            None,
+        )
+        workspace = (
+            self._workspace_manager.get(job.workspace_id)
+            if self._workspace_manager is not None and job.workspace_id
+            else None
+        )
+
+        package = DeliveryPackage(
+            bundle_id=self._delivery_bundle_id(job.id),
+            job_id=job.id,
+            job_kind=job.job_kind,
+            package_type="build_delivery",
+            title=f"Build delivery package for {job.id[:8]}",
+            status=job.status.value,
+            requester=job.requester,
+            workspace_id=job.workspace_id,
+            artifact_ids=[artifact.get("id", "") for artifact in artifacts],
+            artifact_count=len(artifacts),
+            delivery_ready=False,
+            created_at=job.timing.created_at,
+            completed_at=job.timing.completed_at,
+            summary={
+                "build_type": job.build_type.value,
+                "capability_id": job.capability_id,
+                "verification_passed": job.verification_passed,
+                "acceptance_accepted": job.acceptance.accepted,
+                "review_requested": job.intake.run_post_build_review,
+                "review_verdict": job.post_build_review_verdict or "not_requested",
+                "files_changed": (patch_artifact or {}).get("content_json", {}).get("files_changed", 0),
+                "deliverable_files_changed": (patch_artifact or {}).get("content_json", {}).get(
+                    "deliverable_files_changed",
+                    0,
+                ),
+            },
+            payload={
+                "verification_report": (
+                    verification_artifact or {}
+                ).get("content_json", {"results": [result.to_dict() for result in job.verification_results]}),
+                "acceptance_report": (
+                    acceptance_artifact or {}
+                ).get("content_json", job.acceptance.to_dict()),
+                "patch": {
+                    "artifact_id": (patch_artifact or {}).get("id", ""),
+                    "content": (patch_artifact or {}).get("content", ""),
+                    "metadata": (patch_artifact or {}).get("content_json", {}),
+                },
+                "diff": {
+                    "artifact_id": (diff_artifact or {}).get("id", ""),
+                    "content": (diff_artifact or {}).get("content", ""),
+                    "metadata": (diff_artifact or {}).get("content_json", {}),
+                },
+                "post_build_review": (
+                    review_artifact or {}
+                ).get(
+                    "content_json",
+                    {
+                        "review_job_id": job.post_build_review_job_id,
+                        "verdict": job.post_build_review_verdict,
+                        "finding_counts": job.post_build_review_findings,
+                    },
+                ),
+                "findings": (findings_artifact or {}).get("content_json", {}).get("findings", []),
+                "workspace": (
+                    workspace.to_dict()
+                    if workspace is not None
+                    else {"id": job.workspace_id, "status": ""}
+                ),
+                "error": job.error,
+            },
+        )
+        return package.to_dict()
+
+    def request_delivery_approval(self, job_id: str) -> dict[str, Any]:
+        """Gate build delivery through the approval queue."""
+        self.initialize()
+        job = self.load_job(job_id)
+        if job is None:
+            return {"error": f"Job '{job_id}' not found"}
+        if job.status != JobStatus.COMPLETED:
+            return {"error": f"Job '{job_id}' is {job.status.value}, not completed"}
+
+        bundle = self.get_delivery_bundle(job_id)
+        if bundle is None:
+            return {"error": f"Delivery package for '{job_id}' could not be assembled"}
+
+        if self._approval_queue is None:
+            import os
+
+            if os.environ.get("AGENT_DEV_MODE") == "1":
+                logger.warning("build_delivery_approval_dev_bypass", job_id=job_id)
+                return {
+                    "job_id": job_id,
+                    "bundle_id": bundle["bundle_id"],
+                    "delivery_ready": True,
+                    "approval_bypassed": True,
+                    "warning": "DEV MODE: approval bypassed. Not safe for production.",
+                }
+            return {
+                "error": "Delivery blocked: no approval queue configured. "
+                "External delivery requires approval gating.",
+                "job_id": job_id,
+                "bundle_id": bundle["bundle_id"],
+                "delivery_ready": False,
+            }
+
+        from agent.core.approval import ApprovalCategory
+
+        req = self._approval_queue.propose(
+            category=ApprovalCategory.EXTERNAL,
+            description=f"Deliver build package for job {job_id[:8]} ({job.build_type.value})",
+            risk_level="medium",
+            reason=(
+                f"Build of {job.intake.repo_path} — "
+                f"{bundle['summary'].get('deliverable_files_changed', 0)} deliverable files changed"
+            ),
+            context={
+                "job_id": job_id,
+                "job_kind": job.job_kind.value,
+                "workspace_id": job.workspace_id,
+                "bundle_id": bundle["bundle_id"],
+                "artifact_ids": bundle["artifact_ids"],
+                "requester": job.requester,
+                "capability_id": job.capability_id,
+            },
+        )
+        logger.info(
+            "build_delivery_approval_requested",
+            job_id=job_id,
+            approval_id=req.id,
+            bundle_id=bundle["bundle_id"],
+        )
+        return {
+            "job_id": job_id,
+            "bundle_id": bundle["bundle_id"],
+            "approval_request_id": req.id,
+            "approval_status": "pending",
+            "delivery_ready": False,
+        }
+
+    def _delivery_bundle_id(self, job_id: str) -> str:
+        return f"build-delivery-{job_id}"
+
     # ── Query methods ──
 
     def load_job(self, job_id: str) -> BuildJob | None:
@@ -900,6 +1405,7 @@ class BuildService:
         stats = self._storage.get_stats()
         return {
             "initialized": self._initialized,
+            "approval_queue_configured": self._approval_queue is not None,
             "capabilities": [capability.id for capability in list_capabilities()],
             **stats,
         }

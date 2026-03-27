@@ -18,10 +18,11 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Tool governance** — capability manifest, policy engine, 4-step action pipeline with audit trail
 - **Workspace persistence** — SQLite-backed workspaces with audit trail, limits, TTL, recovery
 - **Approval queue** — structured propose → approve/deny → execute workflow with persistent storage and linkage
+- **Builder delivery packages** — deterministic patch/diff export, acceptance bundle preview, and approval-gated build handoff
 - **Control-plane queries** — shared inspection across build, review, task, job-runner, agent-loop, and artifact state
 - **Runtime model** — explicit coexistence rules for product jobs, planning tasks, infrastructure jobs, and conversational queue items
 - **Operator CLI surfaces** — `--report`, `--runtime-model`, shared artifact inspection, unified `--intake-*`, phase-aware intake preview, and resumable `--build-resume`
-- **1251+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **1255+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -94,7 +95,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 1251+ passed, ~22s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1255+ passed, ~22s, $0.00
 ```
 
 | Layer | Tests | What |
@@ -143,7 +144,7 @@ This project is honest about what works and what doesn't yet.
 | Area | Status | What's missing |
 |------|--------|---------------|
 | Memory provenance | Working | Conflict detection is tag-based, not semantic. No auto-consolidation pipeline yet. |
-| Tool governance | Working | Persistent approval storage exists, but approvals are not yet unified with full delivery/workspace policy. |
+| Tool governance | Working | Delivery approvals now link jobs, artifacts, workspaces, and bundles, but delivery status/audit workflow is still incomplete. |
 | Workspace | Working | No cleanup scheduler (must call `cleanup_expired()` manually). |
 | Routing | Working | Keyword + signal heuristics. No ML-based classification. |
 | Learning | Partial | Model failure tracking resets on restart. No eval set. |

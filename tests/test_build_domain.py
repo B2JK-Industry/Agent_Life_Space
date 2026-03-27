@@ -502,6 +502,8 @@ class TestBuildService:
         )
         job = await service.run_build(intake)
         artifact_kinds = [a.artifact_kind.value for a in job.artifacts]
+        assert "patch" in artifact_kinds
+        assert "diff" in artifact_kinds
         assert "verification_report" in artifact_kinds
         assert "acceptance_report" in artifact_kinds
         assert "execution_trace" in artifact_kinds
@@ -602,6 +604,97 @@ class TestBuildService:
         assert job.status == JobStatus.COMPLETED
         assert job.acceptance.criteria[0].status == CriterionStatus.MET
         assert "exit=0" in job.acceptance.criteria[0].evidence
+
+    async def test_documentation_acceptance_uses_workspace_change_set(
+        self, service, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                )
+            ],
+        )
+
+        def fake_execute_build(job, workspace_path):
+            readme = Path(workspace_path) / "README.md"
+            readme.write_text("# Updated release notes\n")
+            return True
+
+        monkeypatch.setattr(service, "_execute_build", fake_execute_build)
+
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Update docs",
+            acceptance_criteria=[
+                AcceptanceCriterion(description="Documentation updated"),
+            ],
+        )
+
+        job = await service.run_build(intake)
+
+        patch_artifact = next(
+            artifact for artifact in job.artifacts
+            if artifact.artifact_kind == ArtifactKind.PATCH
+        )
+        assert job.status == JobStatus.COMPLETED
+        assert job.acceptance.criteria[0].status == CriterionStatus.MET
+        assert "README.md" in patch_artifact.content
+        assert "deliverable_files_changed" in patch_artifact.content_json
+
+    async def test_security_acceptance_uses_post_build_review(
+        self, workspace_manager, monkeypatch
+    ):
+        from agent.build.service import BuildService
+        from agent.build.storage import BuildStorage
+
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                )
+            ],
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        clean_review = ReviewJob()
+        clean_review.report = ReviewReport(
+            executive_summary="No critical findings.",
+            verdict="pass",
+        )
+        review_service = self._FakeReviewService(clean_review)
+        service = BuildService(
+            storage=BuildStorage(db_path=db_path),
+            workspace_manager=workspace_manager,
+            review_service=review_service,
+        )
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Ship secure change",
+            acceptance_criteria=[
+                AcceptanceCriterion(
+                    description="Security review passes",
+                    kind=CriterionKind.SECURITY,
+                )
+            ],
+            run_post_build_review=True,
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.COMPLETED
+        assert job.acceptance.criteria[0].status == CriterionStatus.MET
+        assert "review verdict=pass" in job.acceptance.criteria[0].evidence
 
     def test_get_verification_steps_adds_typecheck_when_config_present(self, service):
         temp_repo = tempfile.mkdtemp()
@@ -782,3 +875,44 @@ class TestBuildService:
         assert resumed_job.status == JobStatus.COMPLETED
         assert resumed_job.verification_passed is True
         assert verification_runs["count"] == 2
+
+    async def test_delivery_bundle_and_approval_linkage(
+        self, workspace_manager, monkeypatch
+    ):
+        from agent.build.service import BuildService
+        from agent.build.storage import BuildStorage
+        from agent.core.approval import ApprovalQueue
+
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [],
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        queue = ApprovalQueue()
+        service = BuildService(
+            storage=BuildStorage(db_path=db_path),
+            workspace_manager=workspace_manager,
+            approval_queue=queue,
+        )
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Prepare delivery bundle",
+            acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
+        )
+
+        job = await service.run_build(intake)
+        bundle = service.get_delivery_bundle(job.id)
+        approval = service.request_delivery_approval(job.id)
+        request = queue.get_request(approval["approval_request_id"])
+
+        assert bundle is not None
+        assert bundle["package_type"] == "build_delivery"
+        assert "verification_passed" in bundle["summary"]
+        assert bundle["payload"]["patch"]["metadata"]["files_changed"] >= 1
+        assert approval["bundle_id"] == bundle["bundle_id"]
+        assert request is not None
+        assert request["context"]["workspace_id"] == job.workspace_id
+        assert request["context"]["bundle_id"] == bundle["bundle_id"]

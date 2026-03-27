@@ -6,50 +6,50 @@ This file is the near-term execution backlog derived from the current state of
 Assessment basis:
 - branch: `main`
 - interpretation date: `2026-03-27`
-- baseline: after Planner Qualification + Phase Routing slice
+- baseline: after Builder Delivery Package + Operator Health slice
 
 ## Ready Now
 
 ### P0
 
-1. `T3-E1-S3` Capture real patch-set artifacts for builder output.
-   Why now: the planner now models an explicit deliver phase, but builder output
-   still lacks a real patch export to satisfy that handoff honestly.
+1. `T4-E1-S3` Persist or expose planner output for richer operator handoff.
+   Why now: `JobPlan` is now detailed enough to matter operationally, but it is
+   still only a transient preview/submit payload with no durable handoff state.
 
-2. `T3-E3-S3` Add richer domain-specific acceptance evaluators.
-   Why now: planning is now phase-aware and budget-aware, but acceptance is
-   still shallow and keyword-bound.
+2. `T4-E2-S4` Record execution traces for planning decisions.
+   Why now: planner decisions now encode scope, budget, capability, and deliver
+   phase choices, but those decisions are not yet recoverable as first-class
+   traces.
 
 ### P1
 
-3. `T6-E2-S2` Surface workspace health and worker execution in the operator
-   report.
-   Why now: planner output is richer, but the operator report still
-   under-reports workspace and worker execution health.
+3. `T4-E3-S4` Record delivery status and handoff audit events.
+   Why now: builder delivery packages and approval gates now exist, but there is
+   still no durable handoff-status trail once a package is prepared or approved.
 
-4. `T4-E1-S3` Persist or expose planner output for richer operator handoff.
-   Why now: `JobPlan` now includes phase, capability, and budget decisions, but
-   it is still only a transient preview/submit payload.
+4. `T1-E3-S3` Link workspace records to jobs, artifacts, and approvals.
+   Why now: builder delivery approvals now carry workspace and bundle linkage,
+   but workspace records themselves are still not queryable as first-class
+   control-plane joins.
 
-5. `T4-E2-S4` Record execution traces for planning decisions.
-   Why now: scope/risk/budget/capability choices are now explicit, but they are
-   not yet recoverable as first-class planning traces.
+5. `T3-E2-S1` Add test, lint, and type-check loop for implementation jobs.
+   Why now: builder now emits delivery packages honestly, so the next builder
+   gap is better verification discovery rather than more packaging.
 
-6. `T5-E2-S4` Extend approval linkage from review delivery to build, workspace,
-   and delivery bundle records.
-   Why now: budget-aware next actions now exist, but approval linkage still
-   stops short of workspace and delivery bundle objects.
+6. `T3-E2-S2` Add review-after-build pass before completion.
+   Why now: review-after-build now exists, but thresholds and blocking policy
+   remain hard-coded rather than policy-driven.
 
 ### P2
 
-7. `T4-E3-S1` Define delivery package model.
-   Why now: the plan now exposes an explicit deliver phase, but there is still
-   no first-class delivery package object behind it.
+7. `T1-E2-S4` Add artifact retention and recovery rules.
+   Why now: patch, diff, report, and bundle-oriented artifacts are growing in
+   importance, but retention and pruning policy are still undefined.
 
-8. `T4-E3-S2` Assemble artifacts, reports, and acceptance results into delivery
-   bundles.
-   Why now: build/review artifacts and planner phases are ready to converge into
-   one operator handoff bundle, but no bundling flow exists yet.
+8. `T5-E1-S1` Extend policy model to job, artifact, delivery, and external
+   gateway decisions.
+   Why now: delivery/package linkage is deeper now, but policy still does not
+   treat delivery surfaces as first-class decisions.
 
 ## What Closed In This Cycle
 
@@ -79,13 +79,25 @@ Assessment basis:
   phases.
 - `T4-E2-S3` Planner output now assigns concrete build catalog capabilities plus
   planner profiles and structured budget metadata.
+- `T3-E1-S3` Builder now captures deterministic patch + diff artifacts instead
+  of relying on placeholder workspace diff metadata.
+- `T3-E3-S3` Acceptance now supports richer domain-aware evaluators for
+  post-build review, documentation changes, and target-file changes.
+- `T6-E2-S2` Operator report now exposes workspace health and worker execution
+  summaries.
+- `T5-E2-S4` Approval linkage now covers workspace and delivery bundle records
+  in addition to jobs and artifacts.
+- `T4-E3-S1` Shared `DeliveryPackage` model now exists in the control-plane
+  foundation.
+- `T4-E3-S2` Builder now assembles artifacts, acceptance results, and review
+  output into a build delivery package preview.
+- `T4-E3-S3` Build delivery now uses the shared approval gate instead of
+  reviewer-only delivery approval.
 
 ## Exit Criteria For The Next Backlog Slice
 
 The next slice should be considered successful when:
-- builder artifacts include a real patch export, not only diff/trace metadata
-- acceptance gains richer domain-aware evaluators
-- operator reporting exposes workspace and worker health alongside jobs,
-  approvals, and artifacts
-- planner output becomes durable or traceable enough for operator handoff and
-  audit
+- planner output becomes durable enough to hand off or resume cleanly
+- planning decisions emit explicit trace/audit records
+- delivery package lifecycle gains status + audit events after approval/handoff
+- workspace, delivery, and approval joins become richer and more queryable
