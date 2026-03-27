@@ -5,50 +5,50 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Runtime Model + Artifact Planning slice."
+  assessed_state_note: "Snapshot after Planner Qualification + Phase Routing slice."
   interpretation_date: "2026-03-27"
   theme_status:
     T1: { status: in_progress, approx_progress: 84 }
     T2: { status: complete_for_phase, approx_progress: 85 }
     T3: { status: in_progress, approx_progress: 68 }
-    T4: { status: in_progress, approx_progress: 42 }
+    T4: { status: in_progress, approx_progress: 54 }
     T5: { status: in_progress, approx_progress: 60 }
     T6: { status: in_progress, approx_progress: 50 }
     T7: { status: not_started, approx_progress: 0 }
     T8: { status: in_progress, approx_progress: 64 }
 next_execution_backlog:
   - priority: P0
-    story_id: T4-E1-S2
-    title: "Deepen qualification with scope, risk, and budget envelopes"
-    why_now: "JobPlan now exists, but its budget envelope is still heuristic and not yet tied to policy or real cost behavior."
-  - priority: P0
-    story_id: T4-E2-S2
-    title: "Split work into review, build, verify, and deliver phases"
-    why_now: "Planner output now exists, so the next useful step is a richer phase model instead of another preview-only field."
-  - priority: P1
-    story_id: T4-E2-S3
-    title: "Assign capabilities and budget envelopes"
-    why_now: "Planning now names steps and artifacts, but it still does not bind concrete capability or budget choices strongly enough."
-  - priority: P1
     story_id: T3-E1-S3
     title: "Capture real patch-set artifacts for builder output"
-    why_now: "Build/review artifacts are now queryable across domains, so the next builder artifact gap is a real patch export rather than a placeholder marker."
-  - priority: P1
+    why_now: "The planner now models an explicit deliver phase, but builder output still lacks a real patch export to satisfy that handoff honestly."
+  - priority: P0
     story_id: T3-E3-S3
     title: "Add richer domain-specific acceptance evaluators"
-    why_now: "Planning and artifact recovery are stronger, but acceptance is still shallow and keyword-bound."
+    why_now: "Planning is now phase-aware and budget-aware, but acceptance is still shallow and keyword-bound."
   - priority: P1
     story_id: T6-E2-S2
     title: "Surface workspace health and worker execution in the operator report"
-    why_now: "Operator reporting now includes recent artifacts too, but it still under-reports workspace and worker health."
-  - priority: P2
-    story_id: T5-E2-S4
-    title: "Extend approval linkage from review delivery to build, workspace, and delivery bundle records"
-    why_now: "Approval persistence and query filters exist, so the next step is deeper cross-domain linkage instead of more approval mechanics."
-  - priority: P2
+    why_now: "Planner output is richer, but the operator report still under-reports workspace and worker execution health."
+  - priority: P1
     story_id: T4-E1-S3
     title: "Persist or expose planner output for richer operator handoff"
-    why_now: "Intake preview now shows a real JobPlan, but it is still a transient preview rather than a durable operator handoff object."
+    why_now: "JobPlan now includes phase, capability, and budget decisions, but it is still only a transient preview/submit payload."
+  - priority: P1
+    story_id: T4-E2-S4
+    title: "Record execution traces for planning decisions"
+    why_now: "Scope, risk, budget, and capability choices are now explicit, but they are not yet recoverable as first-class planning traces."
+  - priority: P1
+    story_id: T5-E2-S4
+    title: "Extend approval linkage from review delivery to build, workspace, and delivery bundle records"
+    why_now: "Budget-aware next actions now exist, but approval linkage still stops short of workspace and delivery bundle objects."
+  - priority: P2
+    story_id: T4-E3-S1
+    title: "Define delivery package model"
+    why_now: "The plan now exposes an explicit deliver phase, but there is still no first-class delivery package object behind it."
+  - priority: P2
+    story_id: T4-E3-S2
+    title: "Assemble artifacts, reports, and acceptance results into delivery bundles"
+    why_now: "Build/review artifacts and planner phases are ready to converge into one operator handoff bundle, but no bundling flow exists yet."
 themes:
   - id: T1
     name: Platform Foundation
@@ -315,14 +315,14 @@ themes:
     name: Operator Product
     goal: Coordinate end-to-end work and delivery.
     status: in_progress
-    approx_progress: 42
-    current_state: Unified intake routing, JobPlan preview/submit output, CLI intake preview/submit, operator report service, and mock-driven TS reporting surface exist alongside CI typecheck.
+    approx_progress: 54
+    current_state: Unified intake routing, phase-aware JobPlan preview/submit output, policy-backed budget qualification, capability assignments, CLI intake preview/submit, operator report service, and mock-driven TS reporting surface exist alongside CI typecheck.
     main_gap: No live backend/UI, durable planning state, or delivery workflow.
     epics:
       - id: T4-E1
         name: Intake And Qualification
         status: in_progress
-        approx_progress: 55
+        approx_progress: 70
         stories:
           - id: T4-E1-S1
             name: Create intake model for repo paths, git URLs, diff ranges, and work type
@@ -331,13 +331,13 @@ themes:
             missing: Git URL execution still requires clone support before it becomes runnable.
           - id: T4-E1-S2
             name: Add qualification logic for scope, risk, and budget
-            status: in_progress
-            current_state: OperatorIntakeService.qualify() plus JobPlan creation now resolve route, source kind, risk level, blockers, warnings, scope summary, and a heuristic budget envelope for review/build requests.
-            missing: No policy-backed budget model or real cost envelope yet.
+            status: mostly_complete
+            current_state: OperatorIntakeService.qualify() plus JobPlan creation now resolve scope size, scope signals, risk factors, and a policy-backed budget envelope using BudgetPolicy plus live finance budget state when available.
+            missing: Cost estimates are still deterministic heuristics, and there is no live operator UI.
           - id: T4-E1-S3
             name: Add operator-facing intake summary and recommended plan
             status: mostly_complete
-            current_state: python -m agent --intake-* --intake-preview now returns qualification plus a structured JobPlan with steps, planned artifacts, budget envelope, and recommended next action. Submission echoes the same plan shape.
+            current_state: python -m agent --intake-* --intake-preview now returns qualification plus a structured JobPlan with phases, capability assignments, budget details, planned artifacts, and recommended next action. Submission echoes the same plan shape.
             missing: No operator UI or durable handoff state for reviewed plans yet.
           - id: T4-E1-S4
             name: Reject unsupported work cleanly and honestly
@@ -347,19 +347,23 @@ themes:
       - id: T4-E2
         name: Job Planning And Routing
         status: in_progress
-        approx_progress: 35
+        approx_progress: 60
         stories:
           - id: T4-E2-S1
             name: Create JobPlan model and planner outputs
-            status: mostly_complete
-            current_state: JobPlan and JobPlanStep now exist in agent/control/intake.py, and planner output is surfaced through OperatorIntakeService.preview(), AgentOrchestrator.preview_operator_intake(), and CLI preview/submit flows.
-            missing: Plan phases, capability assignment, and durable planner state are still partial.
+            status: complete_for_phase
+            current_state: JobPlan, JobPlanStep, JobPlanPhase, JobPlanCapability, and JobPlanBudgetEnvelope now exist in agent/control/intake.py, and planner output is surfaced through OperatorIntakeService.preview(), AgentOrchestrator.preview_operator_intake(), and CLI preview/submit flows.
+            missing: Durable planner state and planning traces remain future scope.
           - id: T4-E2-S2
             name: Split work into review, build, verify, deliver phases
-            status: not_started
+            status: complete_for_phase
+            current_state: Planner output now exposes explicit qualify, review, build, verify, and deliver phases, with phase-aware steps for both review and build routes.
+            missing: Planner phases are still preview/submit constructs rather than persisted execution history.
           - id: T4-E2-S3
             name: Assign capabilities and budget envelopes
-            status: not_started
+            status: mostly_complete
+            current_state: Planner output now assigns concrete build catalog capabilities plus planner profiles for review, verify, and deliver phases, alongside structured budget envelope metadata.
+            missing: Only the build phase currently binds to a runtime capability catalog; the remaining phase assignments are planner profiles.
           - id: T4-E2-S4
             name: Record execution traces for planning decisions
             status: started

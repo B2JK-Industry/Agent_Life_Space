@@ -11,7 +11,7 @@ Use it for:
 
 ## Current Progress Snapshot
 
-Assessment basis: after Runtime Model + Artifact Planning slice.
+Assessment basis: after Planner Qualification + Phase Routing slice.
 
 Important:
 - this is a strategy progress snapshot, not a merge-state indicator
@@ -24,7 +24,7 @@ Important:
 | T1 Platform Foundation | `in_progress` | 84% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job and artifact queries. | No unified cross-domain persistence/action layer yet. |
 | T2 Reviewer Product | `complete_for_phase` | 85% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction. | API entrypoint, PR comment packs, LLM analysis are v2. |
 | T3 Builder Product | `in_progress` | 68% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, verification, and review-after-build gating. | Build step is still placeholder and there is no full delivery path. |
-| T4 Operator Product | `in_progress` | 42% | Unified intake routing, `JobPlan` preview/submit output, CLI intake preview/submit, operator report service, and mock-driven TS reporting surface. | No live backend/UI, durable planning state, or delivery workflow. |
+| T4 Operator Product | `in_progress` | 54% | Unified intake routing, phase-aware `JobPlan` preview/submit output, policy-backed budget qualification, capability assignments, CLI intake preview/submit, operator report service, and mock-driven TS reporting surface. | No live backend/UI, durable planning state, or delivery workflow. |
 | T5 Security, Governance, And Policy | `in_progress` | 60% | Tool policy deny-by-default, approval gating, redaction pipeline, and persistent/queryable approvals with job/artifact linkage. | Review/build still sit outside a unified policy boundary. |
 | T6 Cost, Usage, And Observability | `in_progress` | 50% | UsageSummary, local build/review counters, shared runtime job/artifact queries, approval backlog visibility, and operator report surfaces. | No real cost ledger or live operator UI. |
 | T7 External Capability Gateway | `not_started` | 0% | Nothing yet. | No gateway contract. |
@@ -214,14 +214,14 @@ Stories:
 ## Theme T4: Operator Product
 
 - status: `in_progress`
-- approx_progress: 42%
+- approx_progress: 54%
 
 Goal: coordinate work end-to-end and support repeatable client delivery.
 
 ### Epic T4-E1: Intake And Qualification
 
 - status: `in_progress`
-- approx_progress: 40%
+- approx_progress: 70%
 
 Stories:
 - T4-E1-S1: Create intake model for repo paths, git URLs, diff ranges, and work
@@ -230,12 +230,12 @@ Stories:
   - current_state: `agent/control/intake.py` now defines a unified operator intake envelope for repo paths, git URLs, diff ranges, work type, build type, acceptance criteria, and routing metadata.
   - missing: Git URL execution still requires clone support before it becomes runnable.
 - T4-E1-S2: Add qualification logic for scope, risk, and budget.
-  - status: `in_progress`
-  - current_state: `OperatorIntakeService.qualify()` plus `JobPlan` creation now resolve route, source kind, risk level, blockers, warnings, scope summary, and a heuristic budget envelope for review/build requests.
-  - missing: No policy-backed budget model or real cost envelope yet.
+  - status: `mostly_complete`
+  - current_state: `OperatorIntakeService.qualify()` plus `JobPlan` creation now resolve scope size, scope signals, risk factors, and a policy-backed budget envelope using `BudgetPolicy` plus live finance budget state when available.
+  - missing: Cost estimates are still deterministic heuristics, and there is no live operator UI.
 - T4-E1-S3: Add operator-facing intake summary and recommended plan.
   - status: `mostly_complete`
-  - current_state: `python -m agent --intake-* --intake-preview` now returns qualification plus a structured `JobPlan` with steps, planned artifacts, budget envelope, and recommended next action. Submission echoes the same plan shape.
+  - current_state: `python -m agent --intake-* --intake-preview` now returns qualification plus a structured `JobPlan` with phases, capability assignments, budget details, planned artifacts, and recommended next action. Submission echoes the same plan shape.
   - missing: No operator UI or durable handoff state for reviewed plans yet.
 - T4-E1-S4: Reject unsupported work cleanly and honestly.
   - status: `in_progress`
@@ -245,15 +245,21 @@ Stories:
 ### Epic T4-E2: Job Planning And Routing
 
 - status: `in_progress`
-- approx_progress: 35%
+- approx_progress: 60%
 
 Stories:
 - T4-E2-S1: Create JobPlan model and planner outputs.
-  - status: `mostly_complete`
-  - current_state: `JobPlan` and `JobPlanStep` now exist in `agent/control/intake.py`, and planner output is surfaced through `OperatorIntakeService.preview()`, `AgentOrchestrator.preview_operator_intake()`, and CLI preview/submit flows.
-  - missing: Plan phases, capability assignment, and durable planner state are still partial.
+  - status: `complete_for_phase`
+  - current_state: `JobPlan`, `JobPlanStep`, `JobPlanPhase`, `JobPlanCapability`, and `JobPlanBudgetEnvelope` now exist in `agent/control/intake.py`, and planner output is surfaced through `OperatorIntakeService.preview()`, `AgentOrchestrator.preview_operator_intake()`, and CLI preview/submit flows.
+  - missing: Durable planner state and planning traces remain future scope.
 - T4-E2-S2: Split work into review, build, verify, deliver phases.
+  - status: `complete_for_phase`
+  - current_state: Planner output now exposes explicit qualify, review, build, verify, and deliver phases, with phase-aware steps for both review and build routes.
+  - missing: Planner phases are still preview/submit constructs rather than persisted execution history.
 - T4-E2-S3: Assign capabilities and budget envelopes.
+  - status: `mostly_complete`
+  - current_state: Planner output now assigns concrete build catalog capabilities plus planner profiles for review, verify, and deliver phases, alongside structured budget envelope metadata.
+  - missing: Only the build phase currently binds to a runtime capability catalog; the remaining phase assignments are planner profiles.
 - T4-E2-S4: Record execution traces for planning decisions.
 
 ### Epic T4-E3: Delivery Workflow
@@ -406,7 +412,7 @@ Builder and reviewer now both sit on shared control-plane primitives, and the
 runtime has explicit coexistence rules for product jobs, planning tasks,
 infrastructure jobs, and conversational loop items. Shared artifact query and
 recovery now span build and review, while operator intake preview/submit flows
-surface a real `JobPlan` instead of only a route decision. The build step
-itself still remains placeholder-grade (no real code generation), but the
-surrounding structure is now materially stronger than the earlier
-foundation-only snapshot.
+surface a phase-aware `JobPlan` with scope, risk, budget, and capability
+decisions instead of only a route decision. The build step itself still remains
+placeholder-grade (no real code generation), but the surrounding structure is
+now materially stronger than the earlier foundation-only snapshot.

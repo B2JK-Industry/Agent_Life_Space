@@ -10,6 +10,26 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.4.4] — 2026-03-27
+
+Planner qualification and phase routing release.
+
+### Operator
+- Unified operator intake now resolves scope signals, risk factors, and a
+  policy-backed budget envelope using `BudgetPolicy` plus live finance budget
+  state when available
+- `JobPlan` now exposes explicit qualify/review/build/verify/deliver phases in
+  preview and submit flows
+- Planner output now assigns concrete build catalog capabilities plus planner
+  profiles and structured budget metadata
+
+### Builder
+- Planner-selected build catalog capability ids now flow into `BuildIntake`
+  instead of remaining preview-only metadata
+
+### Verification
+- Local release verification passed with `1251 passed, 4 skipped`
+
 ## [1.4.3] — 2026-03-27
 
 Runtime model and artifact planning release.

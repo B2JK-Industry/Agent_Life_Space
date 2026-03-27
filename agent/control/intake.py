@@ -12,7 +12,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from agent.build.capabilities import get_capability
 from agent.build.models import AcceptanceCriterion, BuildIntake, BuildJobType
+from agent.finance.budget_policy import BudgetPolicy
 from agent.review.models import ReviewIntake, ReviewJobType
 
 
@@ -30,6 +32,16 @@ class PlanStepStatus(str, Enum):
     PLANNED = "planned"
     BLOCKED = "blocked"
     OPTIONAL = "optional"
+
+
+class PlanPhase(str, Enum):
+    """High-level phases in a planned execution slice."""
+
+    QUALIFY = "qualify"
+    REVIEW = "review"
+    BUILD = "build"
+    VERIFY = "verify"
+    DELIVER = "deliver"
 
 
 class IntakeSourceKind(str, Enum):
@@ -101,20 +113,102 @@ class JobPlanStep:
     """Single planned step for an operator intake."""
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    phase: PlanPhase = PlanPhase.QUALIFY
     title: str = ""
     status: PlanStepStatus = PlanStepStatus.PLANNED
     detail: str = ""
     outputs: list[str] = field(default_factory=list)
+    capability_ids: list[str] = field(default_factory=list)
     blocking: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "phase": self.phase.value,
             "title": self.title,
             "status": self.status.value,
             "detail": self.detail,
             "outputs": list(self.outputs),
+            "capability_ids": list(self.capability_ids),
             "blocking": self.blocking,
+        }
+
+
+@dataclass
+class JobPlanPhase:
+    """High-level phase summary for a planned execution."""
+
+    phase: PlanPhase = PlanPhase.QUALIFY
+    title: str = ""
+    status: PlanStepStatus = PlanStepStatus.PLANNED
+    summary: str = ""
+    outputs: list[str] = field(default_factory=list)
+    capability_ids: list[str] = field(default_factory=list)
+    blocking: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase.value,
+            "title": self.title,
+            "status": self.status.value,
+            "summary": self.summary,
+            "outputs": list(self.outputs),
+            "capability_ids": list(self.capability_ids),
+            "blocking": self.blocking,
+        }
+
+
+@dataclass
+class JobPlanCapability:
+    """Capability or planner profile assigned to a plan phase."""
+
+    phase: PlanPhase = PlanPhase.QUALIFY
+    capability_id: str = ""
+    label: str = ""
+    source: str = ""
+    reason: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase.value,
+            "capability_id": self.capability_id,
+            "label": self.label,
+            "source": self.source,
+            "reason": self.reason,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass
+class JobPlanBudgetEnvelope:
+    """Structured budget envelope for a planned execution."""
+
+    tier: str = "small"
+    estimated_cost_usd: float = 0.0
+    within_budget: bool = True
+    requires_approval: bool = False
+    warnings: list[str] = field(default_factory=list)
+    rationale: list[str] = field(default_factory=list)
+    policy_basis: str = "budget_policy"
+    daily_remaining_usd: float = 0.0
+    monthly_remaining_usd: float = 0.0
+    daily_soft_remaining_usd: float = 0.0
+    monthly_soft_remaining_usd: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tier": self.tier,
+            "estimated_cost_usd": self.estimated_cost_usd,
+            "within_budget": self.within_budget,
+            "requires_approval": self.requires_approval,
+            "warnings": list(self.warnings),
+            "rationale": list(self.rationale),
+            "policy_basis": self.policy_basis,
+            "daily_remaining_usd": self.daily_remaining_usd,
+            "monthly_remaining_usd": self.monthly_remaining_usd,
+            "daily_soft_remaining_usd": self.daily_soft_remaining_usd,
+            "monthly_soft_remaining_usd": self.monthly_soft_remaining_usd,
         }
 
 
@@ -127,12 +221,18 @@ class JobPlan:
     title: str = ""
     summary: str = ""
     scope_summary: str = ""
+    scope_size: str = "small"
+    scope_signals: list[str] = field(default_factory=list)
     risk_level: str = "low"
+    risk_factors: list[str] = field(default_factory=list)
     budget_envelope: str = "small"
+    budget: JobPlanBudgetEnvelope = field(default_factory=JobPlanBudgetEnvelope)
     warnings: list[str] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
     planned_artifacts: list[str] = field(default_factory=list)
     recommended_next_action: str = ""
+    phases: list[JobPlanPhase] = field(default_factory=list)
+    capability_assignments: list[JobPlanCapability] = field(default_factory=list)
     steps: list[JobPlanStep] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -142,12 +242,20 @@ class JobPlan:
             "title": self.title,
             "summary": self.summary,
             "scope_summary": self.scope_summary,
+            "scope_size": self.scope_size,
+            "scope_signals": list(self.scope_signals),
             "risk_level": self.risk_level,
+            "risk_factors": list(self.risk_factors),
             "budget_envelope": self.budget_envelope,
+            "budget": self.budget.to_dict(),
             "warnings": list(self.warnings),
             "blockers": list(self.blockers),
             "planned_artifacts": list(self.planned_artifacts),
             "recommended_next_action": self.recommended_next_action,
+            "phases": [phase.to_dict() for phase in self.phases],
+            "capability_assignments": [
+                assignment.to_dict() for assignment in self.capability_assignments
+            ],
             "steps": [step.to_dict() for step in self.steps],
         }
 
@@ -161,7 +269,10 @@ class IntakeQualification:
     resolved_work_type: OperatorWorkType
     source_kind: IntakeSourceKind
     normalized_repo_path: str = ""
+    scope_size: str = "small"
+    scope_signals: list[str] = field(default_factory=list)
     risk_level: str = "low"
+    risk_factors: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
@@ -173,7 +284,10 @@ class IntakeQualification:
             "resolved_work_type": self.resolved_work_type.value,
             "source_kind": self.source_kind.value,
             "normalized_repo_path": self.normalized_repo_path,
+            "scope_size": self.scope_size,
+            "scope_signals": list(self.scope_signals),
             "risk_level": self.risk_level,
+            "risk_factors": list(self.risk_factors),
             "reasons": list(self.reasons),
             "warnings": list(self.warnings),
             "blockers": list(self.blockers),
@@ -183,11 +297,17 @@ class IntakeQualification:
 class OperatorIntakeService:
     """Qualify and route unified operator intake into build/review jobs."""
 
+    def __init__(
+        self,
+        *,
+        budget_policy: BudgetPolicy | None = None,
+        budget_status_provider: Any = None,
+    ) -> None:
+        self._budget_policy = budget_policy or BudgetPolicy()
+        self._budget_status_provider = budget_status_provider
+
     def qualify(self, intake: OperatorIntake) -> IntakeQualification:
-        if not isinstance(intake.work_type, OperatorWorkType):
-            intake.work_type = OperatorWorkType(str(intake.work_type))
-        if not isinstance(intake.build_type, BuildJobType):
-            intake.build_type = BuildJobType(str(intake.build_type))
+        self._normalize_intake_enums(intake)
         errors = intake.validate()
         qualification = IntakeQualification(
             supported=not errors,
@@ -219,10 +339,15 @@ class OperatorIntakeService:
 
         resolved = self._resolve_work_type(intake)
         qualification.resolved_work_type = resolved
+        scope = self._scope_profile(intake, resolved)
+        qualification.scope_size = scope["size"]
+        qualification.scope_signals = list(scope["signals"])
         qualification.reasons.extend(self._resolve_reasons(intake, resolved))
+        risk_level, risk_factors = self._assess_risk(intake, resolved, scope)
+        qualification.risk_level = risk_level
+        qualification.risk_factors = risk_factors
 
         if resolved == OperatorWorkType.BUILD:
-            qualification.risk_level = "medium"
             if not intake.acceptance_criteria:
                 qualification.warnings.append(
                     "Build route has no acceptance criteria; the job may fail closed."
@@ -232,9 +357,6 @@ class OperatorIntakeService:
                 qualification.blockers.append(
                     "Build routing requires a non-empty description."
                 )
-        else:
-            qualification.risk_level = "low" if intake.diff_spec else "medium"
-
         return qualification
 
     def preview(self, intake: OperatorIntake) -> dict[str, Any]:
@@ -248,6 +370,7 @@ class OperatorIntakeService:
         }
 
     def to_review_intake(self, intake: OperatorIntake) -> ReviewIntake:
+        self._normalize_intake_enums(intake)
         return ReviewIntake(
             repo_path=intake.repo_path,
             diff_spec=intake.diff_spec,
@@ -262,9 +385,12 @@ class OperatorIntakeService:
         )
 
     def to_build_intake(self, intake: OperatorIntake) -> BuildIntake:
+        self._normalize_intake_enums(intake)
+        build_capability = self._build_phase_capability(intake)
         return BuildIntake(
             repo_path=intake.repo_path,
             build_type=intake.build_type,
+            capability_id=build_capability.capability_id,
             description=intake.description,
             target_files=list(intake.target_files),
             acceptance_criteria=[
@@ -284,23 +410,39 @@ class OperatorIntakeService:
     ) -> JobPlan:
         """Create a planner-grade execution outline for this intake."""
         qualification = qualification or self.qualify(intake)
-        if not isinstance(intake.work_type, OperatorWorkType):
-            intake.work_type = OperatorWorkType(str(intake.work_type))
+        self._normalize_intake_enums(intake)
         resolved = qualification.resolved_work_type
-        steps = self._build_plan_steps(intake, qualification)
+        capability_assignments = self._select_capabilities(intake, qualification)
+        budget = self._build_budget_envelope(intake, qualification)
+        phases = self._build_plan_phases(
+            intake,
+            qualification,
+            capability_assignments=capability_assignments,
+        )
+        steps = self._build_plan_steps(
+            intake,
+            qualification,
+            capability_assignments=capability_assignments,
+        )
         return JobPlan(
             resolved_work_type=resolved,
             title=self._build_plan_title(intake, resolved),
             summary=self._build_plan_summary(intake, qualification),
             scope_summary=self._build_scope_summary(intake),
+            scope_size=qualification.scope_size,
+            scope_signals=list(qualification.scope_signals),
             risk_level=qualification.risk_level,
-            budget_envelope=self._estimate_budget_envelope(intake, qualification),
+            risk_factors=list(qualification.risk_factors),
+            budget_envelope=budget.tier,
+            budget=budget,
             warnings=list(qualification.warnings),
             blockers=list(qualification.blockers),
             planned_artifacts=self._planned_artifacts(intake, resolved),
             recommended_next_action=self._recommended_next_action(
-                qualification, resolved
+                qualification, resolved, budget
             ),
+            phases=phases,
+            capability_assignments=capability_assignments,
             steps=steps,
         )
 
@@ -316,6 +458,12 @@ class OperatorIntakeService:
         if any(hint in description for hint in build_hints):
             return OperatorWorkType.BUILD
         return OperatorWorkType.REVIEW
+
+    def _normalize_intake_enums(self, intake: OperatorIntake) -> None:
+        if not isinstance(intake.work_type, OperatorWorkType):
+            intake.work_type = OperatorWorkType(str(intake.work_type))
+        if not isinstance(intake.build_type, BuildJobType):
+            intake.build_type = BuildJobType(str(intake.build_type))
 
     def _resolve_reasons(
         self,
@@ -343,17 +491,22 @@ class OperatorIntakeService:
         self,
         intake: OperatorIntake,
         qualification: IntakeQualification,
+        *,
+        capability_assignments: list[JobPlanCapability],
     ) -> list[JobPlanStep]:
         blocked = not qualification.supported
         status = PlanStepStatus.BLOCKED if blocked else PlanStepStatus.PLANNED
+        capabilities_by_phase = self._capability_ids_by_phase(capability_assignments)
         steps = [
             JobPlanStep(
+                phase=PlanPhase.QUALIFY,
                 title="Qualify intake and normalize scope",
                 status=status,
                 detail=(
                     "Resolve route, source kind, and blockers before runtime execution."
                 ),
                 outputs=["qualification", "normalized_repo_path"],
+                capability_ids=capabilities_by_phase.get(PlanPhase.QUALIFY, []),
             )
         ]
 
@@ -361,24 +514,31 @@ class OperatorIntakeService:
             steps.extend(
                 [
                     JobPlanStep(
+                        phase=PlanPhase.BUILD,
                         title="Prepare workspace and sync repository",
                         status=status,
                         detail="Materialize the requested repo into a managed workspace.",
                         outputs=["workspace", "repo_sync_trace"],
+                        capability_ids=capabilities_by_phase.get(PlanPhase.BUILD, []),
                     ),
                     JobPlanStep(
+                        phase=PlanPhase.BUILD,
                         title="Run deterministic build execution",
                         status=status,
                         detail="Execute the current builder capability in the workspace.",
                         outputs=["build_trace"],
+                        capability_ids=capabilities_by_phase.get(PlanPhase.BUILD, []),
                     ),
                     JobPlanStep(
+                        phase=PlanPhase.VERIFY,
                         title="Verify and evaluate acceptance",
                         status=status,
                         detail="Run verification defaults and evaluate declared acceptance criteria.",
                         outputs=["verification_report", "acceptance_report"],
+                        capability_ids=capabilities_by_phase.get(PlanPhase.VERIFY, []),
                     ),
                     JobPlanStep(
+                        phase=PlanPhase.REVIEW,
                         title="Run post-build review gate",
                         status=(
                             status
@@ -393,13 +553,16 @@ class OperatorIntakeService:
                         outputs=["review_report", "finding_list"]
                         if intake.run_post_build_review
                         else [],
+                        capability_ids=capabilities_by_phase.get(PlanPhase.REVIEW, []),
                         blocking=intake.run_post_build_review,
                     ),
                     JobPlanStep(
+                        phase=PlanPhase.DELIVER,
                         title="Capture delivery-grade artifacts",
                         status=status,
                         detail="Persist diff, trace, and supporting artifacts for recovery/query.",
                         outputs=["diff", "execution_trace"],
+                        capability_ids=capabilities_by_phase.get(PlanPhase.DELIVER, []),
                     ),
                 ]
             )
@@ -407,20 +570,146 @@ class OperatorIntakeService:
             steps.extend(
                 [
                     JobPlanStep(
+                        phase=PlanPhase.REVIEW,
                         title="Analyze repository or diff scope",
                         status=status,
                         detail="Run the review workflow over the requested repo or diff range.",
                         outputs=["review_report", "finding_list"],
+                        capability_ids=capabilities_by_phase.get(PlanPhase.REVIEW, []),
                     ),
                     JobPlanStep(
+                        phase=PlanPhase.VERIFY,
                         title="Verify and package review output",
                         status=status,
                         detail="Finalize report artifacts and client-safe recovery payloads.",
                         outputs=["review_report", "execution_trace"],
+                        capability_ids=capabilities_by_phase.get(PlanPhase.VERIFY, []),
+                    ),
+                    JobPlanStep(
+                        phase=PlanPhase.DELIVER,
+                        title="Prepare operator handoff bundle",
+                        status=status,
+                        detail="Prepare a delivery-safe artifact bundle for operator handoff.",
+                        outputs=["executive_summary", "review_report"],
+                        capability_ids=capabilities_by_phase.get(PlanPhase.DELIVER, []),
                     ),
                 ]
             )
         return steps
+
+    def _build_plan_phases(
+        self,
+        intake: OperatorIntake,
+        qualification: IntakeQualification,
+        *,
+        capability_assignments: list[JobPlanCapability],
+    ) -> list[JobPlanPhase]:
+        blocked = not qualification.supported
+        status = PlanStepStatus.BLOCKED if blocked else PlanStepStatus.PLANNED
+        capabilities_by_phase = self._capability_ids_by_phase(capability_assignments)
+        phases = [
+            JobPlanPhase(
+                phase=PlanPhase.QUALIFY,
+                title="Qualification",
+                status=status,
+                summary=(
+                    f"Normalize source, scope, and route as a {qualification.resolved_work_type.value} request."
+                ),
+                outputs=["qualification"],
+                capability_ids=capabilities_by_phase.get(PlanPhase.QUALIFY, []),
+            )
+        ]
+        if qualification.resolved_work_type == OperatorWorkType.BUILD:
+            phases.extend(
+                [
+                    JobPlanPhase(
+                        phase=PlanPhase.BUILD,
+                        title="Build",
+                        status=status,
+                        summary=(
+                            "Prepare a managed workspace and run the selected builder capability."
+                        ),
+                        outputs=["workspace", "build_trace"],
+                        capability_ids=capabilities_by_phase.get(PlanPhase.BUILD, []),
+                    ),
+                    JobPlanPhase(
+                        phase=PlanPhase.VERIFY,
+                        title="Verify",
+                        status=status,
+                        summary=(
+                            "Run verification defaults and evaluate acceptance criteria."
+                        ),
+                        outputs=["verification_report", "acceptance_report"],
+                        capability_ids=capabilities_by_phase.get(PlanPhase.VERIFY, []),
+                    ),
+                    JobPlanPhase(
+                        phase=PlanPhase.REVIEW,
+                        title="Review Gate",
+                        status=(
+                            status
+                            if intake.run_post_build_review
+                            else PlanStepStatus.OPTIONAL
+                        ),
+                        summary=(
+                            "Apply deterministic post-build review before completion."
+                            if intake.run_post_build_review
+                            else "Post-build review is disabled for this request."
+                        ),
+                        outputs=["review_report", "finding_list"]
+                        if intake.run_post_build_review
+                        else [],
+                        capability_ids=capabilities_by_phase.get(PlanPhase.REVIEW, []),
+                        blocking=intake.run_post_build_review,
+                    ),
+                    JobPlanPhase(
+                        phase=PlanPhase.DELIVER,
+                        title="Deliver",
+                        status=status,
+                        summary=(
+                            "Persist delivery-safe build artifacts for recovery and operator handoff."
+                        ),
+                        outputs=["diff", "execution_trace"],
+                        capability_ids=capabilities_by_phase.get(PlanPhase.DELIVER, []),
+                    ),
+                ]
+            )
+            return phases
+
+        phases.extend(
+            [
+                JobPlanPhase(
+                    phase=PlanPhase.REVIEW,
+                    title="Review",
+                    status=status,
+                    summary=(
+                        "Analyze repository or diff scope through the review workflow."
+                    ),
+                    outputs=["review_report", "finding_list"],
+                    capability_ids=capabilities_by_phase.get(PlanPhase.REVIEW, []),
+                ),
+                JobPlanPhase(
+                    phase=PlanPhase.VERIFY,
+                    title="Verify",
+                    status=status,
+                    summary=(
+                        "Finalize and verify recovery-safe review artifacts."
+                    ),
+                    outputs=["review_report", "execution_trace"],
+                    capability_ids=capabilities_by_phase.get(PlanPhase.VERIFY, []),
+                ),
+                JobPlanPhase(
+                    phase=PlanPhase.DELIVER,
+                    title="Deliver",
+                    status=status,
+                    summary=(
+                        "Prepare operator handoff artifacts and recommended summary."
+                    ),
+                    outputs=["executive_summary", "review_report"],
+                    capability_ids=capabilities_by_phase.get(PlanPhase.DELIVER, []),
+                ),
+            ]
+        )
+        return phases
 
     def _build_plan_title(
         self,
@@ -469,22 +758,276 @@ class OperatorIntakeService:
             return "no explicit scope signals"
         return "; ".join(parts)
 
-    def _estimate_budget_envelope(
+    def _scope_profile(
+        self,
+        intake: OperatorIntake,
+        resolved: OperatorWorkType,
+    ) -> dict[str, Any]:
+        score = 0
+        signals: list[str] = []
+        if intake.repo_path:
+            signals.append("local repository path provided")
+        if intake.diff_spec:
+            signals.append("explicit diff scope provided")
+            score += 2
+        if intake.target_files:
+            signals.append(f"{len(intake.target_files)} target file(s) requested")
+            score += min(len(intake.target_files), 4)
+        if intake.acceptance_criteria:
+            signals.append(
+                f"{len(intake.acceptance_criteria)} acceptance criterion/criteria declared"
+            )
+            score += min(len(intake.acceptance_criteria), 4)
+        if intake.focus_areas:
+            signals.append(f"{len(intake.focus_areas)} focus area(s) supplied")
+            score += min(len(intake.focus_areas), 3)
+        if resolved == OperatorWorkType.BUILD:
+            signals.append(f"mutable build route selected ({intake.build_type.value})")
+            score += 2
+        if resolved == OperatorWorkType.BUILD and intake.run_post_build_review:
+            signals.append("post-build review gate requested")
+            score += 1
+        if score <= 2:
+            size = "small"
+        elif score <= 6:
+            size = "medium"
+        else:
+            size = "large"
+        if not signals:
+            signals.append("default lightweight repository review signals only")
+        return {"score": score, "size": size, "signals": signals}
+
+    def _assess_risk(
+        self,
+        intake: OperatorIntake,
+        resolved: OperatorWorkType,
+        scope: dict[str, Any],
+    ) -> tuple[str, list[str]]:
+        factors: list[str] = []
+        if resolved == OperatorWorkType.BUILD:
+            factors.append("mutable workspace execution is required")
+        if resolved == OperatorWorkType.BUILD and intake.build_type in {
+            BuildJobType.INTEGRATION,
+            BuildJobType.DEVOPS,
+        }:
+            factors.append(
+                f"{intake.build_type.value} work touches higher-impact cross-system surfaces"
+            )
+        if intake.run_post_build_review and resolved == OperatorWorkType.BUILD:
+            factors.append("completion depends on a post-build review gate")
+        if intake.diff_spec and resolved == OperatorWorkType.REVIEW:
+            factors.append("review is constrained to an explicit diff range")
+        if not intake.diff_spec and resolved == OperatorWorkType.REVIEW:
+            factors.append("review is repo-wide rather than diff-scoped")
+        if scope["size"] == "large":
+            factors.append("scope exceeds the lightweight execution envelope")
+        if len(intake.target_files) >= 5:
+            factors.append("target set spans multiple files")
+        if len(intake.acceptance_criteria) >= 4:
+            factors.append("acceptance surface is broad")
+
+        if resolved == OperatorWorkType.REVIEW and intake.diff_spec and scope["size"] == "small":
+            return "low", factors
+        if resolved == OperatorWorkType.BUILD and (
+            scope["size"] == "large"
+            or intake.build_type in {BuildJobType.INTEGRATION, BuildJobType.DEVOPS}
+        ):
+            return "high", factors
+        return "medium", factors
+
+    def _build_budget_envelope(
         self,
         intake: OperatorIntake,
         qualification: IntakeQualification,
-    ) -> str:
-        score = 0
-        score += len(intake.target_files)
-        score += len(intake.acceptance_criteria)
-        score += len(intake.focus_areas)
-        score += 2 if intake.diff_spec else 0
-        score += 2 if qualification.resolved_work_type == OperatorWorkType.BUILD else 0
-        if score <= 2:
-            return "small"
-        if score <= 6:
-            return "medium"
-        return "large"
+    ) -> JobPlanBudgetEnvelope:
+        estimated_cost = self._estimate_planned_cost_usd(intake, qualification)
+        budget_status = self._get_budget_status(estimated_cost)
+        daily_spent = float(budget_status.get("daily_spent", 0.0))
+        monthly_spent = float(budget_status.get("monthly_spent", 0.0))
+        policy_result = self._budget_policy.check(
+            estimated_cost,
+            daily_spent=daily_spent,
+            monthly_spent=monthly_spent,
+        )
+        forecast = self._budget_policy.get_forecast(
+            daily_spent=daily_spent,
+            monthly_spent=monthly_spent,
+        )
+        rationale = [
+            f"resolved_work_type={qualification.resolved_work_type.value}",
+            f"scope_size={qualification.scope_size}",
+            f"target_files={len(intake.target_files)}",
+            f"acceptance_criteria={len(intake.acceptance_criteria)}",
+        ]
+        if intake.run_post_build_review and qualification.resolved_work_type == OperatorWorkType.BUILD:
+            rationale.append("post_build_review=true")
+        return JobPlanBudgetEnvelope(
+            tier=qualification.scope_size,
+            estimated_cost_usd=estimated_cost,
+            within_budget=bool(budget_status.get("within_budget", policy_result.allowed)),
+            requires_approval=policy_result.requires_approval,
+            warnings=list(policy_result.warnings),
+            rationale=rationale,
+            daily_remaining_usd=round(float(budget_status.get("daily_remaining", 0.0)), 2),
+            monthly_remaining_usd=round(float(budget_status.get("monthly_remaining", 0.0)), 2),
+            daily_soft_remaining_usd=round(float(forecast["daily"]["soft_remaining"]), 2),
+            monthly_soft_remaining_usd=round(float(forecast["monthly"]["soft_remaining"]), 2),
+        )
+
+    def _estimate_planned_cost_usd(
+        self,
+        intake: OperatorIntake,
+        qualification: IntakeQualification,
+    ) -> float:
+        amount = 1.5 if qualification.resolved_work_type == OperatorWorkType.REVIEW else 4.0
+        amount += min(len(intake.target_files), 6) * 0.8
+        amount += min(len(intake.acceptance_criteria), 6) * 1.1
+        amount += min(len(intake.focus_areas), 4) * 0.4
+        if intake.diff_spec:
+            amount += 1.0
+        if qualification.scope_size == "medium":
+            amount += 2.5
+        elif qualification.scope_size == "large":
+            amount += 6.0
+        if qualification.resolved_work_type == OperatorWorkType.BUILD:
+            amount += 2.0
+            if intake.build_type == BuildJobType.INTEGRATION:
+                amount += 4.0
+            elif intake.build_type == BuildJobType.DEVOPS:
+                amount += 3.0
+            elif intake.build_type == BuildJobType.TESTING:
+                amount += 1.0
+        if intake.run_post_build_review and qualification.resolved_work_type == OperatorWorkType.BUILD:
+            amount += 2.0
+        return round(amount, 2)
+
+    def _get_budget_status(self, estimated_cost: float) -> dict[str, Any]:
+        if not callable(self._budget_status_provider):
+            return {
+                "daily_spent": 0.0,
+                "daily_remaining": self._budget_policy.limits.daily_hard_cap,
+                "monthly_spent": 0.0,
+                "monthly_remaining": self._budget_policy.limits.monthly_hard_cap,
+                "within_budget": estimated_cost <= self._budget_policy.limits.daily_hard_cap,
+            }
+        return self._budget_status_provider(estimated_cost)
+
+    def _select_capabilities(
+        self,
+        intake: OperatorIntake,
+        qualification: IntakeQualification,
+    ) -> list[JobPlanCapability]:
+        assignments = [
+            JobPlanCapability(
+                phase=PlanPhase.QUALIFY,
+                capability_id="intake_router_v1",
+                label="Intake Router",
+                source="planner_profile",
+                reason="Qualification always passes through the unified intake router.",
+            )
+        ]
+        if qualification.resolved_work_type == OperatorWorkType.BUILD:
+            build_capability = self._build_phase_capability(intake)
+            assignments.append(build_capability)
+            assignments.append(
+                JobPlanCapability(
+                    phase=PlanPhase.VERIFY,
+                    capability_id="verify_default_suite",
+                    label="Verification Defaults",
+                    source="planner_profile",
+                    reason=(
+                        f"Use {build_capability.metadata['verification_defaults']} as the default verification profile."
+                    ),
+                    metadata={
+                        "verification_defaults": build_capability.metadata[
+                            "verification_defaults"
+                        ],
+                    },
+                )
+            )
+            if intake.run_post_build_review:
+                assignments.append(
+                    JobPlanCapability(
+                        phase=PlanPhase.REVIEW,
+                        capability_id="review_repo_audit_v1",
+                        label="Post-build Review",
+                        source="planner_profile",
+                        reason=(
+                            "Build completion is gated by deterministic repo_audit review over the workspace."
+                        ),
+                    )
+                )
+            assignments.append(
+                JobPlanCapability(
+                    phase=PlanPhase.DELIVER,
+                    capability_id="artifact_recovery_bundle_v1",
+                    label="Artifact Recovery Bundle",
+                    source="planner_profile",
+                    reason="Build output should be queryable and recovery-safe for operator handoff.",
+                )
+            )
+            return assignments
+
+        review_type = "pr_review_v1" if intake.diff_spec else "repo_audit_v1"
+        assignments.extend(
+            [
+                JobPlanCapability(
+                    phase=PlanPhase.REVIEW,
+                    capability_id=review_type,
+                    label="Review Workflow",
+                    source="planner_profile",
+                    reason=(
+                        "Diff-scoped review selected."
+                        if intake.diff_spec
+                        else "Repository-wide review selected."
+                    ),
+                ),
+                JobPlanCapability(
+                    phase=PlanPhase.VERIFY,
+                    capability_id="review_verifier_v1",
+                    label="Review Verifier",
+                    source="planner_profile",
+                    reason="Review output should be verified before operator handoff.",
+                ),
+                JobPlanCapability(
+                    phase=PlanPhase.DELIVER,
+                    capability_id="review_handoff_bundle_v1",
+                    label="Review Handoff Bundle",
+                    source="planner_profile",
+                    reason="Prepare recovery-safe review artifacts for operator consumption.",
+                ),
+            ]
+        )
+        return assignments
+
+    def _build_phase_capability(self, intake: OperatorIntake) -> JobPlanCapability:
+        capability = get_capability(intake.build_type)
+        return JobPlanCapability(
+            phase=PlanPhase.BUILD,
+            capability_id=capability.id,
+            label=capability.label,
+            source="build_catalog",
+            reason=(
+                f"Build type `{intake.build_type.value}` resolves to the declared `{capability.id}` capability."
+            ),
+            metadata={
+                "build_type": intake.build_type.value,
+                "supports_resume": capability.supports_resume,
+                "review_after_build_default": capability.review_after_build_default,
+                "verification_defaults": [
+                    item.value for item in capability.verification_defaults
+                ],
+            },
+        )
+
+    def _capability_ids_by_phase(
+        self,
+        assignments: list[JobPlanCapability],
+    ) -> dict[PlanPhase, list[str]]:
+        grouped: dict[PlanPhase, list[str]] = {}
+        for assignment in assignments:
+            grouped.setdefault(assignment.phase, []).append(assignment.capability_id)
+        return grouped
 
     def _planned_artifacts(
         self,
@@ -507,9 +1050,16 @@ class OperatorIntakeService:
         self,
         qualification: IntakeQualification,
         resolved: OperatorWorkType,
+        budget: JobPlanBudgetEnvelope,
     ) -> str:
         if not qualification.supported:
             return "Resolve blockers and rerun intake preview."
+        if not budget.within_budget:
+            return "Reduce scope or budget exposure before submitting this intake."
+        if budget.requires_approval:
+            return "Request budget approval before submitting this intake for execution."
         if resolved == OperatorWorkType.BUILD:
-            return "Submit the intake to create a build job with verification and artifact capture."
+            return (
+                "Submit the intake to create a build job with phase-aware planning, verification, and artifact capture."
+            )
         return "Submit the intake to create a review job and package the report artifacts."
