@@ -468,6 +468,8 @@ class ReviewJob:
                 "review_type": self.intake.review_type.value,
                 "focus_areas": self.intake.focus_areas,
                 "max_files": self.intake.max_files,
+                "include_patterns": self.intake.include_patterns,
+                "exclude_patterns": self.intake.exclude_patterns,
                 "requester": self.intake.requester,
                 "context": self.intake.context,
             },
@@ -498,6 +500,8 @@ class ReviewJob:
             review_type=ReviewJobType(intake_d.get("review_type", "repo_audit")),
             focus_areas=intake_d.get("focus_areas", []),
             max_files=intake_d.get("max_files", 100),
+            include_patterns=intake_d.get("include_patterns", []),
+            exclude_patterns=intake_d.get("exclude_patterns", []),
             requester=intake_d.get("requester", ""),
             context=intake_d.get("context", ""),
         )
