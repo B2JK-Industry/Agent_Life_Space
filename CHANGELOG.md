@@ -10,6 +10,30 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.4.5] — 2026-03-27
+
+Builder delivery package and operator health release.
+
+### Builder
+- Builder now captures deterministic patch + diff artifacts by comparing the
+  source repo and workspace, instead of relying on placeholder workspace diff
+  metadata
+- Build delivery now exposes a shared `DeliveryPackage` preview with
+  verification, acceptance, review, patch, diff, findings, and workspace
+  payloads
+- Acceptance evaluation now supports richer deterministic checks, including
+  post-build review verdicts plus documentation and target-file change rules
+
+### Operator / Control Plane
+- Operator report now includes workspace health and worker execution summaries
+  in addition to jobs, approvals, and artifacts
+- Shared `DeliveryPackage` model added to the control-plane foundation
+- Approval queries and build delivery approvals now link job, artifact,
+  workspace, and bundle records together
+
+### Verification
+- Local release verification passed with `1255 passed, 4 skipped`
+
 ## [1.4.4] — 2026-03-27
 
 Planner qualification and phase routing release.

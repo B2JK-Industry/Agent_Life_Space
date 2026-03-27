@@ -48,6 +48,8 @@ class OperatorReportService:
             else {}
         )
         agent_status = self._status_provider() if callable(self._status_provider) else {}
+        workspace_health = agent_status.get("workspaces", {})
+        worker_execution = agent_status.get("worker_execution", {})
 
         inbox: list[dict[str, Any]] = []
         for approval in pending_approvals[:limit]:
@@ -70,6 +72,27 @@ class OperatorReportService:
                     "detail": job["blocked_reason"] or job["outcome"],
                 }
             )
+        failed_workspaces = workspace_health.get("by_status", {}).get("failed", 0)
+        if failed_workspaces:
+            inbox.append(
+                {
+                    "kind": "workspace_attention",
+                    "id": "workspace_health",
+                    "status": "failed",
+                    "title": "Workspace failures need review",
+                    "detail": f"{failed_workspaces} failed workspaces recorded",
+                }
+            )
+        if worker_execution.get("circuit_breaker_open"):
+            inbox.append(
+                {
+                    "kind": "worker_attention",
+                    "id": "worker_execution",
+                    "status": "blocked",
+                    "title": "Worker circuit breaker is open",
+                    "detail": "Job runner is currently rejecting new work due to recent failures.",
+                }
+            )
 
         return {
             "summary": {
@@ -78,11 +101,15 @@ class OperatorReportService:
                 "blocked_jobs": len(blocked_jobs),
                 "pending_approvals": len(pending_approvals),
                 "disabled_tools": controls.get("total_disabled", 0),
+                "active_workspaces": workspace_health.get("by_status", {}).get("active", 0),
+                "active_workers": worker_execution.get("active_jobs", 0),
             },
             "inbox": inbox[:limit],
             "recent_jobs": jobs[:limit],
             "recent_artifacts": artifacts[:limit],
             "pending_approvals": pending_approvals[:limit],
             "controls": controls,
+            "workspace_health": workspace_health,
+            "worker_execution": worker_execution,
             "agent_status": agent_status,
         }

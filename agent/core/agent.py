@@ -130,6 +130,7 @@ class AgentOrchestrator:
             ),
             workspace_manager=self.workspaces,
             review_service=self.review,
+            approval_queue=self.approval_queue,
         )
         self.jobs = JobQueryService(
             build_service=self.build,
@@ -532,6 +533,8 @@ class AgentOrchestrator:
         category: str = "",
         job_id: str = "",
         artifact_id: str = "",
+        workspace_id: str = "",
+        bundle_id: str = "",
         limit: int = 200,
     ) -> list[dict[str, Any]]:
         """Query approval requests with optional job/artifact linkage filters."""
@@ -540,8 +543,18 @@ class AgentOrchestrator:
             category=category or None,
             job_id=job_id,
             artifact_id=artifact_id,
+            workspace_id=workspace_id,
+            bundle_id=bundle_id,
             limit=limit,
         )
+
+    def get_build_delivery_bundle(self, job_id: str) -> dict[str, Any] | None:
+        """Return a builder delivery package preview."""
+        return self.build.get_delivery_bundle(job_id)
+
+    def request_build_delivery_approval(self, job_id: str) -> dict[str, Any]:
+        """Request approval for external delivery of a build package."""
+        return self.build.request_delivery_approval(job_id)
 
     def list_product_jobs(
         self,
@@ -607,6 +620,20 @@ class AgentOrchestrator:
 
     def get_status(self) -> dict[str, Any]:
         """Get overall agent status."""
+        recent_worker_jobs = [
+            job.to_dict() for job in self.job_runner.get_recent_jobs(limit=10)
+        ]
+        active_worker_jobs = [
+            job.to_dict() for job in self.job_runner.get_active_jobs()
+        ]
+        recent_workspaces = [
+            workspace.to_dict()
+            for workspace in sorted(
+                self.workspaces.list_workspaces(),
+                key=lambda item: item.created_at,
+                reverse=True,
+            )[:10]
+        ]
         return {
             "running": self._running,
             "memory": self.memory.get_stats(),
@@ -616,6 +643,10 @@ class AgentOrchestrator:
             "approvals": self.approval_queue.get_stats(),
             "build": self.build.get_stats(),
             "review": self.review.get_stats(),
+            "workspaces": {
+                **self.workspaces.get_stats(),
+                "recent": recent_workspaces,
+            },
             "control_plane": {
                 "queryable_job_kinds": ["build", "review", "operate"],
                 "queryable_artifact_kinds": [
@@ -634,6 +665,11 @@ class AgentOrchestrator:
                 "runtime_model_status": self.runtime_model.get_model()["status"],
             },
             "jobs": self.job_runner.get_stats(),
+            "worker_execution": {
+                "active_jobs": len(active_worker_jobs),
+                "recent_jobs": recent_worker_jobs,
+                "circuit_breaker_open": self.job_runner.circuit_breaker_open,
+            },
             "watchdog": self.watchdog.get_stats(),
             "router": self.router.get_metrics(),
         }

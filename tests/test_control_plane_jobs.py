@@ -293,15 +293,32 @@ class TestJobQueryService:
             artifact_queries=artifact_query_service,
             approval_queue=approval_queue,
             operator_controls=controls,
-            status_provider=lambda: {"running": False},
+            status_provider=lambda: {
+                "running": False,
+                "workspaces": {
+                    "total": 2,
+                    "by_status": {"active": 1, "failed": 1},
+                    "recent": [{"id": "ws-1", "status": "active"}],
+                },
+                "worker_execution": {
+                    "active_jobs": 1,
+                    "recent_jobs": [{"id": "runner-1", "status": "running"}],
+                    "circuit_breaker_open": False,
+                },
+            },
         ).get_report(limit=10)
 
         assert report["summary"]["blocked_jobs"] == 1
         assert report["summary"]["total_artifacts"] == 1
         assert report["summary"]["pending_approvals"] == 1
+        assert report["summary"]["active_workspaces"] == 1
+        assert report["summary"]["active_workers"] == 1
+        assert report["workspace_health"]["by_status"]["failed"] == 1
+        assert report["worker_execution"]["active_jobs"] == 1
         assert {item["kind"] for item in report["inbox"]} == {
             "approval",
             "job_attention",
+            "workspace_attention",
         }
 
 

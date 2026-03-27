@@ -38,17 +38,17 @@ python -m agent --report     # Operator report / inbox
 python -m agent --runtime-model   # Explicitný runtime model
 python -m agent --list-artifacts  # Shared artifact query surface
 python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-preview
-python -m pytest tests/ -q   # Testy (1251+ testov)
+python -m pytest tests/ -q   # Testy (1255+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.4.4** — Planner qualification and phase routing release.
+Aktuálna: **v1.4.5** — Builder delivery package and operator health release.
 
-Nové v `v1.4.4`:
-- unified operator intake teraz vracia phase-aware `JobPlan`
-- qualification teraz zahŕňa scope signals, risk factors a policy-backed budget envelope
-- planner teraz priraďuje capability assignments aj budget metadata
-- `python -m agent --intake-* --intake-preview` dáva realistickejší operator handoff preview
+Nové v `v1.4.5`:
+- builder teraz exportuje deterministic patch + diff artifacts
+- build job teraz vie poskladať delivery package preview a požiadať o delivery approval
+- acceptance evaluácia teraz rozumie review/security aj docs/target-file change signálom
+- operator report teraz ukazuje workspace health aj worker execution
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.
