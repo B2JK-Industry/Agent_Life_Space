@@ -6,6 +6,7 @@ Nie je závislý na Telegrame — priama komunikácia.
 
 Endpoint:
     POST /api/message — prijmi správu od iného agenta
+    POST /api/review  — spusti štruktúrovaný review job
     GET  /api/status  — stav agenta (verejný)
     GET  /api/health  — zdravie (verejný)
 
@@ -294,6 +295,164 @@ class AgentAPI:
                 {"error": "Internal processing error"}, status=500
             )
 
+    async def _handle_review(self, request: web.Request) -> web.Response:
+        """POST /api/review — run a structured review job through ReviewService."""
+        start = time.monotonic()
+        ip = request.remote or "unknown"
+
+        auth_error = self._check_auth(request)
+        if auth_error:
+            self._audit.record(ApiAuditEntry(
+                ip=ip, intent="review", status_code=401, error=auth_error,
+            ))
+            return web.json_response({"error": auth_error}, status=401)
+
+        if not self._check_rate_limit(ip):
+            self._audit.record(ApiAuditEntry(
+                ip=ip, intent="review", status_code=429, error="rate_limited",
+            ))
+            return web.json_response(
+                {"error": "Rate limit exceeded (10/min)"}, status=429
+            )
+
+        try:
+            data = await request.json()
+        except Exception:
+            self._audit.record(ApiAuditEntry(
+                ip=ip, intent="review", status_code=400, error="invalid_json",
+            ))
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        sender = str(data.get("sender", "api_review_client")).strip() or "api_review_client"
+        nonce = data.get("nonce", "")
+        req_timestamp = data.get("timestamp", 0.0)
+        replay_error = self._replay.check_and_record(nonce, req_timestamp)
+        if replay_error:
+            self._audit.record(ApiAuditEntry(
+                sender=sender,
+                ip=ip,
+                intent="review",
+                status_code=409,
+                error=replay_error,
+            ))
+            return web.json_response({"error": replay_error}, status=409)
+
+        if self._agent is None:
+            self._audit.record(ApiAuditEntry(
+                sender=sender,
+                ip=ip,
+                intent="review",
+                status_code=503,
+                error="no_agent",
+            ))
+            return web.json_response(
+                {"error": "No agent configured"}, status=503
+            )
+
+        from agent.review.models import ReviewIntake, ReviewJobType
+
+        repo_path = str(data.get("repo_path", "")).strip()
+        diff_spec = str(data.get("diff_spec", "")).strip()
+        review_type_raw = str(
+            data.get("review_type", ReviewJobType.REPO_AUDIT.value)
+        ).strip() or ReviewJobType.REPO_AUDIT.value
+        try:
+            review_type = ReviewJobType(review_type_raw)
+        except ValueError:
+            self._audit.record(ApiAuditEntry(
+                sender=sender,
+                ip=ip,
+                intent="review",
+                status_code=400,
+                error="invalid_review_type",
+            ))
+            return web.json_response(
+                {"error": f"Invalid review_type '{review_type_raw}'"},
+                status=400,
+            )
+
+        intake = ReviewIntake(
+            repo_path=repo_path,
+            diff_spec=diff_spec,
+            review_type=review_type,
+            focus_areas=[
+                str(item)
+                for item in data.get("focus_areas", [])
+                if str(item).strip()
+            ],
+            max_files=int(data.get("max_files", 100) or 100),
+            include_patterns=[
+                str(item)
+                for item in data.get("include_patterns", [])
+                if str(item).strip()
+            ],
+            exclude_patterns=[
+                str(item)
+                for item in data.get("exclude_patterns", [])
+                if str(item).strip()
+            ],
+            requester=sender,
+            context=str(data.get("context", "")).strip(),
+            source="api",
+        )
+
+        errors = intake.validate()
+        if errors:
+            self._audit.record(ApiAuditEntry(
+                sender=sender,
+                ip=ip,
+                intent="review",
+                status_code=400,
+                error="validation_failed",
+            ))
+            return web.json_response(
+                {"error": "; ".join(errors)},
+                status=400,
+            )
+
+        try:
+            job = await self._agent.run_review_job(intake)
+            status_code = 200 if job.status.value == "completed" else 422
+            duration = int((time.monotonic() - start) * 1000)
+            self._audit.record(ApiAuditEntry(
+                sender=sender,
+                ip=ip,
+                intent="review",
+                status_code=status_code,
+                duration_ms=duration,
+                error=job.error,
+            ))
+            return web.json_response(
+                {
+                    "job_id": job.id,
+                    "job_kind": job.job_kind.value,
+                    "status": job.status.value,
+                    "phase": job.phase.value,
+                    "verdict": job.report.verdict,
+                    "finding_counts": job.report.finding_counts,
+                    "artifact_count": len(job.artifacts),
+                    "execution_mode": job.execution_mode.value,
+                    "source": job.source,
+                    "error": job.error,
+                },
+                status=status_code,
+            )
+        except Exception as e:
+            duration = int((time.monotonic() - start) * 1000)
+            self._audit.record(ApiAuditEntry(
+                sender=sender,
+                ip=ip,
+                intent="review",
+                status_code=500,
+                duration_ms=duration,
+                error="internal",
+            ))
+            logger.error("agent_api_review_error", error=str(e))
+            return web.json_response(
+                {"error": "Internal processing error"},
+                status=500,
+            )
+
     async def _handle_status(self, request: web.Request) -> web.Response:
         """GET /api/status — minimal public status (no internal details)."""
         return web.json_response({
@@ -316,6 +475,7 @@ class AgentAPI:
         """Spusti HTTP server."""
         self._app = web.Application()
         self._app.router.add_post("/api/message", self._handle_message)
+        self._app.router.add_post("/api/review", self._handle_review)
         self._app.router.add_get("/api/status", self._handle_status)
         self._app.router.add_get("/api/health", self._handle_health)
 

@@ -37,6 +37,13 @@ class TestBudgetPolicy:
         assert result.soft_cap_hit
         assert len(result.warnings) > 0
 
+    def test_stop_loss_blocks_before_hard_cap(self):
+        policy = BudgetPolicy(BudgetLimits(daily_hard_cap=50, daily_stop_loss_buffer=5))
+        result = policy.check(amount=6.0, daily_spent=40.0, monthly_spent=0)
+        assert not result.allowed
+        assert result.stop_loss_hit
+        assert not result.hard_cap_hit
+
     def test_single_tx_approval_cap(self):
         policy = BudgetPolicy(BudgetLimits(single_tx_approval_cap=20))
         result = policy.check(amount=25.0, daily_spent=0, monthly_spent=0)
@@ -77,8 +84,10 @@ class TestBudgetForecast:
         forecast = policy.get_forecast(daily_spent=15.0, monthly_spent=150.0)
         assert forecast["daily"]["soft_remaining"] == 15.0
         assert forecast["daily"]["hard_remaining"] == 35.0
+        assert forecast["daily"]["stop_loss_remaining"] == 30.0
         assert forecast["monthly"]["soft_remaining"] == 150.0
         assert forecast["monthly"]["hard_remaining"] == 350.0
+        assert forecast["monthly"]["stop_loss_remaining"] == 300.0
         assert forecast["single_tx_approval_cap"] == 20.0
 
     def test_forecast_over_soft(self):

@@ -698,6 +698,13 @@ class TestExecutionMode:
         assert len(policy_traces) == 1
         assert "read_only_host" in policy_traces[0].detail
         assert "host_access=read_only" in policy_traces[0].detail
+        assert "policy=repo_host_read_only" in policy_traces[0].detail
+
+    async def test_execution_policy_blocks_unknown_source(self, service, sample_repo):
+        intake = ReviewIntake(repo_path=sample_repo, source="unknown_source")
+        job = await service.run_review(intake)
+        assert job.status == ReviewJobStatus.BLOCKED
+        assert "policy" in job.error
 
 
 # ─────────────────────────────────────────────
@@ -1187,6 +1194,23 @@ class TestAuditV4Regressions:
 
         assert recovered.intake.include_patterns == ["*.py"]
         assert recovered.intake.exclude_patterns == ["tests/**"]
+
+    def test_job_roundtrip_preserves_intake_source(self):
+        from agent.review.models import ReviewIntake, ReviewJob
+
+        job = ReviewJob(
+            intake=ReviewIntake(
+                repo_path="/tmp/test",
+                requester="daniel",
+                source="telegram",
+            ),
+            source="telegram",
+        )
+
+        recovered = ReviewJob.from_dict(job.to_dict())
+
+        assert recovered.source == "telegram"
+        assert recovered.intake.source == "telegram"
 
 
 # ─────────────────────────────────────────────

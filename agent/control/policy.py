@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent.control.models import ArtifactKind, JobKind
+from agent.review.models import ReviewJobType
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,22 @@ class ReviewGatePolicy:
     max_high: int
     block_fail_verdict: bool = True
     advisory_only: bool = False
+
+
+@dataclass(frozen=True)
+class ReviewExecutionPolicy:
+    """Deterministic execution boundary for repository and diff review access."""
+
+    id: str
+    label: str
+    description: str
+    allow_host_read: bool = True
+    allow_git_subprocess: bool = False
+    allowed_sources: tuple[str, ...] = ("manual", "telegram", "api", "operator")
+    allowed_review_types: tuple[ReviewJobType, ...] = (
+        ReviewJobType.REPO_AUDIT,
+        ReviewJobType.RELEASE_REVIEW,
+    )
 
 
 @dataclass(frozen=True)
@@ -99,6 +116,34 @@ _REVIEW_GATE_POLICIES: dict[str, ReviewGatePolicy] = {
         max_high=999,
         block_fail_verdict=False,
         advisory_only=True,
+    ),
+}
+
+_REVIEW_EXECUTION_POLICIES: dict[str, ReviewExecutionPolicy] = {
+    "repo_host_read_only": ReviewExecutionPolicy(
+        id="repo_host_read_only",
+        label="Repo host read-only",
+        description=(
+            "Allow read-only host access for repository-wide or release review "
+            "without invoking git diff subprocesses."
+        ),
+        allow_host_read=True,
+        allow_git_subprocess=False,
+        allowed_review_types=(
+            ReviewJobType.REPO_AUDIT,
+            ReviewJobType.RELEASE_REVIEW,
+        ),
+    ),
+    "diff_host_git_read_only": ReviewExecutionPolicy(
+        id="diff_host_git_read_only",
+        label="Diff host+git read-only",
+        description=(
+            "Allow read-only host access plus git diff subprocess execution for "
+            "explicit PR/diff review requests."
+        ),
+        allow_host_read=True,
+        allow_git_subprocess=True,
+        allowed_review_types=(ReviewJobType.PR_REVIEW,),
     ),
 }
 
@@ -189,6 +234,64 @@ def get_review_gate_policy(policy_id: str = "critical_findings") -> ReviewGatePo
 def list_review_gate_policies() -> list[ReviewGatePolicy]:
     """Return known post-build review gate policies."""
     return list(_REVIEW_GATE_POLICIES.values())
+
+
+def get_review_execution_policy(
+    policy_id: str = "repo_host_read_only",
+) -> ReviewExecutionPolicy:
+    """Resolve a configured review execution policy."""
+    return _REVIEW_EXECUTION_POLICIES.get(
+        policy_id,
+        _REVIEW_EXECUTION_POLICIES["repo_host_read_only"],
+    )
+
+
+def list_review_execution_policies() -> list[ReviewExecutionPolicy]:
+    """Return known review execution policies."""
+    return list(_REVIEW_EXECUTION_POLICIES.values())
+
+
+def select_review_execution_policy(
+    *,
+    review_type: ReviewJobType | str,
+    diff_spec: str = "",
+    source: str = "manual",
+) -> ReviewExecutionPolicy:
+    """Select a deterministic execution policy for a review request."""
+    normalized_type = (
+        review_type
+        if isinstance(review_type, ReviewJobType)
+        else ReviewJobType(str(review_type))
+    )
+    policy = (
+        _REVIEW_EXECUTION_POLICIES["diff_host_git_read_only"]
+        if normalized_type == ReviewJobType.PR_REVIEW or diff_spec
+        else _REVIEW_EXECUTION_POLICIES["repo_host_read_only"]
+    )
+    if source and source not in policy.allowed_sources:
+        return ReviewExecutionPolicy(
+            id=f"{policy.id}_blocked_source",
+            label=f"{policy.label} (blocked)",
+            description=f"Blocked unknown review source '{source}'.",
+            allow_host_read=False,
+            allow_git_subprocess=False,
+            allowed_sources=policy.allowed_sources,
+            allowed_review_types=policy.allowed_review_types,
+        )
+    if normalized_type not in policy.allowed_review_types:
+        return ReviewExecutionPolicy(
+            id=f"{policy.id}_blocked_type",
+            label=f"{policy.label} (blocked)",
+            description=(
+                f"Blocked review type '{normalized_type.value}' under execution "
+                f"policy '{policy.id}'."
+            ),
+            allow_host_read=False,
+            allow_git_subprocess=False,
+            allowed_sources=policy.allowed_sources,
+            allowed_review_types=policy.allowed_review_types,
+        )
+    return policy
 
 
 def get_job_persistence_policy(job_kind: JobKind | str) -> JobPersistencePolicy:

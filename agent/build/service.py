@@ -26,6 +26,7 @@ import difflib
 import shlex
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +45,7 @@ from agent.build.models import (
     VerificationKind,
 )
 from agent.build.storage import BuildStorage
-from agent.build.verification import run_verification_suite
+from agent.build.verification import DEFAULT_COMMANDS, run_verification_suite
 from agent.control.models import (
     DeliveryLifecycleStatus,
     DeliveryPackage,
@@ -309,6 +310,16 @@ class BuildService:
                 capability_id=job.capability_id,
             )
             verification_steps = verification_plan["steps"]
+            verification_commands = self._resolve_verification_commands(
+                repo_path=job.intake.repo_path,
+                workspace_path=workspace_path,
+                steps=verification_steps,
+            )
+            verification_plan["commands"] = {
+                step.value: " ".join(verification_commands.get(step, []))
+                for step in verification_steps
+                if verification_commands.get(step)
+            }
             self._record_control_trace(
                 trace_kind=TraceRecordKind.VERIFICATION_DISCOVERY,
                 title="Verification discovery",
@@ -323,6 +334,7 @@ class BuildService:
             results = run_verification_suite(
                 workspace_path=workspace_path,
                 steps=verification_steps,
+                custom_commands=verification_commands,
                 timeout_seconds=120,
             )
             job.verification_results = results
@@ -452,7 +464,16 @@ class BuildService:
                     change_set=change_set,
                 )
 
-            job.acceptance.evaluate()
+            if not job.acceptance.criteria:
+                job.acceptance.accepted = passed
+                job.acceptance.evaluated_at = datetime.now(UTC).isoformat()
+                job.acceptance.summary = (
+                    "No explicit acceptance criteria supplied; "
+                    f"verification outcome used as acceptance proxy. "
+                    f"Verdict: {'accepted' if passed else 'rejected'}."
+                )
+            else:
+                job.acceptance.evaluate()
 
             if job.acceptance.accepted:
                 t_accept.complete(job.acceptance.summary)
@@ -619,6 +640,72 @@ class BuildService:
         if marker.endswith("/"):
             return candidate.is_dir()
         return candidate.exists()
+
+    def _resolve_verification_commands(
+        self,
+        *,
+        repo_path: str,
+        workspace_path: str,
+        steps: list[VerificationKind],
+    ) -> dict[VerificationKind, list[str]]:
+        """Prefer repo-local toolchains when the workspace excludes virtualenvs."""
+        repo_root = Path(repo_path).resolve()
+        workspace_root = Path(workspace_path).resolve()
+        custom: dict[VerificationKind, list[str]] = {}
+
+        tool_roots = [
+            repo_root / ".venv" / "bin",
+            workspace_root / ".venv" / "bin",
+            repo_root / "venv" / "bin",
+            workspace_root / "venv" / "bin",
+        ]
+        tool_root = next((root for root in tool_roots if root.is_dir()), None)
+        if tool_root is None:
+            return custom
+
+        for step in steps:
+            if step == VerificationKind.TEST:
+                custom[step] = self._tool_command(
+                    tool_root=tool_root,
+                    binary_name="pytest",
+                    module_name="pytest",
+                    fallback=DEFAULT_COMMANDS[step],
+                    args=["tests/", "-q", "--tb=short"],
+                )
+            elif step == VerificationKind.LINT:
+                custom[step] = self._tool_command(
+                    tool_root=tool_root,
+                    binary_name="ruff",
+                    module_name="ruff",
+                    fallback=DEFAULT_COMMANDS[step],
+                    args=["check", "."],
+                )
+            elif step == VerificationKind.TYPECHECK:
+                custom[step] = self._tool_command(
+                    tool_root=tool_root,
+                    binary_name="mypy",
+                    module_name="mypy",
+                    fallback=DEFAULT_COMMANDS[step],
+                    args=[".", "--ignore-missing-imports"],
+                )
+        return custom
+
+    def _tool_command(
+        self,
+        *,
+        tool_root: Path,
+        binary_name: str,
+        module_name: str,
+        fallback: list[str],
+        args: list[str],
+    ) -> list[str]:
+        binary = tool_root / binary_name
+        if binary.exists():
+            return [str(binary), *args]
+        python = tool_root / "python"
+        if python.exists():
+            return [str(python), "-m", module_name, *args]
+        return list(fallback)
 
     def _has_test_surface(self, workspace_path: Path) -> bool:
         if self._workspace_has_marker(workspace_path, "tests/"):

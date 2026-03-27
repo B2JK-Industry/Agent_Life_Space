@@ -189,6 +189,9 @@ class JobPlanBudgetEnvelope:
     estimated_cost_usd: float = 0.0
     within_budget: bool = True
     requires_approval: bool = False
+    hard_cap_hit: bool = False
+    soft_cap_hit: bool = False
+    stop_loss_hit: bool = False
     warnings: list[str] = field(default_factory=list)
     rationale: list[str] = field(default_factory=list)
     policy_basis: str = "budget_policy"
@@ -196,6 +199,8 @@ class JobPlanBudgetEnvelope:
     monthly_remaining_usd: float = 0.0
     daily_soft_remaining_usd: float = 0.0
     monthly_soft_remaining_usd: float = 0.0
+    daily_stop_loss_remaining_usd: float = 0.0
+    monthly_stop_loss_remaining_usd: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -203,6 +208,9 @@ class JobPlanBudgetEnvelope:
             "estimated_cost_usd": self.estimated_cost_usd,
             "within_budget": self.within_budget,
             "requires_approval": self.requires_approval,
+            "hard_cap_hit": self.hard_cap_hit,
+            "soft_cap_hit": self.soft_cap_hit,
+            "stop_loss_hit": self.stop_loss_hit,
             "warnings": list(self.warnings),
             "rationale": list(self.rationale),
             "policy_basis": self.policy_basis,
@@ -210,6 +218,8 @@ class JobPlanBudgetEnvelope:
             "monthly_remaining_usd": self.monthly_remaining_usd,
             "daily_soft_remaining_usd": self.daily_soft_remaining_usd,
             "monthly_soft_remaining_usd": self.monthly_soft_remaining_usd,
+            "daily_stop_loss_remaining_usd": self.daily_stop_loss_remaining_usd,
+            "monthly_stop_loss_remaining_usd": self.monthly_stop_loss_remaining_usd,
         }
 
 
@@ -383,6 +393,7 @@ class OperatorIntakeService:
             include_patterns=list(intake.target_files),
             requester=intake.requester,
             context=intake.context or intake.description,
+            source="operator",
         )
 
     def to_build_intake(self, intake: OperatorIntake) -> BuildIntake:
@@ -867,17 +878,32 @@ class OperatorIntakeService:
         ]
         if intake.run_post_build_review and qualification.resolved_work_type == OperatorWorkType.BUILD:
             rationale.append("post_build_review=true")
+        within_budget = bool(
+            budget_status.get("within_budget", True)
+            and policy_result.allowed
+        )
         return JobPlanBudgetEnvelope(
             tier=qualification.scope_size,
             estimated_cost_usd=estimated_cost,
-            within_budget=bool(budget_status.get("within_budget", policy_result.allowed)),
+            within_budget=within_budget,
             requires_approval=policy_result.requires_approval,
+            hard_cap_hit=policy_result.hard_cap_hit,
+            soft_cap_hit=policy_result.soft_cap_hit,
+            stop_loss_hit=policy_result.stop_loss_hit,
             warnings=list(policy_result.warnings),
             rationale=rationale,
             daily_remaining_usd=round(float(budget_status.get("daily_remaining", 0.0)), 2),
             monthly_remaining_usd=round(float(budget_status.get("monthly_remaining", 0.0)), 2),
             daily_soft_remaining_usd=round(float(forecast["daily"]["soft_remaining"]), 2),
             monthly_soft_remaining_usd=round(float(forecast["monthly"]["soft_remaining"]), 2),
+            daily_stop_loss_remaining_usd=round(
+                float(forecast["daily"]["stop_loss_remaining"]),
+                2,
+            ),
+            monthly_stop_loss_remaining_usd=round(
+                float(forecast["monthly"]["stop_loss_remaining"]),
+                2,
+            ),
         )
 
     def _estimate_planned_cost_usd(
@@ -1092,6 +1118,10 @@ class OperatorIntakeService:
     ) -> str:
         if not qualification.supported:
             return "Resolve blockers and rerun intake preview."
+        if budget.hard_cap_hit:
+            return "Budget hard cap blocks execution. Reduce scope or reset the budget window first."
+        if budget.stop_loss_hit:
+            return "Budget stop-loss blocks execution. Preserve runway or wait for approval/reset before execution."
         if not budget.within_budget:
             return "Reduce scope or budget exposure before submitting this intake."
         if budget.requires_approval:

@@ -5,50 +5,50 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Unified Control-Plane Persistence + Retention slice."
+  assessed_state_note: "Snapshot after Review Runtime Convergence + Budget Governance slice."
   interpretation_date: "2026-03-27"
   theme_status:
     T1: { status: in_progress, approx_progress: 93 }
-    T2: { status: complete_for_phase, approx_progress: 85 }
+    T2: { status: complete_for_phase, approx_progress: 88 }
     T3: { status: in_progress, approx_progress: 80 }
-    T4: { status: in_progress, approx_progress: 79 }
-    T5: { status: in_progress, approx_progress: 77 }
-    T6: { status: in_progress, approx_progress: 72 }
+    T4: { status: in_progress, approx_progress: 82 }
+    T5: { status: in_progress, approx_progress: 83 }
+    T6: { status: in_progress, approx_progress: 81 }
     T7: { status: not_started, approx_progress: 0 }
-    T8: { status: in_progress, approx_progress: 76 }
+    T8: { status: in_progress, approx_progress: 79 }
 next_execution_backlog:
   - priority: P0
-    story_id: T2-E4-S5
-    title: "Route Telegram and API review entrypoints through ReviewService"
-    why_now: "Persisted product-job and artifact state now converge through the control plane, so channel adapters are the clearest remaining place where reviewer truth can still drift from runtime truth."
-  - priority: P0
-    story_id: T5-E1-S5
-    title: "Bring repository and diff analysis under the shared execution and policy boundary"
-    why_now: "Control-plane policy now covers persistence and retention, but review-side repo and diff access still lives outside the unified policy surface."
-  - priority: P0
-    story_id: T6-E1-S2
-    title: "Add hard budget, soft budget, and stop-loss behavior"
-    why_now: "Per-job cost entries now persist durably, so budgets can graduate from advisory planner metadata into real runtime controls."
-  - priority: P1
-    story_id: T4-E1-S4
-    title: "Reject unsupported work cleanly and honestly"
-    why_now: "git_url is honestly blocked, but intake still cannot acquire or import supported remote work."
-  - priority: P1
-    story_id: T6-E1-S4
-    title: "Surface cost and margin hints to the operator"
-    why_now: "The ledger now exists and is queryable, but the operator still does not get explicit cost posture in planning and delivery decisions."
-  - priority: P1
-    story_id: T5-E2-S2
-    title: "Support approvals for risky execution and external delivery"
-    why_now: "Shared persistence and policy now cover jobs, artifacts, bundles, and cost, so risky execution approvals are the next real governance gap."
-  - priority: P1
     story_id: T8-E3-S1
-    title: "Add retention and evidence packaging for compliance-friendly export"
-    why_now: "Retention records now exist, but there is still no evidence bundle or compliance-oriented export path on top of them."
-  - priority: P2
+    title: "Improve audit export and artifact traceability"
+    why_now: "Retained artifacts, delivery bundles, and policy traces now exist, but there is still no evidence package/export surface on top of them."
+  - priority: P0
     story_id: T6-E2-S1
     title: "Track job status, failures, retries, and durations"
-    why_now: "Persisted product-job records now exist, but retry and failure telemetry is still thinner than the new control-plane surfaces around them."
+    why_now: "Persisted product-job records and runtime traces exist, but failure/retry telemetry is still thinner than the shared query and reporting surfaces around them."
+  - priority: P0
+    story_id: T6-E1-S3
+    title: "Make escalation budget-aware"
+    why_now: "Budget posture now blocks or gates runtime intake execution, so escalation policy is the next honest control-plane layer to align."
+  - priority: P1
+    story_id: T4-E1-S4
+    title: "Add supported repo acquisition/import path behind honest gating"
+    why_now: "Unsupported work is now rejected honestly, but there is still no safe acquisition path for supported remote import."
+  - priority: P1
+    story_id: T5-E2-S3
+    title: "Support multi-step approvals where needed"
+    why_now: "Unified intake and delivery now both create approval requests, making richer approval workflows the clearest next governance gap."
+  - priority: P1
+    story_id: T1-E3-S4
+    title: "Add environment profiles for safe execution modes"
+    why_now: "Review execution policy and runtime budget gating now exist, so environment-sensitive behavior can be formalized more explicitly."
+  - priority: P1
+    story_id: T6-E1-S4
+    title: "Deepen operator cost posture and margin hints"
+    why_now: "Budget posture is visible now, but escalation and delivery still lack richer operator-facing cost context."
+  - priority: P2
+    story_id: T7-E1-S1
+    title: "Define gateway contract for external capabilities"
+    why_now: "Policy, retention, approval, and cost foundations are stronger now, making gateway definition the next clean boundary rather than premature plumbing."
 themes:
   - id: T1
     name: Platform Foundation
@@ -148,9 +148,9 @@ themes:
     name: Reviewer Product
     goal: Make review a first-class client-ready workflow.
     status: complete_for_phase
-    approx_progress: 85
-    current_state: Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode.
-    main_gap: LLM analysis, API entrypoint, PR comment packs are v2 scope.
+    approx_progress: 88
+    current_state: Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode, and converged Telegram plus structured API review entrypoints through the shared runtime.
+    main_gap: LLM analysis and PR comment packs are v2 scope.
     epics:
       - id: T2-E1
         name: Review Job Types
@@ -226,9 +226,9 @@ themes:
             status: mostly_complete
           - id: T2-E4-S5
             name: Route Telegram and API review entrypoints through ReviewService
-            status: in_progress
-            current_state: Telegram /review routes through ReviewService.
-            missing: API review entrypoint.
+            status: complete_for_phase
+            current_state: Telegram /review and the structured /api/review endpoint now both route through the shared review runtime, and review intake preserves channel source through recovery-safe persistence.
+            missing: PR comment packs and richer external delivery remain future scope.
 
   - id: T3
     name: Builder Product
@@ -318,14 +318,14 @@ themes:
     name: Operator Product
     goal: Coordinate end-to-end work and delivery.
     status: in_progress
-    approx_progress: 76
-    current_state: Unified intake routing, phase-aware JobPlan preview/submit output, persisted planner handoff records, planning traces, delivery lifecycle state, workspace joins, richer operator report service, and shared builder delivery package preview exist alongside CI typecheck.
+    approx_progress: 82
+    current_state: Unified intake routing, phase-aware JobPlan preview/submit output, persisted planner handoff records, planning traces, runtime budget blocking, pre-execution approval gating, workspace joins, richer operator report service, and shared builder delivery package preview now exist alongside CI typecheck.
     main_gap: No live backend/UI, no review delivery migration onto the shared lifecycle, and no remote acquisition path.
     epics:
       - id: T4-E1
         name: Intake And Qualification
         status: in_progress
-        approx_progress: 70
+        approx_progress: 86
         stories:
           - id: T4-E1-S1
             name: Create intake model for repo paths, git URLs, diff ranges, and work type
@@ -344,9 +344,9 @@ themes:
             missing: No live operator UI yet.
           - id: T4-E1-S4
             name: Reject unsupported work cleanly and honestly
-            status: in_progress
-            current_state: Unsupported git-only intake is now modeled and explicitly rejected with blockers rather than being silently routed.
-            missing: No alternative acquisition path (clone/import) yet.
+            status: mostly_complete
+            current_state: Unified intake now rejects unsupported git-only execution, returns explicit blocked or awaiting_approval runtime states, and surfaces honest budget/policy blocking reasons instead of pretending work started.
+            missing: There is still no supported clone/import acquisition path.
       - id: T4-E2
         name: Job Planning And Routing
         status: in_progress
@@ -402,14 +402,14 @@ themes:
     name: Security, Governance, And Policy
     goal: Ensure all valuable workflows remain controlled and auditable.
     status: in_progress
-    approx_progress: 77
-    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate and delivery policy profiles, plus shared job-persistence, artifact-retention, and gateway-default policies.
-    main_gap: Review and build execution still sit outside a single unified policy enforcement boundary.
+    approx_progress: 83
+    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, and review-execution policy profiles, plus shared job-persistence, artifact-retention, and gateway-default policies.
+    main_gap: Build and broader runtime action flow still sit outside a single unified policy enforcement boundary.
     epics:
       - id: T5-E1
         name: Policy Control Plane
         status: in_progress
-        approx_progress: 74
+        approx_progress: 82
         stories:
           - id: T5-E1-S1
             name: Extend policy model to job, artifact, delivery, and gateway decisions
@@ -427,11 +427,13 @@ themes:
             status: mostly_complete
           - id: T5-E1-S5
             name: Bring repository and diff analysis under shared execution and policy boundary
-            status: started
+            status: complete_for_phase
+            current_state: Review-side repository and diff access now uses explicit deterministic review execution policies, and those decisions are recorded as durable control-plane review-policy traces and product-job metadata.
+            missing: Builder execution is still not governed by the same policy engine.
       - id: T5-E2
         name: Approval Model
         status: in_progress
-        approx_progress: 80
+        approx_progress: 86
         stories:
           - id: T5-E2-S1
             name: Make approval requests persistent and queryable
@@ -440,7 +442,9 @@ themes:
             missing: Shared delivery/workspace policy queries remain separate scope.
           - id: T5-E2-S2
             name: Support approvals for risky execution and external delivery
-            status: in_progress
+            status: mostly_complete
+            current_state: Review and build delivery remain approval-gated, and unified intake can now request finance approval for budget-sensitive work plus tool approval for high-risk execution before a job starts.
+            missing: Multi-step approval workflows and broader policy/action unification remain open.
           - id: T5-E2-S3
             name: Support multi-step approvals where needed
             status: not_started
@@ -474,14 +478,14 @@ themes:
     name: Cost, Usage, And Observability
     goal: Make the system operable, measurable, and economically sane.
     status: in_progress
-    approx_progress: 72
-    current_state: UsageSummary now lands in a durable per-job control-plane cost ledger for build and review jobs. Orchestrator-visible build/review counters, persisted product jobs, retained artifacts, durable planning/delivery traces, shared cross-system job/artifact/workspace queries, approval backlog visibility, and operator-facing reporting now include workspace health, worker execution, and recorded-cost summaries.
-    main_gap: No budget enforcement or live operator UI.
+    approx_progress: 81
+    current_state: UsageSummary now lands in a durable per-job control-plane cost ledger for build and review jobs. Orchestrator-visible build/review counters, persisted product jobs, retained artifacts, durable planning/delivery traces, shared cross-system job/artifact/workspace queries, approval backlog visibility, runtime budget enforcement, and operator-facing reporting now include workspace health, worker execution, recorded-cost summaries, and budget posture.
+    main_gap: No budget-aware escalation layer or live operator UI.
     epics:
       - id: T6-E1
         name: Cost Ledger
         status: in_progress
-        approx_progress: 55
+        approx_progress: 76
         stories:
           - id: T6-E1-S1
             name: Record per-job model usage and token cost
@@ -490,7 +494,19 @@ themes:
             missing: Budgets, escalation controls, and operator margin hints still sit outside the ledger.
           - id: T6-E1-S2
             name: Add hard budget, soft budget, and stop-loss behavior
-            status: not_started
+            status: complete_for_phase
+            current_state: BudgetPolicy now drives hard-cap, soft-cap, stop-loss, and approval-cap decisions, unified intake enforces those decisions at runtime, and blocked budget decisions now emit explicit control-plane traces.
+            missing: Budget-aware escalation remains separate scope.
+          - id: T6-E1-S3
+            name: Make escalation budget-aware
+            status: started
+            current_state: Runtime intake now understands budget blocks and approval posture, but escalation policy itself still sits outside that budget model.
+            missing: No budget-aware escalation rules or routing yet.
+          - id: T6-E1-S4
+            name: Surface cost and margin hints to the operator
+            status: mostly_complete
+            current_state: Finance budget state now exposes warnings plus hard/soft/stop-loss posture, and the operator report surfaces budget posture plus inbox-visible budget attention.
+            missing: There is still no live operator UI or deeper escalation layer.
       - id: T6-E2
         name: Runtime Observability
         status: in_progress
@@ -555,14 +571,14 @@ themes:
     name: Enterprise Hardening
     goal: Prepare for enterprise-grade architecture without premature fragmentation.
     status: in_progress
-    approx_progress: 76
-    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, ADR-001 sidecar, TS operator contracts and skeleton, and policy-driven redaction.
-    main_gap: Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants.
+    approx_progress: 79
+    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review execution policy boundaries, ADR-001 sidecar, TS operator contracts and skeleton, and policy-driven redaction.
+    main_gap: Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack.
     epics:
       - id: T8-E1
         name: Contract-First Boundaries
         status: in_progress
-        approx_progress: 76
+        approx_progress: 79
         stories:
           - id: T8-E1-S1
             name: Define contracts between control plane, execution plane, verification, and delivery
@@ -596,7 +612,7 @@ themes:
       - id: T8-E3
         name: Compliance-Friendly Foundations
         status: in_progress
-        approx_progress: 45
+        approx_progress: 50
         stories:
           - id: T8-E3-S1
             name: Improve audit export and artifact traceability

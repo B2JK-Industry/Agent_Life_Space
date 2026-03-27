@@ -101,6 +101,7 @@ class ReviewIntake:
     exclude_patterns: list[str] = field(default_factory=list)  # e.g. ["*.lock", "node_modules"]
     requester: str = ""                        # Who requested this review
     context: str = ""                          # Free-text context for the reviewer
+    source: str = "manual"                     # Channel/runtime source for this intake
 
     def validate(self) -> list[str]:
         """Return list of validation errors. Empty = valid."""
@@ -487,6 +488,7 @@ class ReviewJob:
                 "exclude_patterns": self.intake.exclude_patterns,
                 "requester": self.intake.requester,
                 "context": self.intake.context,
+                "source": self.intake.source,
             },
             "workspace_id": self.workspace_id,
             "execution_mode": self.execution_mode.value,
@@ -522,6 +524,7 @@ class ReviewJob:
             exclude_patterns=intake_d.get("exclude_patterns", []),
             requester=intake_d.get("requester", ""),
             context=intake_d.get("context", ""),
+            source=intake_d.get("source", d.get("source", "manual")),
         )
         report = ReviewReport.from_dict(d.get("report", {}))
         timing = JobTiming.from_dict(

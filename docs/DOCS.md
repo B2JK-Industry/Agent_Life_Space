@@ -43,18 +43,19 @@ python -m agent --list-cost-ledger
 python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-preview
 python -m agent --list-plans
 python -m agent --list-deliveries
-python -m pytest tests/ -q   # Testy (1262+ testov)
+python -m pytest tests/ -q   # Testy (1273+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.6.0** — Unified control-plane persistence and retention release.
+Aktuálna: **v1.7.0** — review entrypoint convergence and runtime budget governance release.
 
-Nové v `v1.6.0`:
-- build a review joby teraz persistujú shared `ProductJobRecord` metadata v control plane
-- retained artifact records držia policy id, expiry, recoverability a retention status pre build/review/delivery výstupy
-- shared policy model teraz pokrýva job persistence, artifact retention a external gateway defaults
-- per-job usage/token/cost záznamy padajú do durable cost ledgeru
-- operator report a CLI teraz vedia listovať persisted jobs, retained artifacts a cost ledger
+Nové v `v1.7.0`:
+- Telegram `/review` aj nový `POST /api/review` teraz idú cez shared review runtime
+- review-side repo/diff access má explicitné deterministic execution policy profily a control-plane traces
+- unified intake teraz vie runtime-hard budget block na hard-cap a stop-loss stave
+- intake vie vytvoriť finance/tool approval request ešte pred štartom risky execution
+- operator report teraz ukazuje budget posture, warnings a budget attention inbox položky
+- builder verification teraz preferuje repo-local `.venv` toolchain a build bez explicitných acceptance kritérií používa verification outcome ako acceptance proxy
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

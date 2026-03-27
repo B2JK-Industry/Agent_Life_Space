@@ -318,6 +318,7 @@ class PlanRecordStatus(str, Enum):
 
     PREVIEW = "preview"
     SUBMITTED = "submitted"
+    AWAITING_APPROVAL = "awaiting_approval"
     BLOCKED = "blocked"
     EXECUTING = "executing"
     COMPLETED = "completed"

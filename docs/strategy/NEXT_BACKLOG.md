@@ -6,50 +6,49 @@ This file is the near-term execution backlog derived from the current state of
 Assessment basis:
 - branch: `main`
 - interpretation date: `2026-03-27`
-- baseline: after Unified Control-Plane Persistence + Retention slice
+- baseline: after Review Runtime Convergence + Budget Governance slice
 
 ## Ready Now
 
 ### P0
 
-1. `T2-E4-S5` Route Telegram and API review entrypoints through `ReviewService`
-   instead of legacy review paths.
-   Why now: persisted product-job and artifact state now converge through the
-   control plane, so channel adapters are the clearest remaining place where
-   reviewer truth can still drift from runtime truth.
+1. `T8-E3-S1` Improve audit export and artifact traceability.
+   Why now: retained artifacts, delivery bundles, and policy traces now exist,
+   but there is still no evidence package/export surface on top of them.
 
-2. `T5-E1-S5` Bring repository and diff analysis under the shared execution and
-   policy boundary.
-   Why now: control-plane policy now covers persistence and retention, but
-   review-side repo/diff access still lives outside the unified policy surface.
+2. `T6-E2-S1` Track job status, failures, retries, and durations.
+   Why now: persisted product-job records and runtime traces exist, but
+   failure/retry telemetry is still thinner than the shared query and reporting
+   surfaces around them.
 
-3. `T6-E1-S2` Add hard budget, soft budget, and stop-loss behavior.
-   Why now: per-job cost entries now persist durably, so budgets can graduate
-   from advisory planner metadata into real runtime controls.
+3. `T6-E1-S3` Make escalation budget-aware.
+   Why now: budget posture now blocks or gates runtime intake execution, so
+   escalation policy is the next honest control-plane layer to align.
 
 ### P1
 
-4. `T4-E1-S4` Reject unsupported work cleanly and honestly.
-   Why now: `git_url` is honestly blocked, but intake still cannot acquire or
-   import supported remote work.
+4. `T4-E1-S4` Add supported repo acquisition/import path behind honest gating.
+   Why now: unsupported work is now rejected honestly, but there is still no
+   safe acquisition path for supported remote import.
 
-5. `T6-E1-S4` Surface cost and margin hints to the operator.
-   Why now: the ledger now exists and is queryable, but the operator still does
-   not get explicit cost posture in planning and delivery decisions.
+5. `T5-E2-S3` Support multi-step approvals where needed.
+   Why now: unified intake and delivery now both create approval requests,
+   making richer approval workflows the clearest next governance gap.
 
-6. `T5-E2-S2` Support approvals for risky execution and external delivery.
-   Why now: shared persistence/policy now cover jobs, artifacts, bundles, and
-   cost, so risky execution approvals are the next real governance gap.
+6. `T1-E3-S4` Add environment profiles for safe execution modes.
+   Why now: review execution policy and runtime budget gating now exist, so
+   environment-sensitive behavior can be formalized more explicitly.
 
-7. `T8-E3-S1` Add retention/evidence packaging for compliance-friendly export.
-   Why now: retention records now exist, but there is still no evidence bundle
-   or compliance-oriented export path on top of them.
+7. `T6-E1-S4` Deepen operator cost posture and margin hints.
+   Why now: budget posture is visible now, but escalation and delivery still
+   lack richer operator-facing cost context.
 
 ### P2
 
-8. `T6-E2-S1` Track job status, failures, retries, and durations.
-   Why now: persisted product-job records now exist, but retry/failure telemetry
-   is still thinner than the new control-plane surfaces around them.
+8. `T7-E1-S1` Define gateway contract for external capabilities.
+   Why now: policy, retention, approval, and cost foundations are stronger now,
+   making gateway definition the next clean boundary rather than premature
+   plumbing.
 
 ## What Closed In This Cycle
 
@@ -115,13 +114,29 @@ Assessment basis:
   metadata, artifact references, and policy context in the control plane.
 - `T6-E1-S1` Per-job usage, token, and cost data now land in a durable
   control-plane ledger with CLI and report visibility.
+- `T2-E4-S5` Telegram `/review` and structured `/api/review` now converge
+  through the shared review runtime, and review intake preserves channel source
+  through recovery-safe persistence.
+- `T5-E1-S5` Review-side repository and diff access now runs under explicit
+  deterministic review execution policies with durable control-plane traces and
+  persisted product-job metadata.
+- `T6-E1-S2` Unified intake now enforces hard-cap and stop-loss budget blocks
+  at runtime instead of treating budgets as preview-only metadata.
+- `T6-E1-S4` Finance budget state and the operator report now surface explicit
+  budget posture, warnings, and budget-attention inbox items.
+- `T5-E2-S2` Unified intake can now request finance or tool approval before
+  execution for budget-sensitive or high-risk work.
+- `T4-E1-S4` Runtime intake now reports honest `blocked` and
+  `awaiting_approval` states instead of pretending unsupported or policy-blocked
+  work started.
 
 ## Exit Criteria For The Next Backlog Slice
 
 The next slice should be considered successful when:
-- review entrypoints converge cleanly through `ReviewService` instead of legacy
-  adapter logic
-- repository and diff access move under the same shared execution/policy model
-- budgets become enforceable at runtime instead of remaining advisory
-- operator surfaces start exposing actionable cost posture and richer failure
-  telemetry
+- retained artifacts, traces, and delivery bundles can be assembled into a
+  compliance-friendly evidence export
+- product-job records surface clearer failure, retry, and duration telemetry
+- escalation logic becomes budget-aware instead of living outside runtime cost
+  posture
+- operator/runtime surfaces can distinguish safe acquisition paths from
+  unsupported remote work

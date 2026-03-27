@@ -25,8 +25,10 @@ class BudgetLimits:
 
     daily_hard_cap: float = 50.0      # Absolute max per day
     daily_soft_cap: float = 30.0      # Warning threshold per day
+    daily_stop_loss_buffer: float = 5.0   # Preserve remaining daily runway
     monthly_hard_cap: float = 500.0   # Absolute max per month
     monthly_soft_cap: float = 300.0   # Warning threshold per month
+    monthly_stop_loss_buffer: float = 50.0  # Preserve remaining monthly runway
     single_tx_approval_cap: float = 20.0  # Single transaction requiring extra approval
 
 
@@ -39,6 +41,7 @@ class BudgetCheckResult:
         warnings: list[str] | None = None,
         hard_cap_hit: bool = False,
         soft_cap_hit: bool = False,
+        stop_loss_hit: bool = False,
         requires_approval: bool = False,
         details: dict[str, Any] | None = None,
     ) -> None:
@@ -46,6 +49,7 @@ class BudgetCheckResult:
         self.warnings = warnings or []
         self.hard_cap_hit = hard_cap_hit
         self.soft_cap_hit = soft_cap_hit
+        self.stop_loss_hit = stop_loss_hit
         self.requires_approval = requires_approval
         self.details = details or {}
 
@@ -55,6 +59,7 @@ class BudgetCheckResult:
             "warnings": self.warnings,
             "hard_cap_hit": self.hard_cap_hit,
             "soft_cap_hit": self.soft_cap_hit,
+            "stop_loss_hit": self.stop_loss_hit,
             "requires_approval": self.requires_approval,
             "details": self.details,
         }
@@ -90,6 +95,7 @@ class BudgetPolicy:
         warnings: list[str] = []
         hard_cap_hit = False
         soft_cap_hit = False
+        stop_loss_hit = False
         requires_approval = False
 
         new_daily = daily_spent + amount
@@ -109,6 +115,26 @@ class BudgetPolicy:
 
         # Soft cap checks — warn but allow
         if not hard_cap_hit:
+            daily_stop_loss_threshold = (
+                self._limits.daily_hard_cap - self._limits.daily_stop_loss_buffer
+            )
+            monthly_stop_loss_threshold = (
+                self._limits.monthly_hard_cap - self._limits.monthly_stop_loss_buffer
+            )
+            if self._limits.daily_stop_loss_buffer > 0 and new_daily > daily_stop_loss_threshold:
+                stop_loss_hit = True
+                warnings.append(
+                    "Denný stop-loss aktivovaný: "
+                    f"${new_daily:.2f} > ${daily_stop_loss_threshold:.2f}"
+                )
+            if self._limits.monthly_stop_loss_buffer > 0 and new_monthly > monthly_stop_loss_threshold:
+                stop_loss_hit = True
+                warnings.append(
+                    "Mesačný stop-loss aktivovaný: "
+                    f"${new_monthly:.2f} > ${monthly_stop_loss_threshold:.2f}"
+                )
+
+        if not hard_cap_hit and not stop_loss_hit:
             if new_daily > self._limits.daily_soft_cap:
                 soft_cap_hit = True
                 warnings.append(
@@ -127,18 +153,20 @@ class BudgetPolicy:
                 f"Suma ${amount:.2f} > ${self._limits.single_tx_approval_cap:.2f} — vyžaduje extra approval"
             )
 
-        allowed = not hard_cap_hit
+        allowed = not hard_cap_hit and not stop_loss_hit
 
         if warnings:
             logger.info("budget_policy_check",
                         amount=amount, allowed=allowed,
-                        hard_cap=hard_cap_hit, soft_cap=soft_cap_hit)
+                        hard_cap=hard_cap_hit, soft_cap=soft_cap_hit,
+                        stop_loss=stop_loss_hit)
 
         return BudgetCheckResult(
             allowed=allowed,
             warnings=warnings,
             hard_cap_hit=hard_cap_hit,
             soft_cap_hit=soft_cap_hit,
+            stop_loss_hit=stop_loss_hit,
             requires_approval=requires_approval,
             details={
                 "amount": amount,
@@ -146,6 +174,14 @@ class BudgetPolicy:
                 "monthly_spent": monthly_spent,
                 "new_daily_total": round(new_daily, 2),
                 "new_monthly_total": round(new_monthly, 2),
+                "daily_stop_loss_threshold": round(
+                    self._limits.daily_hard_cap - self._limits.daily_stop_loss_buffer,
+                    2,
+                ),
+                "monthly_stop_loss_threshold": round(
+                    self._limits.monthly_hard_cap - self._limits.monthly_stop_loss_buffer,
+                    2,
+                ),
             },
         )
 
@@ -162,15 +198,33 @@ class BudgetPolicy:
                 "spent": round(daily_spent, 2),
                 "soft_remaining": round(self._limits.daily_soft_cap - daily_spent, 2),
                 "hard_remaining": round(self._limits.daily_hard_cap - daily_spent, 2),
+                "stop_loss_remaining": round(
+                    (self._limits.daily_hard_cap - self._limits.daily_stop_loss_buffer)
+                    - daily_spent,
+                    2,
+                ),
                 "soft_cap": self._limits.daily_soft_cap,
                 "hard_cap": self._limits.daily_hard_cap,
+                "stop_loss_threshold": round(
+                    self._limits.daily_hard_cap - self._limits.daily_stop_loss_buffer,
+                    2,
+                ),
             },
             "monthly": {
                 "spent": round(monthly_spent, 2),
                 "soft_remaining": round(self._limits.monthly_soft_cap - monthly_spent, 2),
                 "hard_remaining": round(self._limits.monthly_hard_cap - monthly_spent, 2),
+                "stop_loss_remaining": round(
+                    (self._limits.monthly_hard_cap - self._limits.monthly_stop_loss_buffer)
+                    - monthly_spent,
+                    2,
+                ),
                 "soft_cap": self._limits.monthly_soft_cap,
                 "hard_cap": self._limits.monthly_hard_cap,
+                "stop_loss_threshold": round(
+                    self._limits.monthly_hard_cap - self._limits.monthly_stop_loss_buffer,
+                    2,
+                ),
             },
             "single_tx_approval_cap": self._limits.single_tx_approval_cap,
         }

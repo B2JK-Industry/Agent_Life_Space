@@ -508,6 +508,37 @@ class TestBuildService:
         assert "acceptance_report" in artifact_kinds
         assert "execution_trace" in artifact_kinds
 
+    async def test_build_without_explicit_acceptance_uses_verification_proxy(
+        self, service, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                ),
+                VerificationResult(
+                    kind=VerificationKind.LINT,
+                    passed=True,
+                    command="ruff check .",
+                    exit_code=0,
+                ),
+            ],
+        )
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Build without explicit acceptance criteria",
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.COMPLETED
+        assert job.acceptance.accepted is True
+        assert "verification outcome used as acceptance proxy" in job.acceptance.summary
+
     async def test_build_job_recovery(self, service):
         intake = BuildIntake(
             repo_path=self._repo_dir,
@@ -715,6 +746,30 @@ class TestBuildService:
         assert VerificationKind.TEST in steps
         assert VerificationKind.LINT in steps
         assert VerificationKind.TYPECHECK not in steps
+
+    def test_resolve_verification_commands_prefers_repo_local_toolchain(self, service):
+        tool_root = Path(self._repo_dir) / ".venv" / "bin"
+        tool_root.mkdir(parents=True)
+        (tool_root / "python").write_text("")
+        (tool_root / "ruff").write_text("")
+        (tool_root / "mypy").write_text("")
+
+        commands = service._resolve_verification_commands(
+            repo_path=self._repo_dir,
+            workspace_path=self._workspace_dir,
+            steps=[
+                VerificationKind.TEST,
+                VerificationKind.LINT,
+                VerificationKind.TYPECHECK,
+            ],
+        )
+
+        assert Path(commands[VerificationKind.TEST][0]).resolve() == (tool_root / "python").resolve()
+        assert commands[VerificationKind.TEST][1:] == ["-m", "pytest", "tests/", "-q", "--tb=short"]
+        assert Path(commands[VerificationKind.LINT][0]).resolve() == (tool_root / "ruff").resolve()
+        assert commands[VerificationKind.LINT][1:] == ["check", "."]
+        assert Path(commands[VerificationKind.TYPECHECK][0]).resolve() == (tool_root / "mypy").resolve()
+        assert commands[VerificationKind.TYPECHECK][1:] == [".", "--ignore-missing-imports"]
 
     async def test_build_records_capability_id(self, service, monkeypatch):
         monkeypatch.setattr(
