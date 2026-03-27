@@ -5,64 +5,64 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Builder Delivery Package + Operator Health slice."
+  assessed_state_note: "Snapshot after Durable Planning + Delivery Lifecycle slice."
   interpretation_date: "2026-03-27"
   theme_status:
-    T1: { status: in_progress, approx_progress: 86 }
+    T1: { status: in_progress, approx_progress: 89 }
     T2: { status: complete_for_phase, approx_progress: 85 }
-    T3: { status: in_progress, approx_progress: 76 }
-    T4: { status: in_progress, approx_progress: 62 }
-    T5: { status: in_progress, approx_progress: 65 }
-    T6: { status: in_progress, approx_progress: 58 }
+    T3: { status: in_progress, approx_progress: 80 }
+    T4: { status: in_progress, approx_progress: 76 }
+    T5: { status: in_progress, approx_progress: 69 }
+    T6: { status: in_progress, approx_progress: 64 }
     T7: { status: not_started, approx_progress: 0 }
-    T8: { status: in_progress, approx_progress: 68 }
+    T8: { status: in_progress, approx_progress: 72 }
 next_execution_backlog:
   - priority: P0
-    story_id: T4-E1-S3
-    title: "Persist or expose planner output for richer operator handoff"
-    why_now: "JobPlan is now detailed enough to matter operationally, but it is still only a transient preview/submit payload with no durable handoff state."
-  - priority: P0
-    story_id: T4-E2-S4
-    title: "Record execution traces for planning decisions"
-    why_now: "Planner decisions now encode scope, budget, capability, and deliver-phase choices, but those decisions are not yet recoverable as first-class traces."
-  - priority: P1
-    story_id: T4-E3-S4
-    title: "Record delivery status and handoff audit events"
-    why_now: "Builder delivery packages and approval gates now exist, but there is still no durable handoff-status trail once a package is prepared or approved."
-  - priority: P1
-    story_id: T1-E3-S3
-    title: "Link workspace records to jobs, artifacts, and approvals"
-    why_now: "Builder delivery approvals now carry workspace and bundle linkage, but workspace records themselves are still not queryable as first-class control-plane joins."
-  - priority: P1
-    story_id: T3-E2-S1
-    title: "Add build-specific verification discovery for implementation jobs"
-    why_now: "Builder now emits delivery packages honestly, so the next builder gap is better verification discovery rather than more packaging."
-  - priority: P1
-    story_id: T3-E2-S2
-    title: "Make review-after-build thresholds and blocking policy configurable"
-    why_now: "Review-after-build now exists, but thresholds and blocking policy remain hard-coded rather than policy-driven."
-  - priority: P2
     story_id: T1-E2-S4
     title: "Add artifact retention and recovery rules"
-    why_now: "Patch, diff, report, and bundle-oriented artifacts are growing in importance, but retention and pruning policy are still undefined."
-  - priority: P2
+    why_now: "Plan, trace, patch, diff, report, and delivery-oriented artifacts are now durable and queryable, but retention and pruning rules are still undefined."
+  - priority: P0
     story_id: T5-E1-S1
     title: "Extend policy model to job, artifact, delivery, and external gateway decisions"
-    why_now: "Delivery/package linkage is deeper now, but policy still does not treat delivery surfaces as first-class decisions."
+    why_now: "Builder now has deterministic review-gate and delivery policy profiles, but policy is still fragmented and does not yet govern all control-plane decisions uniformly."
+  - priority: P0
+    story_id: T1-E1-S3
+    title: "Persist job metadata, execution history, artifacts, and cost data"
+    why_now: "Plans, traces, and delivery records now have shared persistence, but product job metadata and cost history are still split across bounded contexts."
+  - priority: P1
+    story_id: T6-E1-S1
+    title: "Record per-job model usage and token cost"
+    why_now: "Stronger control-plane persistence now gives usage/cost data a meaningful place to land instead of remaining only a local field shell."
+  - priority: P1
+    story_id: T2-E4-S5
+    title: "Route Telegram and API review entrypoints through ReviewService"
+    why_now: "The product/control-plane slices are converging, but channel adapters can still drift away from the clean reviewer bounded context."
+  - priority: P1
+    story_id: T5-E1-S5
+    title: "Bring repository and diff analysis under the shared execution and policy boundary"
+    why_now: "Review/build policy has improved, but review-side repo/diff access still sits outside the unified execution-policy model."
+  - priority: P1
+    story_id: T4-E1-S4
+    title: "Reject unsupported work cleanly and honestly"
+    why_now: "git_url is honestly blocked, but intake still cannot acquire or import supported remote work."
+  - priority: P2
+    story_id: T6-E1-S2
+    title: "Add hard budget, soft budget, and stop-loss behavior"
+    why_now: "Planning already emits budget envelopes, so the next gap is binding them to durable runtime controls rather than leaving them advisory."
 themes:
   - id: T1
     name: Platform Foundation
     goal: Unify job, artifact, state, and workspace foundations.
     status: in_progress
-    approx_progress: 86
-    current_state: Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared build/review/operate job queries, shared artifact queries, a shared delivery package model, and richer workspace-aware approval/reporting surfaces.
+    approx_progress: 89
+    current_state: Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared build/review/operate job queries, shared artifact queries, persisted plan/trace/delivery records, and richer workspace-aware approval/reporting surfaces.
     main_gap: No unified cross-domain persistence/action layer yet.
     epics:
       - id: T1-E1
         name: Canonical Job Model
         status: in_progress
         approx_progress: 88
-        remaining_gap: Shared primitives and shared query models now span build/review/operate/artifact surfaces, but persistence/action convergence is still incomplete.
+        remaining_gap: Shared primitives and shared query models now span build/review/operate/artifact surfaces, but product-job persistence/action convergence is still incomplete.
         stories:
           - id: T1-E1-S1
             name: Define canonical Job schema for review, build, operate, and delivery flows
@@ -117,8 +117,8 @@ themes:
       - id: T1-E3
         name: Workspace And Execution Discipline
         status: in_progress
-        approx_progress: 68
-        remaining_gap: Builder is workspace-first and reviewer is explicitly READ_ONLY_HOST; shared cross-domain workspace linkage is better, but still partial.
+        approx_progress: 82
+        remaining_gap: Builder is workspace-first and reviewer is explicitly READ_ONLY_HOST; shared workspace linkage now exists, but cross-domain workspace policy is still partial.
         stories:
           - id: T1-E3-S1
             name: Ensure all mutable engineering work happens in isolated workspaces
@@ -130,9 +130,9 @@ themes:
             status: mostly_complete
           - id: T1-E3-S3
             name: Link workspace records to jobs, artifacts, and approvals
-            status: in_progress
-            current_state: BuildJob carries workspace_id, build delivery approvals now carry workspace_id + bundle_id, and operator status/reporting now surface workspace health alongside job and artifact state.
-            missing: Workspace records are still not queryable as first-class control-plane joins.
+            status: complete_for_phase
+            current_state: WorkspaceQueryService now exposes workspace records as shared control-plane joins over jobs, artifacts, approvals, and delivery bundles, and those records flow through the orchestrator, CLI, and operator report.
+            missing: Reviewer still runs in READ_ONLY_HOST, so cross-domain workspace policy is not fully unified yet.
           - id: T1-E3-S4
             name: Add environment profiles for safe execution modes
             status: started
@@ -232,8 +232,8 @@ themes:
     name: Builder Product
     goal: Make implementation controlled, testable, and acceptance-driven.
     status: in_progress
-    approx_progress: 76
-    current_state: Builder bounded context with models, service, storage, verification loop, acceptance criteria engine, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, optional post-build review gate, and deterministic patch/diff plus delivery-package output.
+    approx_progress: 80
+    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, acceptance criteria engine, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, policy-driven post-build review gate, and deterministic patch/diff plus delivery-lifecycle output.
     main_gap: No LLM implementation, no real code generation, and no external delivery send path yet.
     epics:
       - id: T3-E1
@@ -265,18 +265,18 @@ themes:
       - id: T3-E2
         name: Build Verification Loop
         status: in_progress
-        approx_progress: 74
+        approx_progress: 84
         stories:
           - id: T3-E2-S1
             name: Add test, lint, and type-check loop for implementation jobs
-            status: in_progress
-            current_state: run_verification_suite() runs test and lint in workspace and adds typecheck automatically when project config is present. Custom commands are supported.
-            missing: No build-specific test discovery yet.
+            status: mostly_complete
+            current_state: Builder now performs repo-aware verification discovery for test, lint, and typecheck surfaces, then runs the discovered suite in the workspace. Custom commands remain available underneath the verification layer.
+            missing: Discovery is still heuristic and not yet a language-specific execution planner.
           - id: T3-E2-S2
             name: Add review-after-build pass before completion
             status: mostly_complete
-            current_state: Successful build jobs can now request a deterministic post-build review pass through ReviewService, persist review artifacts, feed review signals into acceptance + delivery output, and block completion on review failure.
-            missing: Review thresholds are not yet policy-configurable and reviewer still operates in READ_ONLY_HOST mode over the built workspace path.
+            current_state: Successful build jobs can now request a deterministic post-build review pass through ReviewService, persist review artifacts, feed review signals into acceptance + delivery output, and gate completion through explicit review_gate_policy_id profiles.
+            missing: Reviewer still operates in READ_ONLY_HOST mode over the built workspace path, and policy is not yet unified with the wider execution boundary.
           - id: T3-E2-S3
             name: Fail jobs clearly when acceptance criteria are not met
             status: in_progress
@@ -316,9 +316,9 @@ themes:
     name: Operator Product
     goal: Coordinate end-to-end work and delivery.
     status: in_progress
-    approx_progress: 62
-    current_state: Unified intake routing, phase-aware JobPlan preview/submit output, policy-backed budget qualification, capability assignments, CLI intake preview/submit, operator report service, and shared builder delivery package preview exist alongside CI typecheck.
-    main_gap: No live backend/UI, durable planning state, or handoff audit workflow.
+    approx_progress: 76
+    current_state: Unified intake routing, phase-aware JobPlan preview/submit output, persisted planner handoff records, planning traces, delivery lifecycle state, workspace joins, richer operator report service, and shared builder delivery package preview exist alongside CI typecheck.
+    main_gap: No live backend/UI, no review delivery migration onto the shared lifecycle, and no remote acquisition path.
     epics:
       - id: T4-E1
         name: Intake And Qualification
@@ -337,9 +337,9 @@ themes:
             missing: Cost estimates are still deterministic heuristics, and there is no live operator UI.
           - id: T4-E1-S3
             name: Add operator-facing intake summary and recommended plan
-            status: mostly_complete
-            current_state: python -m agent --intake-* --intake-preview now returns qualification plus a structured JobPlan with phases, capability assignments, budget details, planned artifacts, and recommended next action. Submission echoes the same plan shape.
-            missing: No operator UI or durable handoff state for reviewed plans yet.
+            status: complete_for_phase
+            current_state: python -m agent --intake-* --intake-preview now returns qualification plus a structured JobPlan, and preview/submit both persist a first-class plan record for later operator handoff through orchestrator and CLI list/get surfaces.
+            missing: No live operator UI yet.
           - id: T4-E1-S4
             name: Reject unsupported work cleanly and honestly
             status: in_progress
@@ -348,13 +348,13 @@ themes:
       - id: T4-E2
         name: Job Planning And Routing
         status: in_progress
-        approx_progress: 60
+        approx_progress: 82
         stories:
           - id: T4-E2-S1
             name: Create JobPlan model and planner outputs
             status: complete_for_phase
-            current_state: JobPlan, JobPlanStep, JobPlanPhase, JobPlanCapability, and JobPlanBudgetEnvelope now exist in agent/control/intake.py, and planner output is surfaced through OperatorIntakeService.preview(), AgentOrchestrator.preview_operator_intake(), and CLI preview/submit flows.
-            missing: Durable planner state and planning traces remain future scope.
+            current_state: JobPlan, JobPlanStep, JobPlanPhase, JobPlanCapability, and JobPlanBudgetEnvelope now exist in agent/control/intake.py, and planner output is surfaced through preview/submit flows plus persisted JobPlanRecord handoff state.
+            missing: Planner output is durable, but not yet a distributed execution history.
           - id: T4-E2-S2
             name: Split work into review, build, verify, deliver phases
             status: complete_for_phase
@@ -367,11 +367,13 @@ themes:
             missing: Only the build phase currently binds to a runtime capability catalog; the remaining phase assignments are planner profiles.
           - id: T4-E2-S4
             name: Record execution traces for planning decisions
-            status: started
+            status: complete_for_phase
+            current_state: Qualification, budget, capability, and delivery decisions now emit durable ExecutionTraceRecord entries that can be listed and filtered through the shared control-plane surface.
+            missing: Trace coverage is still strongest for planning/build delivery, not yet the whole runtime.
       - id: T4-E3
         name: Delivery Workflow
         status: in_progress
-        approx_progress: 45
+        approx_progress: 72
         stories:
           - id: T4-E3-S1
             name: Define delivery package model
@@ -386,28 +388,32 @@ themes:
           - id: T4-E3-S3
             name: Gate delivery through approvals
             status: mostly_complete
-            current_state: Review delivery approval already existed, and builder delivery now requests approval with explicit job, artifact, workspace, and bundle linkage.
-            missing: Delivery status and handoff events are not yet recorded after approval.
+            current_state: Review delivery approval already existed, and builder delivery now requests approval with explicit job, artifact, workspace, and bundle linkage while refreshing lifecycle status after approval changes.
+            missing: Review delivery still uses a separate lifecycle implementation.
           - id: T4-E3-S4
             name: Record delivery status and handoff audit events
-            status: not_started
+            status: mostly_complete
+            current_state: Builder delivery now persists lifecycle state (prepared, awaiting_approval, approved, rejected, handed_off) plus explicit audit events surfaced through the orchestrator, CLI, workspace joins, and operator report.
+            missing: Shared lifecycle still covers builder delivery more fully than reviewer delivery.
 
   - id: T5
     name: Security, Governance, And Policy
     goal: Ensure all valuable workflows remain controlled and auditable.
     status: in_progress
-    approx_progress: 65
-    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, and persistent/queryable approvals with job/artifact/workspace/bundle linkage.
+    approx_progress: 69
+    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, plus deterministic review-gate and delivery policy profiles.
     main_gap: Review and build execution still sit outside a unified shared policy boundary.
     epics:
       - id: T5-E1
         name: Policy Control Plane
         status: in_progress
-        approx_progress: 50
+        approx_progress: 58
         stories:
           - id: T5-E1-S1
             name: Extend policy model to job, artifact, delivery, and gateway decisions
-            status: started
+            status: in_progress
+            current_state: Builder now uses deterministic review-gate and delivery policy profiles that are surfaced in planning metadata, traces, and delivery approval context.
+            missing: Job/artifact/gateway policy is still not unified under one shared engine.
           - id: T5-E1-S2
             name: Keep policy deny-by-default across execution modes
             status: in_progress
@@ -423,7 +429,7 @@ themes:
       - id: T5-E2
         name: Approval Model
         status: in_progress
-        approx_progress: 78
+        approx_progress: 80
         stories:
           - id: T5-E2-S1
             name: Make approval requests persistent and queryable
@@ -440,7 +446,7 @@ themes:
             name: Link approvals to jobs, artifacts, and delivery bundles
             status: mostly_complete
             current_state: Review delivery approvals already carried job_id, job_kind, and artifact_ids; builder delivery approvals now add workspace_id and bundle_id, and approval queries can filter on all of those linked records.
-            missing: Delivery status and broader policy/action unification remain future scope.
+            missing: Broader policy/action unification and multi-step execution workflows remain future scope.
       - id: T5-E3
         name: Client-Safe And Secret-Safe Output
         status: mostly_complete
@@ -466,8 +472,8 @@ themes:
     name: Cost, Usage, And Observability
     goal: Make the system operable, measurable, and economically sane.
     status: in_progress
-    approx_progress: 58
-    current_state: UsageSummary in control-plane. Fields on review and build jobs. Orchestrator-visible build/review counters, shared cross-system job/artifact queries, approval backlog visibility, and operator-facing reporting now include workspace health and worker execution summaries.
+    approx_progress: 64
+    current_state: UsageSummary in control-plane. Fields on review and build jobs. Orchestrator-visible build/review counters, durable planning/delivery traces, shared cross-system job/artifact/workspace queries, approval backlog visibility, and operator-facing reporting now include workspace health and worker execution summaries.
     main_gap: No real per-job cost ledger or live operator UI.
     epics:
       - id: T6-E1
@@ -484,7 +490,7 @@ themes:
       - id: T6-E2
         name: Runtime Observability
         status: in_progress
-        approx_progress: 76
+        approx_progress: 84
         stories:
           - id: T6-E2-S1
             name: Track job status, failures, retries, and durations
@@ -545,8 +551,8 @@ themes:
     name: Enterprise Hardening
     goal: Prepare for enterprise-grade architecture without premature fragmentation.
     status: in_progress
-    approx_progress: 68
-    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, bundle-aware delivery linkage, unified intake/planning, ADR-001 sidecar, TS operator contracts and skeleton, and policy-driven redaction.
+    approx_progress: 72
+    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted planner/delivery state, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, ADR-001 sidecar, TS operator contracts and skeleton, and policy-driven redaction.
     main_gap: Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants.
     epics:
       - id: T8-E1

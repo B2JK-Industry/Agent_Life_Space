@@ -6,53 +6,70 @@ This file is the near-term execution backlog derived from the current state of
 Assessment basis:
 - branch: `main`
 - interpretation date: `2026-03-27`
-- baseline: after Builder Delivery Package + Operator Health slice
+- baseline: after Durable Planning + Delivery Lifecycle slice
 
 ## Ready Now
 
 ### P0
 
-1. `T4-E1-S3` Persist or expose planner output for richer operator handoff.
-   Why now: `JobPlan` is now detailed enough to matter operationally, but it is
-   still only a transient preview/submit payload with no durable handoff state.
+1. `T1-E2-S4` Add artifact retention and recovery rules.
+   Why now: plan, trace, patch, diff, report, and delivery-oriented artifacts
+   are now durable and queryable, but retention and pruning rules are still
+   undefined.
 
-2. `T4-E2-S4` Record execution traces for planning decisions.
-   Why now: planner decisions now encode scope, budget, capability, and deliver
-   phase choices, but those decisions are not yet recoverable as first-class
-   traces.
+2. `T5-E1-S1` Extend policy model to job, artifact, delivery, and external
+   gateway decisions.
+   Why now: builder now has deterministic review-gate and delivery policy
+   profiles, but policy is still fragmented and does not yet govern all
+   control-plane decisions uniformly.
+
+3. `T1-E1-S3` Persist job metadata, execution history, artifacts, and cost
+   data.
+   Why now: plans, traces, and delivery records now have shared persistence,
+   but product job metadata and cost history are still split across bounded
+   contexts.
 
 ### P1
 
-3. `T4-E3-S4` Record delivery status and handoff audit events.
-   Why now: builder delivery packages and approval gates now exist, but there is
-   still no durable handoff-status trail once a package is prepared or approved.
+4. `T6-E1-S1` Record per-job model usage and token cost.
+   Why now: stronger control-plane persistence now gives usage/cost data a
+   meaningful place to land instead of remaining only a local field shell.
 
-4. `T1-E3-S3` Link workspace records to jobs, artifacts, and approvals.
-   Why now: builder delivery approvals now carry workspace and bundle linkage,
-   but workspace records themselves are still not queryable as first-class
-   control-plane joins.
+5. `T2-E4-S5` Route Telegram and API review entrypoints through `ReviewService`
+   instead of legacy review paths.
+   Why now: the product/control-plane slices are converging, but channel
+   adapters can still drift away from the clean reviewer bounded context.
 
-5. `T3-E2-S1` Add test, lint, and type-check loop for implementation jobs.
-   Why now: builder now emits delivery packages honestly, so the next builder
-   gap is better verification discovery rather than more packaging.
+6. `T5-E1-S5` Bring repository and diff analysis under the shared execution and
+   policy boundary.
+   Why now: review/build policy has improved, but review-side repo/diff access
+   still sits outside the unified execution-policy model.
 
-6. `T3-E2-S2` Add review-after-build pass before completion.
-   Why now: review-after-build now exists, but thresholds and blocking policy
-   remain hard-coded rather than policy-driven.
+7. `T4-E1-S4` Reject unsupported work cleanly and honestly.
+   Why now: `git_url` is honestly blocked, but intake still cannot acquire or
+   import supported remote work.
 
 ### P2
 
-7. `T1-E2-S4` Add artifact retention and recovery rules.
-   Why now: patch, diff, report, and bundle-oriented artifacts are growing in
-   importance, but retention and pruning policy are still undefined.
-
-8. `T5-E1-S1` Extend policy model to job, artifact, delivery, and external
-   gateway decisions.
-   Why now: delivery/package linkage is deeper now, but policy still does not
-   treat delivery surfaces as first-class decisions.
+8. `T6-E1-S2` Add hard budget, soft budget, and stop-loss behavior.
+   Why now: planning already emits budget envelopes, so the next gap is binding
+   them to durable runtime controls rather than leaving them advisory.
 
 ## What Closed In This Cycle
 
+- `T4-E1-S3` Planner output is now persisted as a first-class handoff record
+  with queryable plan IDs, orchestrator methods, and CLI list/get surfaces.
+- `T4-E2-S4` Planner decisions now emit durable qualification, budget,
+  capability, and delivery traces through the shared control-plane store.
+- `T4-E3-S4` Builder delivery now records prepared/awaiting_approval/approved/
+  rejected/handed_off lifecycle state plus audit events and report-visible
+  delivery inbox entries.
+- `T1-E3-S3` Workspace records are now queryable as shared control-plane joins
+  over jobs, artifacts, approvals, and delivery bundles.
+- `T3-E2-S1` Build verification now performs repo-aware discovery for test,
+  lint, and typecheck surfaces instead of relying only on static defaults.
+- `T3-E2-S2` Post-build review thresholds are now policy-driven via explicit
+  review-gate profiles rather than only a hard-coded fail/critical rule.
 - `T1-E1-S1` `ReviewJob` migrated onto shared control-plane primitives.
 - `T1-E1-S4` Shared job queries now cover build, review, task, job-runner, and
   agent-loop records.
@@ -97,7 +114,10 @@ Assessment basis:
 ## Exit Criteria For The Next Backlog Slice
 
 The next slice should be considered successful when:
-- planner output becomes durable enough to hand off or resume cleanly
-- planning decisions emit explicit trace/audit records
-- delivery package lifecycle gains status + audit events after approval/handoff
-- workspace, delivery, and approval joins become richer and more queryable
+- artifact retention and recovery rules exist across build/review/delivery
+  outputs
+- policy extends beyond isolated build profiles into shared job/artifact/
+  delivery/gateway decisions
+- persisted product-job metadata starts converging into one shared control-plane
+  store
+- cost and budget decisions become more durable and runtime-relevant

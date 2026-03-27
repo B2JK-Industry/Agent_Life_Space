@@ -38,17 +38,20 @@ python -m agent --report     # Operator report / inbox
 python -m agent --runtime-model   # Explicitný runtime model
 python -m agent --list-artifacts  # Shared artifact query surface
 python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-preview
-python -m pytest tests/ -q   # Testy (1255+ testov)
+python -m agent --list-plans
+python -m agent --list-deliveries
+python -m pytest tests/ -q   # Testy (1260+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.4.5** — Builder delivery package and operator health release.
+Aktuálna: **v1.5.0** — Durable planning and delivery lifecycle release.
 
-Nové v `v1.4.5`:
-- builder teraz exportuje deterministic patch + diff artifacts
-- build job teraz vie poskladať delivery package preview a požiadať o delivery approval
-- acceptance evaluácia teraz rozumie review/security aj docs/target-file change signálom
-- operator report teraz ukazuje workspace health aj worker execution
+Nové v `v1.5.0`:
+- operator intake preview/submit teraz persistuje `JobPlan` handoff recordy
+- planning decisions teraz emitujú durable trace recordy
+- build delivery teraz drží lifecycle stav a audit eventy až po handoff
+- workspace records sú queryovateľné ako shared joins cez joby, artifacty, approvals a bundles
+- builder verification discovery a post-build review gating sú viac policy-driven
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

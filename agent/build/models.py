@@ -267,6 +267,8 @@ class BuildIntake:
     acceptance_criteria: list[AcceptanceCriterion] = field(default_factory=list)
     run_post_build_review: bool = False
     block_on_review_failure: bool = True
+    review_gate_policy_id: str = "critical_findings"
+    delivery_policy_id: str = "approval_required"
     requester: str = ""
     context: str = ""
 
@@ -291,6 +293,8 @@ class BuildIntake:
             "acceptance_criteria": [c.to_dict() for c in self.acceptance_criteria],
             "run_post_build_review": self.run_post_build_review,
             "block_on_review_failure": self.block_on_review_failure,
+            "review_gate_policy_id": self.review_gate_policy_id,
+            "delivery_policy_id": self.delivery_policy_id,
             "requester": self.requester,
             "context": self.context,
         }
@@ -309,6 +313,8 @@ class BuildIntake:
             ],
             run_post_build_review=d.get("run_post_build_review", False),
             block_on_review_failure=d.get("block_on_review_failure", True),
+            review_gate_policy_id=d.get("review_gate_policy_id", "critical_findings"),
+            delivery_policy_id=d.get("delivery_policy_id", "approval_required"),
             requester=d.get("requester", ""),
             context=d.get("context", ""),
         )

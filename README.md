@@ -19,10 +19,13 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Workspace persistence** — SQLite-backed workspaces with audit trail, limits, TTL, recovery
 - **Approval queue** — structured propose → approve/deny → execute workflow with persistent storage and linkage
 - **Builder delivery packages** — deterministic patch/diff export, acceptance bundle preview, and approval-gated build handoff
-- **Control-plane queries** — shared inspection across build, review, task, job-runner, agent-loop, and artifact state
+- **Planner handoff + traces** — persisted `JobPlan` records and durable qualification/budget/capability/delivery traces
+- **Delivery lifecycle tracking** — prepared → awaiting approval → approved/rejected → handed off with audit events
+- **Workspace joins** — workspaces now link to jobs, artifacts, approvals, and delivery bundles
+- **Control-plane queries** — shared inspection across build, review, task, job-runner, agent-loop, artifact, plan, delivery, and workspace state
 - **Runtime model** — explicit coexistence rules for product jobs, planning tasks, infrastructure jobs, and conversational queue items
-- **Operator CLI surfaces** — `--report`, `--runtime-model`, shared artifact inspection, unified `--intake-*`, phase-aware intake preview, and resumable `--build-resume`
-- **1255+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **Operator CLI surfaces** — `--report`, `--runtime-model`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, unified `--intake-*`, and explicit build delivery handoff
+- **1260+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -95,7 +98,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 1255+ passed, ~22s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1260+ passed, ~22s, $0.00
 ```
 
 | Layer | Tests | What |
