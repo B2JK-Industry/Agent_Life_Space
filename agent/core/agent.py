@@ -142,7 +142,9 @@ class AgentOrchestrator:
             build_service=self.build,
             review_service=self.review,
         )
-        self.intake_router = OperatorIntakeService()
+        self.intake_router = OperatorIntakeService(
+            budget_status_provider=self.finance.check_budget,
+        )
         self.runtime_model = RuntimeModelService()
         self.reporting = OperatorReportService(
             job_queries=self.jobs,

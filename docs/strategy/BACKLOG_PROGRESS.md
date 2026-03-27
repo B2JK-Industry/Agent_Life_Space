@@ -6,7 +6,7 @@ This file tracks current strategic execution progress against:
 - the actual state of `main`
 
 Assessment basis:
-- branch: `main` (after Runtime Model + Artifact Planning slice)
+- branch: `main` (after Planner Qualification + Phase Routing slice)
 - interpretation date: `2026-03-27`
 
 Important:
@@ -55,9 +55,10 @@ Status legend:
 - Operator now has a real report/inbox service and CLI surface
   (`python -m agent --report`), plus unified intake qualification/routing for
   build/review requests.
-- Operator intake preview/submit now emit a first-class `JobPlan` with scope
-  summary, heuristic budget envelope, planned artifacts, recommended next
-  action, and step-by-step planner output.
+- Operator intake preview/submit now emit a phase-aware `JobPlan` with scope
+  signals, risk factors, policy-backed budget envelope, capability
+  assignments, planned artifacts, recommended next action, and step-by-step
+  planner output.
 - Builder now has a declared capability catalog and resumable checkpoint-based
   execution.
 - Operator report now includes recent artifacts alongside jobs and approvals.
@@ -72,7 +73,7 @@ Status legend:
 | T1 Platform Foundation | in_progress | 84% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job and artifact queries exposed through the orchestrator. | No unified cross-domain persistence/action layer yet. |
 | T2 Reviewer Product | complete_for_phase | 85% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode | LLM analysis, API entrypoint, PR comment packs are v2 |
 | T3 Builder Product | in_progress | 68% | Builder bounded context is tracked on `main`, capability-declared, resumable, orchestrator-wired, CLI-reachable, workspace-synced, verification-gated, acceptance-aware, and review-after-build capable. | Build step is still placeholder-grade. No LLM implementation or full delivery workflow |
-| T4 Operator Product | in_progress | 42% | Unified intake routing, `JobPlan` preview/submit output, CLI intake preview/submit, operator report service, and mock-driven TS reporting surface. | No live backend/UI, durable planning state, or delivery workflow |
+| T4 Operator Product | in_progress | 54% | Unified intake routing, phase-aware `JobPlan` preview/submit output, policy-backed budget qualification, capability assignments, CLI intake preview/submit, operator report service, and mock-driven TS reporting surface. | No live backend/UI, durable planning state, or delivery workflow |
 | T5 Security, Governance, And Policy | in_progress | 60% | Tool policy deny-by-default, strict delivery approval, full redaction pipeline, and persistent/queryable approval storage with job/artifact linkage | Review/build execution outside unified policy boundary |
 | T6 Cost, Usage, And Observability | in_progress | 50% | UsageSummary on jobs, orchestrator-visible build/review counters, traces, shared cross-system job/artifact queries, approval backlog visibility, and operator-facing reporting. | No real per-job cost ledger or live operator UI |
 | T7 External Capability Gateway | not_started | 0% | Nothing | No gateway contract |
@@ -109,8 +110,8 @@ Status legend:
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T4-E1 Intake And Qualification | in_progress | 55% | Unified operator intake model now exists with qualification, blockers, warnings, risk level, heuristic budget envelope, and review/build routing, plus CLI preview/submit surfaces. | No policy-backed budget model or live operator UI |
-| T4-E2 Job Planning And Routing | in_progress | 35% | `JobPlan` now exists with planner steps, planned artifacts, recommended next action, and orchestrator/CLI preview output. | Plan phases, capability assignment, and durable planner state are still partial |
+| T4-E1 Intake And Qualification | in_progress | 70% | Unified operator intake now resolves scope size/signals, risk factors, policy-backed budget envelopes, and review/build routing, plus CLI preview/submit surfaces. | Cost estimates are still heuristic, and there is no live operator UI |
+| T4-E2 Job Planning And Routing | in_progress | 60% | `JobPlan` now includes explicit phases, capability assignments, structured budget metadata, and orchestrator/CLI preview output. | Durable planner state and planning traces are still partial |
 | T4-E3 Delivery Workflow | started | 15% | Mock-driven TS skeleton. Reviewer delivery bundle. | No live backend or operator workflow |
 
 ### T5 Security, Governance, And Policy
@@ -194,8 +195,9 @@ Review/audit-driven fixes landed on `main`:
 - Approval requests are now persisted and queryable with job/artifact linkage.
 - Builder now has a declared capability catalog and resumable checkpoints with CLI resume support.
 - Unified operator intake and operator-facing report/inbox surfaces now exist in the runtime and CLI.
-- Unified operator intake now emits `JobPlan` preview/submit outputs with
-  steps, planned artifacts, heuristic budget envelope, and recommended next
+- Unified operator intake now emits phase-aware `JobPlan` preview/submit
+  outputs with scope signals, risk factors, policy-backed budget envelope,
+  capability assignments, steps, planned artifacts, and recommended next
   action.
 - Operator report now includes recent artifacts in addition to jobs and
   approvals.
@@ -204,9 +206,9 @@ Review/audit-driven fixes landed on `main`:
 
 See [NEXT_BACKLOG.md](/Users/danielbabjak/Desktop/Agent_Life_Space/docs/strategy/NEXT_BACKLOG.md) for the prioritized execution queue.
 
-Now that the runtime model / artifact planning slice has landed, the next
+Now that planner qualification and phase routing have landed, the next
 high-leverage work is:
-1. Deepen qualification and planning with stronger scope, risk, and budget envelopes
-2. Split `JobPlan` into richer review/build/verify/deliver phases with capability choices
-3. Capture real patch-set artifacts for builder output
-4. Add richer domain-specific acceptance evaluators and, after that, wire real build execution
+1. Capture real patch-set artifacts for builder output
+2. Add richer domain-specific acceptance evaluators
+3. Surface workspace health and worker execution in the operator report
+4. Persist planner outputs and traces for richer operator handoff and audit

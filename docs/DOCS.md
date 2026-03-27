@@ -37,17 +37,18 @@ python -m agent --health     # Zdravie
 python -m agent --report     # Operator report / inbox
 python -m agent --runtime-model   # Explicitný runtime model
 python -m agent --list-artifacts  # Shared artifact query surface
-python -m pytest tests/ -q   # Testy (1248+ testov)
+python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-preview
+python -m pytest tests/ -q   # Testy (1251+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.4.3** — Runtime model and artifact planning release.
+Aktuálna: **v1.4.4** — Planner qualification and phase routing release.
 
-Nové v `v1.4.3`:
-- explicitný runtime model cez `python -m agent --runtime-model`
-- shared artifact query/recovery surface cez `ArtifactQueryService` a CLI
-- unified operator intake teraz vracia aj `JobPlan`
-- operator report teraz zahŕňa aj recent artifacts
+Nové v `v1.4.4`:
+- unified operator intake teraz vracia phase-aware `JobPlan`
+- qualification teraz zahŕňa scope signals, risk factors a policy-backed budget envelope
+- planner teraz priraďuje capability assignments aj budget metadata
+- `python -m agent --intake-* --intake-preview` dáva realistickejší operator handoff preview
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

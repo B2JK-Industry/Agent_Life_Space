@@ -450,8 +450,11 @@ class TestUnifiedOperatorIntake:
 
         assert qualification.supported is True
         assert qualification.resolved_work_type.value == "review"
+        assert qualification.scope_size in {"small", "medium", "large"}
+        assert qualification.risk_level in {"low", "medium", "high"}
+        assert qualification.scope_signals
 
-    def test_preview_returns_job_plan(self):
+    def test_preview_returns_phase_aware_build_job_plan(self):
         service = OperatorIntakeService()
         intake = OperatorIntake(
             repo_path="/tmp/repo",
@@ -466,9 +469,86 @@ class TestUnifiedOperatorIntake:
         assert preview["accepted"] is True
         assert preview["plan"]["resolved_work_type"] == "build"
         assert preview["plan"]["budget_envelope"] in {"small", "medium", "large"}
+        assert preview["plan"]["budget"]["estimated_cost_usd"] > 0
+        assert [phase["phase"] for phase in preview["plan"]["phases"]] == [
+            "qualify",
+            "build",
+            "verify",
+            "review",
+            "deliver",
+        ]
+        assert any(
+            assignment["capability_id"] == "impl_core"
+            and assignment["source"] == "build_catalog"
+            for assignment in preview["plan"]["capability_assignments"]
+        )
         assert any(
             step["title"] == "Verify and evaluate acceptance"
             for step in preview["plan"]["steps"]
+        )
+        assert any(
+            step["phase"] == "verify" for step in preview["plan"]["steps"]
+        )
+
+    def test_preview_uses_budget_policy_and_provider(self):
+        service = OperatorIntakeService(
+            budget_status_provider=lambda amount: {
+                "daily_spent": 49.0,
+                "daily_remaining": 1.0,
+                "monthly_spent": 490.0,
+                "monthly_remaining": 10.0,
+                "within_budget": False,
+                "proposed_amount": amount,
+            }
+        )
+        intake = OperatorIntake(
+            repo_path="/tmp/repo",
+            work_type="build",
+            build_type="integration",
+            description="Implement integration flow",
+            acceptance_criteria=[
+                "Tests pass",
+                "Typecheck passes",
+                "Docs updated",
+                "Review passes",
+            ],
+            target_files=[
+                "agent/core/agent.py",
+                "agent/control/intake.py",
+                "agent/control/reporting.py",
+                "agent/build/service.py",
+                "tests/test_control_plane_jobs.py",
+            ],
+            focus_areas=["planner", "budget", "routing"],
+        )
+
+        preview = service.preview(intake)
+
+        assert preview["plan"]["budget"]["within_budget"] is False
+        assert preview["plan"]["budget"]["warnings"]
+        assert preview["plan"]["recommended_next_action"].startswith("Reduce scope")
+
+    def test_preview_returns_review_phases_and_handoff(self):
+        service = OperatorIntakeService()
+        intake = OperatorIntake(
+            repo_path="/tmp/repo",
+            diff_spec="main..feature",
+            work_type="auto",
+            context="Review scoped changes",
+        )
+
+        preview = service.preview(intake)
+
+        assert preview["accepted"] is True
+        assert [phase["phase"] for phase in preview["plan"]["phases"]] == [
+            "qualify",
+            "review",
+            "verify",
+            "deliver",
+        ]
+        assert any(
+            assignment["capability_id"] == "pr_review_v1"
+            for assignment in preview["plan"]["capability_assignments"]
         )
 
     def test_qualification_requires_description_for_build(self):
@@ -482,6 +562,19 @@ class TestUnifiedOperatorIntake:
 
         assert qualification.supported is False
         assert any("description" in item for item in qualification.blockers)
+
+    def test_to_build_intake_assigns_selected_capability_id(self):
+        service = OperatorIntakeService()
+        intake = OperatorIntake(
+            repo_path="/tmp/repo",
+            work_type="build",
+            build_type="devops",
+            description="Update deployment config",
+        )
+
+        build_intake = service.to_build_intake(intake)
+
+        assert build_intake.capability_id == "devops_safe"
 
     @pytest.mark.asyncio
     async def test_orchestrator_submit_operator_intake_routes_to_build(
@@ -510,6 +603,8 @@ class TestUnifiedOperatorIntake:
         assert result["job_kind"] == "build"
         assert result["job"]["job_id"] == "build-789"
         assert result["plan"]["resolved_work_type"] == "build"
+        assert result["plan"]["phases"][1]["phase"] == "build"
+        assert result["plan"]["capability_assignments"]
 
     @pytest.mark.asyncio
     async def test_orchestrator_submit_operator_intake_rejects_git_only(
