@@ -554,3 +554,12 @@ class BuildService:
         """List build jobs."""
         self.initialize()
         return self._storage.list_jobs(status=status, limit=limit)
+
+    def get_stats(self) -> dict[str, Any]:
+        """Summarize build service state for orchestrator status/reporting."""
+        self.initialize()
+        stats = self._storage.get_stats()
+        return {
+            "initialized": self._initialized,
+            **stats,
+        }

@@ -17,9 +17,11 @@ Recommended usage:
 3. `BACKLOG_PROGRESS.md` is the current execution snapshot against the strategy.
 4. `BACKLOG_REVIEW_AGAINST_MASTERPLAN.md` is the gap analysis between backlog
    and masterplan.
-5. `backlog_seed.yaml` is the machine-friendly seed for future backlog
+5. `NEXT_BACKLOG.md` is the near-term prioritized execution backlog derived
+   from the current state of `main`.
+6. `backlog_seed.yaml` is the machine-friendly seed for future backlog
    generation, ticket import, or automation.
-6. `prompts/` contains durable Claude Code task prompts derived from current
+7. `prompts/` contains durable Claude Code task prompts derived from current
    architectural findings.
 
 Recommended governance:

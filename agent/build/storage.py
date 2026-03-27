@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -35,6 +36,7 @@ class BuildStorage:
     def initialize(self) -> None:
         if self._initialized:
             return
+        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(self._db_path)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("""
@@ -139,6 +141,29 @@ class BuildStorage:
                 d["content_json"] = json.loads(r[3])
             results.append(d)
         return results
+
+    def get_stats(self) -> dict[str, Any]:
+        if not self._db:
+            return {
+                "total_jobs": 0,
+                "artifacts": 0,
+                "by_status": {},
+            }
+
+        total_jobs = self._db.execute(
+            "SELECT COUNT(*) FROM build_jobs"
+        ).fetchone()[0]
+        total_artifacts = self._db.execute(
+            "SELECT COUNT(*) FROM build_artifacts"
+        ).fetchone()[0]
+        by_status_rows = self._db.execute(
+            "SELECT status, COUNT(*) FROM build_jobs GROUP BY status"
+        ).fetchall()
+        return {
+            "total_jobs": total_jobs,
+            "artifacts": total_artifacts,
+            "by_status": {row[0]: row[1] for row in by_status_rows},
+        }
 
     def close(self) -> None:
         if self._db:

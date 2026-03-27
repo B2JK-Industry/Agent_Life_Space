@@ -52,6 +52,10 @@ class TestAgentLifecycle:
         status = agent.get_status()
         assert status["running"] is False  # Not started yet
         assert status["memory"]["total_memories"] >= 1  # Startup memory recorded
+        assert status["build"]["initialized"] is True
+        assert status["review"]["initialized"] is True
+        assert status["build"]["total_jobs"] == 0
+        assert status["review"]["total_jobs"] == 0
 
     @pytest.mark.asyncio
     async def test_startup_memory_recorded(self, agent: AgentOrchestrator) -> None:
@@ -255,9 +259,18 @@ class TestFullStatus:
         assert "memory" in status
         assert "tasks" in status
         assert "brain" in status
+        assert "build" in status
+        assert "review" in status
         assert "jobs" in status
         assert "watchdog" in status
         assert "router" in status
+
+    @pytest.mark.asyncio
+    async def test_builder_service_is_available(self, agent: AgentOrchestrator) -> None:
+        status = agent.get_status()
+        assert agent.build is not None
+        assert status["build"]["initialized"] is True
+        assert status["build"]["total_jobs"] == 0
 
     @pytest.mark.asyncio
     async def test_status_memory_section(self, agent: AgentOrchestrator) -> None:

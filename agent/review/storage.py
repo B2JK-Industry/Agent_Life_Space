@@ -129,6 +129,29 @@ class ReviewStorage:
             results.append(entry)
         return results
 
+    def get_stats(self) -> dict[str, Any]:
+        if not self._db:
+            return {
+                "total_jobs": 0,
+                "artifacts": 0,
+                "by_status": {},
+            }
+
+        total_jobs = self._db.execute(
+            "SELECT COUNT(*) FROM review_jobs"
+        ).fetchone()[0]
+        total_artifacts = self._db.execute(
+            "SELECT COUNT(*) FROM review_artifacts"
+        ).fetchone()[0]
+        by_status_rows = self._db.execute(
+            "SELECT status, COUNT(*) FROM review_jobs GROUP BY status"
+        ).fetchall()
+        return {
+            "total_jobs": total_jobs,
+            "artifacts": total_artifacts,
+            "by_status": {row[0]: row[1] for row in by_status_rows},
+        }
+
     def cleanup_old_jobs(self, max_age_days: int = 30) -> int:
         """Remove jobs older than max_age_days. Returns count of removed jobs."""
         if not self._db:
