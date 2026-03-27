@@ -546,3 +546,13 @@ class ReviewService:
     def list_jobs(self, status: str = "", limit: int = 20) -> list[dict[str, Any]]:
         """List review jobs."""
         return self._storage.list_jobs(status=status, limit=limit)
+
+    def get_stats(self) -> dict[str, Any]:
+        """Summarize review service state for orchestrator status/reporting."""
+        self.initialize()
+        stats = self._storage.get_stats()
+        return {
+            "initialized": self._initialized,
+            "approval_queue_configured": self._approval_queue is not None,
+            **stats,
+        }

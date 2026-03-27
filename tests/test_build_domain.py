@@ -322,6 +322,19 @@ class TestBuildStorage:
         assert arts[0]["artifact_kind"] == "patch"
         assert arts[0]["content"] == "diff content here"
 
+    def test_initialize_creates_parent_directory(self):
+        from pathlib import Path
+
+        from agent.build.storage import BuildStorage
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "nested" / "builds.db"
+            storage = BuildStorage(db_path=str(db_path))
+            storage.initialize()
+            assert db_path.parent.exists()
+            assert db_path.exists()
+            storage.close()
+
     def test_recovery_roundtrip(self, storage):
         """Save a BuildJob, reload via from_dict — recovery-safe."""
         job = BuildJob(requester="daniel")

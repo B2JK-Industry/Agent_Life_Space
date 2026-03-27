@@ -98,6 +98,16 @@ class AgentOrchestrator:
         )
         self.workspaces = WorkspaceManager()
 
+        # Build service
+        from agent.build.service import BuildService
+        from agent.build.storage import BuildStorage
+        self.build = BuildService(
+            storage=BuildStorage(
+                db_path=str(self._data_dir / "build" / "builds.db")
+            ),
+            workspace_manager=self.workspaces,
+        )
+
         # Review service
         from agent.review.service import ReviewService
         from agent.review.storage import ReviewStorage
@@ -125,6 +135,7 @@ class AgentOrchestrator:
         (self._data_dir / "finance").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "projects").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "logs").mkdir(parents=True, exist_ok=True)
+        (self._data_dir / "build").mkdir(parents=True, exist_ok=True)
         (self._data_dir / "review").mkdir(parents=True, exist_ok=True)
 
         # Initialize persistent stores
@@ -133,6 +144,7 @@ class AgentOrchestrator:
         await self.finance.initialize()
         await self.projects.initialize()
         self.workspaces.initialize()
+        self.build.initialize()
         self.review.initialize()
 
         # Register message handlers
@@ -422,6 +434,8 @@ class AgentOrchestrator:
             "tasks": self.tasks.get_stats(),
             "brain": self.brain.get_stats(),
             "finance": self.finance.get_stats(),
+            "build": self.build.get_stats(),
+            "review": self.review.get_stats(),
             "jobs": self.job_runner.get_stats(),
             "watchdog": self.watchdog.get_stats(),
             "router": self.router.get_metrics(),

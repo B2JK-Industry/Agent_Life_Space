@@ -1,28 +1,53 @@
-version: 2
+version: 3
 source_of_truth: docs/strategy/MASTER_SOURCE_OF_TRUTH.md
 seed_note: >
   Machine-friendly backlog seed aligned to current main. Mirrors
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Builder Foundation + Control-Plane Convergence."
-  interpretation_date: "2026-03-26"
+  assessed_state_note: "Snapshot after Builder Runtime Integration + Review-Driven Hardening."
+  interpretation_date: "2026-03-27"
   theme_status:
-    T1: { status: in_progress, approx_progress: 60 }
+    T1: { status: in_progress, approx_progress: 62 }
     T2: { status: complete_for_phase, approx_progress: 85 }
-    T3: { status: in_progress, approx_progress: 35 }
+    T3: { status: in_progress, approx_progress: 45 }
     T4: { status: started, approx_progress: 10 }
     T5: { status: in_progress, approx_progress: 50 }
-    T6: { status: started, approx_progress: 20 }
+    T6: { status: started, approx_progress: 25 }
     T7: { status: not_started, approx_progress: 0 }
-    T8: { status: in_progress, approx_progress: 35 }
+    T8: { status: in_progress, approx_progress: 40 }
+next_execution_backlog:
+  - priority: P0
+    story_id: T3-E1-S2
+    title: "Expose builder through a real product entrypoint"
+    why_now: "Builder is now tracked and orchestrator-wired, but there is still no API/chat/operator path that starts build jobs."
+  - priority: P0
+    story_id: T3-E2-S2
+    title: "Add review-after-build before completion"
+    why_now: "Builder verifies code mechanically but still lacks a reviewer pass before delivery-ready completion."
+  - priority: P0
+    story_id: T1-E1-S4
+    title: "Add cross-system job query layer"
+    why_now: "Review and build now both produce useful persisted state, but operator/runtime inspection is still fragmented."
+  - priority: P1
+    story_id: T1-E1-S1
+    title: "Migrate ReviewJob onto shared control-plane primitives"
+    why_now: "Builder already consumes shared primitives directly; reviewer remains the main convergence holdout."
+  - priority: P1
+    story_id: T5-E2-S1
+    title: "Persist approval requests and link them to jobs/artifacts"
+    why_now: "Delivery gating exists, but approvals are still not durable enough for enterprise-grade audit trails."
+  - priority: P1
+    story_id: T6-E2-S4
+    title: "Add operator-facing reporting surface"
+    why_now: "Local status counters exist now, but there is no operator UI or inbox for acting on them."
 themes:
   - id: T1
     name: Platform Foundation
     goal: Unify job, artifact, state, and workspace foundations.
     status: in_progress
-    approx_progress: 60
-    current_state: Shared control-plane primitives, ReviewJob recovery/artifact hydration, workspace subsystem, and explicit execution mode.
+    approx_progress: 62
+    current_state: Shared control-plane primitives, ReviewJob recovery/artifact hydration, workspace subsystem, and orchestrator-wired build/review services with local status visibility.
     main_gap: ReviewJob does not yet use shared primitives directly across the system.
     epics:
       - id: T1-E1
@@ -82,14 +107,14 @@ themes:
       - id: T1-E3
         name: Workspace And Execution Discipline
         status: in_progress
-        approx_progress: 55
+        approx_progress: 60
         remaining_gap: Builder is workspace-first and reviewer is explicitly READ_ONLY_HOST; shared cross-domain workspace linkage is still partial.
         stories:
           - id: T1-E3-S1
             name: Ensure all mutable engineering work happens in isolated workspaces
             status: in_progress
-            current_state: Builder requires a workspace manager and defaults to WORKSPACE_BOUND.
-            missing: Integration remains foundation-grade and reviewer v1 is still read-only.
+            current_state: Builder requires a workspace manager, defaults to WORKSPACE_BOUND, and now syncs repos into managed workspaces before verification.
+            missing: Reviewer v1 is still read-only and there is no shared mutable execution model yet.
           - id: T1-E3-S2
             name: Make workspace lifecycle, audit, and recovery robust
             status: mostly_complete
@@ -197,15 +222,15 @@ themes:
     name: Builder Product
     goal: Make implementation controlled, testable, and acceptance-driven.
     status: in_progress
-    approx_progress: 35
-    current_state: Builder bounded context with models, service, storage, verification loop, and acceptance criteria engine. Workspace-first and foundation-grade.
-    main_gap: No LLM implementation, no real code generation, and no advanced acceptance evaluation yet.
+    approx_progress: 45
+    current_state: Builder bounded context with models, service, storage, verification loop, acceptance criteria engine, workspace sync, and orchestrator wiring.
+    main_gap: No LLM implementation, no real code generation, no review-after-build, and no external build entrypoint yet.
     epics:
       - id: T3-E1
         name: Capability-Based Build Execution
         status: in_progress
-        approx_progress: 35
-        remaining_gap: Build flow exists, but the build step is still placeholder-grade and there is no capability catalog.
+        approx_progress: 45
+        remaining_gap: Build flow exists and is orchestrator-wired, but the build step is still placeholder-grade and there is no capability catalog.
         stories:
           - id: T3-E1-S1
             name: Define implementation capability catalog
@@ -215,7 +240,7 @@ themes:
           - id: T3-E1-S2
             name: Route implementation jobs to explicit capabilities
             status: started
-            current_state: BuildService routes by build_type.
+            current_state: BuildService routes by build_type and is initialized by AgentOrchestrator.
             missing: No explicit capability routing yet.
           - id: T3-E1-S3
             name: Capture patch sets, diffs, and execution traces as artifacts
@@ -229,13 +254,13 @@ themes:
       - id: T3-E2
         name: Build Verification Loop
         status: in_progress
-        approx_progress: 40
+        approx_progress: 55
         stories:
           - id: T3-E2-S1
             name: Add test, lint, and type-check loop for implementation jobs
             status: in_progress
-            current_state: run_verification_suite() runs test and lint in workspace. Custom commands are supported.
-            missing: No default typecheck and no build-specific test discovery yet.
+            current_state: run_verification_suite() runs test and lint in workspace and adds typecheck automatically when project config is present. Custom commands are supported.
+            missing: No build-specific test discovery or review-after-build pass yet.
           - id: T3-E2-S2
             name: Add review-after-build pass before completion
             status: not_started
@@ -243,7 +268,7 @@ themes:
             name: Fail jobs clearly when acceptance criteria are not met
             status: in_progress
             current_state: BuildService fails jobs when acceptance criteria are unmet.
-            missing: Acceptance evaluation is still simple.
+            missing: Acceptance evaluation is still rule-based and limited.
           - id: T3-E2-S4
             name: Capture all verification artifacts and verdicts
             status: in_progress
@@ -251,23 +276,23 @@ themes:
       - id: T3-E3
         name: Acceptance Criteria Engine
         status: in_progress
-        approx_progress: 40
+        approx_progress: 55
         stories:
           - id: T3-E3-S1
             name: Define acceptance criteria object model
             status: in_progress
             current_state: AcceptanceCriterion supports typed criterion kinds and statuses with meet, fail, and skip transitions.
-            missing: No semantic evaluation yet.
+            missing: No semantic evaluation beyond rule-based checks yet.
           - id: T3-E3-S2
             name: Attach acceptance criteria to jobs
             status: in_progress
             current_state: BuildIntake carries acceptance_criteria and BuildJob inherits them.
-            missing: Criteria remain simple and manual.
+            missing: Criteria are attached and checked, but richer requirement matching is still missing.
           - id: T3-E3-S3
             name: Validate criteria at completion time
             status: in_progress
-            current_state: AcceptanceVerdict.evaluate() runs at completion.
-            missing: No richer semantic checks yet.
+            current_state: AcceptanceVerdict.evaluate() runs at completion, with keyword-bound verification checks and explicit verify commands available.
+            missing: No richer semantic checks or domain evaluators yet.
           - id: T3-E3-S4
             name: Produce acceptance reports for delivery
             status: in_progress
@@ -404,7 +429,8 @@ themes:
     name: Cost, Usage, And Observability
     goal: Make the system operable, measurable, and economically sane.
     status: started
-    approx_progress: 20
+    approx_progress: 25
+    current_state: UsageSummary in control-plane. Fields on review and build jobs. Orchestrator-visible build/review status counters exist locally.
     main_gap: No real per-job cost ledger or operator-facing observability.
     epics:
       - id: T6-E1
@@ -421,13 +447,19 @@ themes:
       - id: T6-E2
         name: Runtime Observability
         status: started
-        approx_progress: 20
+        approx_progress: 25
         stories:
           - id: T6-E2-S1
             name: Track job status, failures, retries, and durations
             status: started
           - id: T6-E2-S2
             name: Track worker execution and workspace health
+            status: started
+          - id: T6-E2-S3
+            name: Track approval backlog and blocked reasons
+            status: started
+          - id: T6-E2-S4
+            name: Add operator-facing reporting surface or inbox
             status: started
       - id: T6-E3
         name: Quality Evals
@@ -472,8 +504,8 @@ themes:
     name: Enterprise Hardening
     goal: Prepare for enterprise-grade architecture without premature fragmentation.
     status: in_progress
-    approx_progress: 35
-    current_state: Shared control-plane layer, review and build bounded contexts, ADR-001 sidecar, TS operator contracts and skeleton, policy-driven redaction.
+    approx_progress: 40
+    current_state: Shared control-plane layer, review and build bounded contexts, tracked builder runtime, ADR-001 sidecar, TS operator contracts and skeleton, policy-driven redaction.
     main_gap: ReviewJob is not yet on shared primitives and there is no cross-system job query layer.
     epics:
       - id: T8-E1
