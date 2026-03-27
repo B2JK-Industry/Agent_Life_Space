@@ -10,6 +10,46 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-03-27
+
+Review entrypoint convergence and runtime budget governance release.
+
+### Reviewer / API
+- Telegram `/review` and the new structured `POST /api/review` endpoint now
+  converge through the shared review runtime instead of bypassing it with
+  adapter-only logic
+- Review intake now preserves its channel source through recovery-safe
+  persistence, and review product-job metadata now carries deterministic review
+  execution policy identity
+- Repository and diff review access now runs under explicit deterministic
+  review execution policies with durable control-plane policy traces
+
+### Operator / Governance
+- Unified operator intake now blocks execution on hard-cap and stop-loss budget
+  conditions instead of treating budgets as preview-only metadata
+- Runtime submission now creates approval requests for approval-cap budget
+  cases and high-risk execution before starting build/review jobs
+- Planner handoff records now use `awaiting_approval`, `executing`, and
+  `blocked` transitions more honestly, with runtime execution traces recording
+  budget blocks, approval requests, and job completion
+
+### Cost / Observability
+- `FinanceTracker.check_budget()` now exposes soft-cap, hard-cap, stop-loss,
+  approval, warning, and forecast posture instead of only simple remaining
+  amounts
+- Operator report now surfaces budget posture plus inbox-visible budget
+  warnings/blocks and cost-margin hints for the operator
+
+### Builder / Local Execution
+- Builder verification now prefers repo-local `.venv` toolchains when the
+  workspace intentionally excludes copied virtualenv directories
+- Build jobs without explicit acceptance criteria now use verification outcome
+  as an explicit acceptance proxy instead of failing with a misleading `0 unmet`
+  rejection
+
+### Verification
+- Local release verification passed with `1273 passed, 4 skipped`
+
 ## [1.6.0] — 2026-03-27
 
 Unified control-plane persistence and retention release.

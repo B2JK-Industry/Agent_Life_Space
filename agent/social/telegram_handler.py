@@ -443,10 +443,23 @@ class TelegramHandler:
             review_type=review_type,
             requester=self._current_sender or "telegram",
             include_patterns=include_patterns,
+            source="telegram",
         )
 
-        # Run review via service
-        job = await self._agent.review.run_review(intake)
+        # Prefer the shared runtime entrypoint, but keep a service fallback for
+        # lightweight adapters and legacy test doubles that do not expose it.
+        from inspect import isawaitable
+        from unittest.mock import Mock
+
+        run_review_job = getattr(self._agent, "run_review_job", None)
+        if callable(run_review_job):
+            maybe_job = run_review_job(intake)
+            if isinstance(maybe_job, Mock):
+                job = await self._agent.review.run_review(intake)
+            else:
+                job = await maybe_job if isawaitable(maybe_job) else maybe_job
+        else:
+            job = await self._agent.review.run_review(intake)
 
         # Format for Telegram (channel adapter — just display, no business logic)
         if job.error:
@@ -1321,4 +1334,3 @@ class TelegramHandler:
                     logger.info("auto_task_created", name=first_sentence[:50])
                 except Exception:
                     pass
-

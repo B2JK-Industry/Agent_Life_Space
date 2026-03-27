@@ -36,13 +36,13 @@ from agent.brain.decision_engine import DecisionEngine
 from agent.control.artifact_queries import ArtifactQueryService
 from agent.control.intake import OperatorIntakeService, OperatorWorkType
 from agent.control.job_queries import JobQueryService
-from agent.control.models import JobKind, PlanRecordStatus
+from agent.control.models import JobKind, PlanRecordStatus, TraceRecordKind
 from agent.control.reporting import OperatorReportService
 from agent.control.runtime_model import RuntimeModelService
 from agent.control.state import ControlPlaneStateService
 from agent.control.storage import ControlPlaneStorage
 from agent.control.workspace_queries import WorkspaceQueryService
-from agent.core.approval import ApprovalQueue
+from agent.core.approval import ApprovalCategory, ApprovalQueue
 from agent.core.approval_storage import ApprovalStorage
 from agent.core.job_runner import JobConfig, JobRunner
 from agent.core.llm_router import LLMRouter
@@ -538,6 +538,7 @@ class AgentOrchestrator:
             "accepted": qualification.supported,
             "qualification": qualification.to_dict(),
             "plan": plan.to_dict(),
+            "status": "blocked" if not qualification.supported else "submitted",
         }
         plan_record = self.control_plane.record_plan(
             intake=intake.to_dict(),
@@ -554,15 +555,90 @@ class AgentOrchestrator:
             result["error"] = "; ".join(qualification.blockers)
             return result
 
-        if qualification.resolved_work_type == OperatorWorkType.BUILD:
-            job = await self.run_build_job(self.intake_router.to_build_intake(intake))
+        budget = plan.budget
+        if budget.hard_cap_hit or budget.stop_loss_hit or not budget.within_budget:
+            detail = self._budget_block_detail(budget)
             self.control_plane.update_plan_status(
                 plan_record.plan_id,
-                status=self._plan_status("completed"),
+                status=self._plan_status("blocked"),
+            )
+            self.control_plane.record_trace(
+                trace_kind=TraceRecordKind.BUDGET,
+                title="Runtime budget block",
+                detail=detail,
+                plan_id=plan_record.plan_id,
+                metadata=budget.to_dict(),
+            )
+            result["status"] = "blocked"
+            result["error"] = detail
+            return result
+
+        approval = self._build_runtime_approval(
+            intake=intake,
+            qualification=qualification,
+            plan=plan,
+            plan_id=plan_record.plan_id,
+        )
+        if approval is not None:
+            self.control_plane.update_plan_status(
+                plan_record.plan_id,
+                status=self._plan_status("awaiting_approval"),
+            )
+            self.control_plane.record_trace(
+                trace_kind=TraceRecordKind.EXECUTION,
+                title="Runtime approval requested",
+                detail=approval["reason"],
+                plan_id=plan_record.plan_id,
+                metadata=approval,
+            )
+            result["status"] = "awaiting_approval"
+            result["approval_request"] = approval
+            result["error"] = approval["reason"]
+            return result
+
+        self.control_plane.update_plan_status(
+            plan_record.plan_id,
+            status=self._plan_status("executing"),
+        )
+        self.control_plane.record_trace(
+            trace_kind=TraceRecordKind.EXECUTION,
+            title="Runtime execution started",
+            detail=(
+                f"starting {qualification.resolved_work_type.value} execution for "
+                f"plan {plan_record.plan_id}"
+            ),
+            plan_id=plan_record.plan_id,
+            metadata={
+                "resolved_work_type": qualification.resolved_work_type.value,
+                "risk_level": qualification.risk_level,
+                "budget": budget.to_dict(),
+            },
+        )
+
+        if qualification.resolved_work_type == OperatorWorkType.BUILD:
+            job = await self.run_build_job(self.intake_router.to_build_intake(intake))
+            plan_status = (
+                "completed"
+                if job.status.value == "completed"
+                else "blocked"
+            )
+            self.control_plane.update_plan_status(
+                plan_record.plan_id,
+                status=self._plan_status(plan_status),
                 linked_job_id=job.id,
+            )
+            self.control_plane.record_trace(
+                trace_kind=TraceRecordKind.EXECUTION,
+                title="Runtime build execution finished",
+                detail=f"job {job.id} finished with status {job.status.value}",
+                plan_id=plan_record.plan_id,
+                job_id=job.id,
+                workspace_id=job.workspace_id,
+                metadata={"job_status": job.status.value},
             )
             result.update(
                 {
+                    "status": plan_status,
                     "job_id": job.id,
                     "job_kind": "build",
                     "job": self.get_product_job(job.id, kind="build"),
@@ -571,19 +647,100 @@ class AgentOrchestrator:
             return result
 
         job = await self.run_review_job(self.intake_router.to_review_intake(intake))
+        plan_status = (
+            "completed"
+            if job.status.value == "completed"
+            else "blocked"
+        )
         self.control_plane.update_plan_status(
             plan_record.plan_id,
-            status=self._plan_status("completed"),
+            status=self._plan_status(plan_status),
             linked_job_id=job.id,
+        )
+        self.control_plane.record_trace(
+            trace_kind=TraceRecordKind.EXECUTION,
+            title="Runtime review execution finished",
+            detail=f"job {job.id} finished with status {job.status.value}",
+            plan_id=plan_record.plan_id,
+            job_id=job.id,
+            workspace_id=job.workspace_id,
+            metadata={"job_status": job.status.value, "verdict": job.report.verdict},
         )
         result.update(
             {
+                "status": plan_status,
                 "job_id": job.id,
                 "job_kind": "review",
                 "job": self.get_product_job(job.id, kind="review"),
             }
         )
         return result
+
+    def _budget_block_detail(self, budget: Any) -> str:
+        if budget.hard_cap_hit:
+            return "Budget hard cap blocks execution for this intake."
+        if budget.stop_loss_hit:
+            return "Budget stop-loss blocks execution to preserve remaining runway."
+        return "Budget posture blocks execution for this intake."
+
+    def _build_runtime_approval(
+        self,
+        *,
+        intake: Any,
+        qualification: Any,
+        plan: Any,
+        plan_id: str,
+    ) -> dict[str, Any] | None:
+        category: ApprovalCategory | None = None
+        description = ""
+        reason = ""
+        if plan.budget.requires_approval:
+            category = ApprovalCategory.FINANCE
+            description = (
+                f"Approve budget for {qualification.resolved_work_type.value} "
+                f"plan {plan_id[:8]}"
+            )
+            reason = (
+                f"Estimated cost ${plan.budget.estimated_cost_usd:.2f} exceeds the "
+                "single-transaction approval cap."
+            )
+        elif qualification.risk_level == "high":
+            category = ApprovalCategory.TOOL
+            description = (
+                f"Approve high-risk {qualification.resolved_work_type.value} "
+                f"execution for plan {plan_id[:8]}"
+            )
+            reason = (
+                f"Qualification marked this intake as high risk: "
+                f"{', '.join(qualification.risk_factors[:3]) or 'no factors provided'}."
+            )
+
+        if category is None:
+            return None
+
+        approval = self.approval_queue.propose(
+            category=category,
+            description=description,
+            risk_level=qualification.risk_level,
+            reason=reason,
+            context={
+                "plan_id": plan_id,
+                "repo_path": getattr(intake, "repo_path", ""),
+                "git_url": getattr(intake, "git_url", ""),
+                "work_type": qualification.resolved_work_type.value,
+                "estimated_cost_usd": plan.budget.estimated_cost_usd,
+                "budget": plan.budget.to_dict(),
+                "risk_level": qualification.risk_level,
+                "risk_factors": list(qualification.risk_factors),
+            },
+        )
+        return {
+            "approval_request_id": approval.id,
+            "approval_status": approval.status.value,
+            "category": approval.category.value,
+            "description": approval.description,
+            "reason": approval.reason,
+        }
 
     def list_operator_plans(
         self,

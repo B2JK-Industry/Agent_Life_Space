@@ -26,7 +26,13 @@ from typing import Any
 
 import structlog
 
-from agent.control.models import ArtifactKind, ExecutionMode, JobStatus
+from agent.control.models import (
+    ArtifactKind,
+    ExecutionMode,
+    JobStatus,
+    TraceRecordKind,
+)
+from agent.control.policy import select_review_execution_policy
 from agent.review.analyzers import (
     analyze_diff,
     analyze_repo_structure,
@@ -83,6 +89,7 @@ class ReviewService:
         # ── Step 1: Validate ──
         job = ReviewJob(
             job_type=intake.review_type,
+            source=intake.source or "manual",
             requester=intake.requester,
             intake=intake,
         )
@@ -128,12 +135,56 @@ class ReviewService:
         # ── Step 1c: Execution policy audit ──
         t_policy = job.trace("execution_policy")
         analysis_path = self._get_analysis_path(job)
+        review_policy = select_review_execution_policy(
+            review_type=intake.review_type,
+            diff_spec=intake.diff_spec,
+            source=job.source,
+        )
+        if not review_policy.allow_host_read:
+            detail = (
+                f"review execution blocked by policy {review_policy.id}: "
+                f"{review_policy.description}"
+            )
+            t_policy.fail(detail)
+            job.status = JobStatus.BLOCKED
+            job.error = detail
+            self._record_review_policy_trace(
+                job=job,
+                policy=review_policy,
+                analysis_path=analysis_path,
+                allowed=False,
+            )
+            self._save_job(job)
+            return job
+        if intake.diff_spec and not review_policy.allow_git_subprocess:
+            detail = (
+                f"review diff access blocked by policy {review_policy.id}: "
+                "git subprocess execution is not allowed"
+            )
+            t_policy.fail(detail)
+            job.status = JobStatus.BLOCKED
+            job.error = detail
+            self._record_review_policy_trace(
+                job=job,
+                policy=review_policy,
+                analysis_path=analysis_path,
+                allowed=False,
+            )
+            self._save_job(job)
+            return job
         t_policy.complete(
             f"mode={job.execution_mode.value}, "
             f"analysis_path={analysis_path}, "
             f"source={job.source}, "
-            f"host_access=read_only, "
-            f"git_subprocess={'yes' if intake.diff_spec else 'no'}"
+            f"policy={review_policy.id}, "
+            f"host_access={'read_only' if review_policy.allow_host_read else 'blocked'}, "
+            f"git_subprocess={'yes' if review_policy.allow_git_subprocess else 'no'}"
+        )
+        self._record_review_policy_trace(
+            job=job,
+            policy=review_policy,
+            analysis_path=analysis_path,
+            allowed=True,
         )
 
         # ── Step 2: Analyze ──
@@ -456,9 +507,51 @@ class ReviewService:
                 "focus_areas": list(job.intake.focus_areas),
                 "include_patterns": list(job.intake.include_patterns),
                 "exclude_patterns": list(job.intake.exclude_patterns),
+                "review_execution_policy_id": self._review_policy_id(job),
                 "error": job.error,
             },
         )
+
+    def _record_review_policy_trace(
+        self,
+        *,
+        job: ReviewJob,
+        policy: Any,
+        analysis_path: str,
+        allowed: bool,
+    ) -> None:
+        if self._control_plane_state is None:
+            return
+        self._control_plane_state.record_trace(
+            trace_kind=TraceRecordKind.REVIEW_POLICY,
+            title="Review execution policy decision",
+            detail=(
+                f"policy={policy.id}; allowed={allowed}; source={job.source}; "
+                f"review_type={job.job_type.value}; diff={bool(job.intake.diff_spec)}"
+            ),
+            job_id=job.id,
+            workspace_id=job.workspace_id,
+            metadata={
+                "policy_id": policy.id,
+                "policy_label": policy.label,
+                "policy_description": policy.description,
+                "analysis_path": analysis_path,
+                "allow_host_read": policy.allow_host_read,
+                "allow_git_subprocess": policy.allow_git_subprocess,
+                "source": job.source,
+                "review_type": job.job_type.value,
+                "diff_spec": job.intake.diff_spec,
+                "allowed": allowed,
+            },
+        )
+
+    def _review_policy_id(self, job: ReviewJob) -> str:
+        policy = select_review_execution_policy(
+            review_type=job.job_type,
+            diff_spec=job.intake.diff_spec,
+            source=job.source,
+        )
+        return policy.id
 
     def _record_delivery_bundle_retention(
         self,

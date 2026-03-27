@@ -147,8 +147,18 @@ class FinanceTracker:
         # Budget policy (optional — provides hard/soft caps)
         self._budget_policy: Any = None
         try:
-            from agent.finance.budget_policy import BudgetPolicy
-            self._budget_policy = BudgetPolicy()
+            from agent.finance.budget_policy import BudgetLimits, BudgetPolicy
+            self._budget_policy = BudgetPolicy(
+                BudgetLimits(
+                    daily_hard_cap=daily_budget_usd,
+                    daily_soft_cap=min(30.0, daily_budget_usd),
+                    daily_stop_loss_buffer=min(5.0, daily_budget_usd * 0.1),
+                    monthly_hard_cap=monthly_budget_usd,
+                    monthly_soft_cap=min(300.0, monthly_budget_usd),
+                    monthly_stop_loss_buffer=min(50.0, monthly_budget_usd * 0.1),
+                    single_tx_approval_cap=min(20.0, daily_budget_usd),
+                )
+            )
         except ImportError:
             pass
 
@@ -372,6 +382,29 @@ class FinanceTracker:
 
         daily_remaining = self._daily_budget - daily_spent
         monthly_remaining = self._monthly_budget - monthly_spent
+        policy_result = (
+            self._budget_policy.check(
+                amount=proposed_amount,
+                daily_spent=daily_spent,
+                monthly_spent=monthly_spent,
+            )
+            if self._budget_policy is not None
+            else None
+        )
+        forecast = (
+            self._budget_policy.get_forecast(
+                daily_spent=daily_spent,
+                monthly_spent=monthly_spent,
+            )
+            if self._budget_policy is not None
+            else {}
+        )
+        within_budget = (
+            proposed_amount <= daily_remaining
+            and proposed_amount <= monthly_remaining
+        )
+        if policy_result is not None:
+            within_budget = within_budget and policy_result.allowed
 
         return {
             "daily_spent": round(daily_spent, 2),
@@ -380,10 +413,15 @@ class FinanceTracker:
             "monthly_spent": round(monthly_spent, 2),
             "monthly_remaining": round(monthly_remaining, 2),
             "monthly_budget": self._monthly_budget,
-            "within_budget": (
-                proposed_amount <= daily_remaining
-                and proposed_amount <= monthly_remaining
+            "within_budget": within_budget,
+            "warnings": list(policy_result.warnings) if policy_result is not None else [],
+            "hard_cap_hit": bool(getattr(policy_result, "hard_cap_hit", False)),
+            "soft_cap_hit": bool(getattr(policy_result, "soft_cap_hit", False)),
+            "stop_loss_hit": bool(getattr(policy_result, "stop_loss_hit", False)),
+            "requires_approval": bool(
+                getattr(policy_result, "requires_approval", False)
             ),
+            "forecast": forecast,
         }
 
     def get_total_income(self) -> float:

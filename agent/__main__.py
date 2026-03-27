@@ -716,7 +716,15 @@ def main() -> None:
     parser.add_argument(
         "--plan-status",
         default="",
-        choices=["", "preview", "submitted", "blocked", "executing", "completed"],
+        choices=[
+            "",
+            "preview",
+            "submitted",
+            "awaiting_approval",
+            "blocked",
+            "executing",
+            "completed",
+        ],
         help="Optional status filter for --list-plans",
     )
     parser.add_argument(

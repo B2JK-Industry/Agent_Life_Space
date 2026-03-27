@@ -321,6 +321,44 @@ class TestJobQueryService:
             "workspace_attention",
         }
 
+    def test_operator_report_surfaces_budget_posture(self):
+        job_query_service = MagicMock()
+        job_query_service.list_jobs.return_value = []
+        report = OperatorReportService(
+            job_queries=job_query_service,
+            approval_queue=MagicMock(get_pending=MagicMock(return_value=[])),
+            operator_controls=MagicMock(
+                get_status=MagicMock(return_value={"total_disabled": 0})
+            ),
+            status_provider=lambda: {
+                "finance": {
+                    "budget": {
+                        "daily_spent": 32.0,
+                        "daily_remaining": 18.0,
+                        "daily_budget": 50.0,
+                        "monthly_spent": 210.0,
+                        "monthly_remaining": 290.0,
+                        "monthly_budget": 500.0,
+                        "within_budget": True,
+                        "soft_cap_hit": True,
+                        "hard_cap_hit": False,
+                        "stop_loss_hit": False,
+                        "warnings": ["Denný soft cap prekročený"],
+                    }
+                },
+                "workspaces": {"by_status": {"active": 0}},
+                "worker_execution": {
+                    "active_jobs": 0,
+                    "recent_jobs": [],
+                    "circuit_breaker_open": False,
+                },
+            },
+        ).get_report(limit=10)
+
+        assert report["budget_posture"]["soft_cap_hit"] is True
+        assert report["summary"]["daily_budget_remaining_usd"] == 18.0
+        assert any(item["kind"] == "budget_attention" for item in report["inbox"])
+
 
 class TestBuilderCliAdapter:
     @pytest.mark.asyncio
@@ -716,7 +754,7 @@ class TestUnifiedOperatorIntake:
 
         assert preview["plan"]["budget"]["within_budget"] is False
         assert preview["plan"]["budget"]["warnings"]
-        assert preview["plan"]["recommended_next_action"].startswith("Reduce scope")
+        assert "Budget hard cap blocks execution" in preview["plan"]["recommended_next_action"]
 
     def test_preview_returns_review_phases_and_handoff(self):
         service = OperatorIntakeService()
@@ -816,6 +854,120 @@ class TestUnifiedOperatorIntake:
         assert result["accepted"] is False
         assert "git_url intake" in result["error"]
         assert result["plan"]["blockers"]
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_submit_operator_intake_blocks_on_stop_loss(self):
+        from agent.core.agent import AgentOrchestrator
+
+        agent = AgentOrchestrator(data_dir="agent-test", watchdog_interval=60.0)
+        agent._initialized = True
+        agent.initialize = AsyncMock()
+        agent.run_build_job = AsyncMock()
+        agent.intake_router = OperatorIntakeService(
+            budget_status_provider=lambda amount: {
+                "daily_spent": 34.0,
+                "daily_remaining": 16.0,
+                "daily_budget": 50.0,
+                "monthly_spent": 100.0,
+                "monthly_remaining": 400.0,
+                "monthly_budget": 500.0,
+                "within_budget": True,
+            }
+        )
+
+        result = await agent.submit_operator_intake(
+            OperatorIntake(
+                repo_path="/tmp/repo",
+                work_type="build",
+                description="Implement endpoint",
+                acceptance_criteria=["Tests pass"],
+            )
+        )
+
+        assert result["accepted"] is True
+        assert result["status"] == "blocked"
+        assert "stop-loss" in result["error"]
+        agent.run_build_job.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_submit_operator_intake_requests_budget_approval(self):
+        from agent.core.agent import AgentOrchestrator
+
+        agent = AgentOrchestrator(data_dir="agent-test", watchdog_interval=60.0)
+        agent._initialized = True
+        agent.initialize = AsyncMock()
+        agent.run_build_job = AsyncMock()
+        agent.intake_router = OperatorIntakeService(
+            budget_status_provider=lambda amount: {
+                "daily_spent": 0.0,
+                "daily_remaining": 50.0,
+                "daily_budget": 50.0,
+                "monthly_spent": 0.0,
+                "monthly_remaining": 500.0,
+                "monthly_budget": 500.0,
+                "within_budget": True,
+            }
+        )
+
+        result = await agent.submit_operator_intake(
+            OperatorIntake(
+                repo_path="/tmp/repo",
+                work_type="build",
+                build_type="integration",
+                description="Implement integration workflow",
+                acceptance_criteria=[
+                    "Tests pass",
+                    "Typecheck passes",
+                    "Docs updated",
+                    "Review passes",
+                ],
+                target_files=[
+                    "agent/core/agent.py",
+                    "agent/control/intake.py",
+                    "agent/control/reporting.py",
+                    "agent/build/service.py",
+                    "tests/test_control_plane_jobs.py",
+                ],
+                focus_areas=["planner", "budget", "routing"],
+            )
+        )
+
+        assert result["status"] == "awaiting_approval"
+        assert result["approval_request"]["category"] == "finance"
+        agent.run_build_job.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_submit_operator_intake_requests_high_risk_approval(self):
+        from agent.core.agent import AgentOrchestrator
+
+        agent = AgentOrchestrator(data_dir="agent-test", watchdog_interval=60.0)
+        agent._initialized = True
+        agent.initialize = AsyncMock()
+        agent.run_build_job = AsyncMock()
+        agent.intake_router = OperatorIntakeService(
+            budget_status_provider=lambda amount: {
+                "daily_spent": 0.0,
+                "daily_remaining": 50.0,
+                "daily_budget": 50.0,
+                "monthly_spent": 0.0,
+                "monthly_remaining": 500.0,
+                "monthly_budget": 500.0,
+                "within_budget": True,
+            }
+        )
+
+        result = await agent.submit_operator_intake(
+            OperatorIntake(
+                repo_path="/tmp/repo",
+                work_type="build",
+                build_type="integration",
+                description="Update integration pipeline",
+            )
+        )
+
+        assert result["status"] == "awaiting_approval"
+        assert result["approval_request"]["category"] == "tool"
+        agent.run_build_job.assert_not_awaited()
 
 
 class TestRuntimeModel:

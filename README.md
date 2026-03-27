@@ -12,6 +12,7 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Epistemic memory** — 4 types + provenance model (observed/asserted/inferred/verified/stale), expiry, decay
 - **Persistent conversation** — SQLite-backed context with FTS5 full-text search, survives restarts
 - **Agent-to-Agent API** — HTTP endpoint for inter-agent communication
+- **Structured review API** — `POST /api/review` runs deterministic review jobs through the shared runtime
 - **Learning system** — skill outcome tracking, model escalation, prompt augmentation
 - **Multi-provider LLM** — Claude CLI, Anthropic API, OpenAI, Ollama (any backend)
 - **Automated security** — 127-test security audit + invariant suite
@@ -25,11 +26,12 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Retained artifact records** — build/review/delivery outputs now carry policy, expiry, and recoverability metadata
 - **Persisted product jobs** — shared control-plane record of build/review job metadata, status, usage, and artifacts
 - **Per-job cost ledger** — durable usage/token/cost entries with report and CLI inspection
+- **Runtime budget governance** — hard-cap, stop-loss, and approval-gated intake execution
 - **Shared policy registry** — deterministic job persistence, artifact retention, delivery, review-gate, and gateway defaults
 - **Control-plane queries** — shared inspection across build, review, task, job-runner, agent-loop, artifact, plan, delivery, and workspace state
 - **Runtime model** — explicit coexistence rules for product jobs, planning tasks, infrastructure jobs, and conversational queue items
 - **Operator CLI surfaces** — `--report`, `--runtime-model`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, `--list-persisted-jobs`, `--list-retained-artifacts`, `--list-cost-ledger`, unified `--intake-*`, and explicit build delivery handoff
-- **1262+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **1273+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -102,7 +104,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 1262+ passed, ~22s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1273+ passed, ~22s, $0.00
 ```
 
 | Layer | Tests | What |
@@ -151,7 +153,7 @@ This project is honest about what works and what doesn't yet.
 | Area | Status | What's missing |
 |------|--------|---------------|
 | Memory provenance | Working | Conflict detection is tag-based, not semantic. No auto-consolidation pipeline yet. |
-| Tool governance | Working | Delivery approvals, persistence, and artifact retention are now shared and queryable, but review/build execution still do not run under one unified policy engine. |
+| Tool governance | Working | Review repo/diff execution and intake budgets now run under deterministic policy boundaries, but build execution is still not governed by one fully unified engine. |
 | Workspace | Working | No cleanup scheduler (must call `cleanup_expired()` manually). |
 | Routing | Working | Keyword + signal heuristics. No ML-based classification. |
 | Learning | Partial | Model failure tracking resets on restart. No eval set. |

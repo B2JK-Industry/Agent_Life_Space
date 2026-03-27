@@ -52,6 +52,8 @@ class OperatorReportService:
             else {}
         )
         agent_status = self._status_provider() if callable(self._status_provider) else {}
+        finance_status = agent_status.get("finance", {})
+        finance_budget = finance_status.get("budget", {})
         workspace_health = agent_status.get("workspaces", {})
         worker_execution = agent_status.get("worker_execution", {})
         recent_plans = (
@@ -137,6 +139,26 @@ class OperatorReportService:
                     "detail": "Job runner is currently rejecting new work due to recent failures.",
                 }
             )
+        if finance_budget.get("hard_cap_hit") or finance_budget.get("stop_loss_hit"):
+            inbox.append(
+                {
+                    "kind": "budget_attention",
+                    "id": "finance_budget",
+                    "status": "blocked",
+                    "title": "Budget policy is blocking new execution",
+                    "detail": "; ".join(finance_budget.get("warnings", [])),
+                }
+            )
+        elif finance_budget.get("soft_cap_hit"):
+            inbox.append(
+                {
+                    "kind": "budget_attention",
+                    "id": "finance_budget",
+                    "status": "warning",
+                    "title": "Budget soft cap exceeded",
+                    "detail": "; ".join(finance_budget.get("warnings", [])),
+                }
+            )
         for delivery in recent_deliveries[:limit]:
             if delivery["status"] in {"awaiting_approval", "rejected"}:
                 inbox.append(
@@ -179,6 +201,22 @@ class OperatorReportService:
                 "disabled_tools": controls.get("total_disabled", 0),
                 "active_workspaces": workspace_health.get("by_status", {}).get("active", 0),
                 "active_workers": worker_execution.get("active_jobs", 0),
+                "daily_budget_remaining_usd": finance_budget.get("daily_remaining", 0.0),
+                "monthly_budget_remaining_usd": finance_budget.get("monthly_remaining", 0.0),
+                "budget_within_limit": finance_budget.get("within_budget", True),
+            },
+            "budget_posture": {
+                "daily_spent": finance_budget.get("daily_spent", 0.0),
+                "daily_remaining": finance_budget.get("daily_remaining", 0.0),
+                "daily_budget": finance_budget.get("daily_budget", 0.0),
+                "monthly_spent": finance_budget.get("monthly_spent", 0.0),
+                "monthly_remaining": finance_budget.get("monthly_remaining", 0.0),
+                "monthly_budget": finance_budget.get("monthly_budget", 0.0),
+                "within_budget": finance_budget.get("within_budget", True),
+                "hard_cap_hit": finance_budget.get("hard_cap_hit", False),
+                "soft_cap_hit": finance_budget.get("soft_cap_hit", False),
+                "stop_loss_hit": finance_budget.get("stop_loss_hit", False),
+                "warnings": list(finance_budget.get("warnings", [])),
             },
             "inbox": inbox[:limit],
             "recent_jobs": jobs[:limit],
