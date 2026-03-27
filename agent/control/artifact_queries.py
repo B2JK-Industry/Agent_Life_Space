@@ -33,9 +33,11 @@ class ArtifactQueryService:
         self,
         build_service: Any = None,
         review_service: Any = None,
+        control_plane_state: Any = None,
     ) -> None:
         self._build_service = build_service
         self._review_service = review_service
+        self._control_plane_state = control_plane_state
 
     def list_artifacts(
         self,
@@ -131,6 +133,7 @@ class ArtifactQueryService:
         content = artifact.get("content", "")
         content_json = artifact.get("content_json") or {}
         kind = ArtifactKind(artifact.get("artifact_kind", "execution_trace"))
+        retention = self._retention_record(artifact.get("id", ""))
         return ArtifactQuerySummary(
             artifact_id=artifact.get("id", ""),
             artifact_kind=kind,
@@ -142,6 +145,10 @@ class ArtifactQueryService:
             content_length=len(content),
             has_json=bool(content_json),
             title=self._artifact_title(kind, JobKind.BUILD),
+            retention_policy_id=retention.get("retention_policy_id", ""),
+            retention_status=retention.get("status", ""),
+            expires_at=retention.get("expires_at", ""),
+            recoverable=bool(retention.get("recoverable", False)),
         )
 
     def _build_detail(self, artifact: dict[str, Any]) -> ArtifactQueryDetail:
@@ -153,6 +160,7 @@ class ArtifactQueryService:
             metadata={
                 "domain": "build",
                 "storage_kind": artifact.get("artifact_kind", ""),
+                "retention": self._retention_record(artifact.get("id", "")),
             },
         )
 
@@ -161,6 +169,7 @@ class ArtifactQueryService:
         kind = _REVIEW_TO_SHARED_KIND.get(artifact_type, ArtifactKind.REVIEW_REPORT)
         content = artifact.get("content", "")
         content_json = artifact.get("content_json") or {}
+        retention = self._retention_record(artifact.get("id", ""))
         return ArtifactQuerySummary(
             artifact_id=artifact.get("id", ""),
             artifact_kind=kind,
@@ -172,6 +181,10 @@ class ArtifactQueryService:
             content_length=len(content),
             has_json=bool(content_json),
             title=self._artifact_title(kind, JobKind.REVIEW),
+            retention_policy_id=retention.get("retention_policy_id", ""),
+            retention_status=retention.get("status", ""),
+            expires_at=retention.get("expires_at", ""),
+            recoverable=bool(retention.get("recoverable", False)),
         )
 
     def _review_detail(self, artifact: dict[str, Any]) -> ArtifactQueryDetail:
@@ -183,6 +196,7 @@ class ArtifactQueryService:
             metadata={
                 "domain": "review",
                 "storage_kind": artifact.get("artifact_type", ""),
+                "retention": self._retention_record(artifact.get("id", "")),
             },
         )
 
@@ -197,6 +211,15 @@ class ArtifactQueryService:
             ArtifactKind.DIFF: "Workspace diff",
             ArtifactKind.VERIFICATION_REPORT: "Verification report",
             ArtifactKind.ACCEPTANCE_REPORT: "Acceptance report",
+            ArtifactKind.DELIVERY_BUNDLE: "Delivery bundle",
             ArtifactKind.EXECUTION_TRACE: "Execution trace",
         }
         return f"{job_kind.value}:{labels.get(kind, kind.value)}"
+
+    def _retention_record(self, artifact_id: str) -> dict[str, Any]:
+        if self._control_plane_state is None or not artifact_id:
+            return {}
+        record = self._control_plane_state.get_retained_artifact(artifact_id)
+        if record is None:
+            return {}
+        return record.to_dict()

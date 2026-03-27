@@ -10,6 +10,36 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-03-27
+
+Unified control-plane persistence and retention release.
+
+### Platform / Control Plane
+- Build and review jobs now sync into shared `ProductJobRecord` persistence,
+  making product-job metadata queryable through the control plane instead of
+  living only inside bounded-context stores
+- Shared retained-artifact records now cover build, review, and delivery-bundle
+  outputs with policy ids, expiry timestamps, recoverability, and retention
+  status
+- CLI and orchestrator now expose persisted-job, retained-artifact, and
+  per-job cost-ledger list/get surfaces
+
+### Governance
+- Shared policy model now includes deterministic job-persistence,
+  artifact-retention, and external-gateway policies alongside the existing
+  delivery and review-gate profiles
+- Artifact query and reporting surfaces now expose retention metadata instead
+  of hiding policy and expiry state
+
+### Observability
+- Per-job usage, tokens, and cost now land in a durable control-plane ledger
+  for build and review jobs
+- Operator report now includes recent persisted product jobs, retained
+  artifacts, cost-ledger entries, and recorded cost totals
+
+### Verification
+- Local release verification passed with `1262 passed, 4 skipped`
+
 ## [1.5.0] — 2026-03-27
 
 Durable planning and delivery lifecycle release.

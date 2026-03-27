@@ -449,6 +449,105 @@ async def list_deliveries_command(
     await agent.stop()
 
 
+async def list_persisted_jobs_command(
+    *,
+    data_dir: str = "agent",
+    job_kind: str = "",
+    status: str = "",
+    limit: int = 20,
+) -> None:
+    """List durable build/review job records."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    records = agent.list_persisted_product_jobs(
+        job_kind=job_kind,
+        status=status,
+        limit=limit,
+    )
+    print(orjson.dumps(records, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def show_persisted_job_command(
+    *,
+    data_dir: str = "agent",
+    job_id: str,
+) -> None:
+    """Show one durable build/review job record."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    record = agent.get_persisted_product_job(job_id)
+    result = record or {"error": f"Persisted job not found: {job_id}"}
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def list_retained_artifacts_command(
+    *,
+    data_dir: str = "agent",
+    status: str = "",
+    job_id: str = "",
+    artifact_kind: str = "",
+    retention_policy_id: str = "",
+    limit: int = 50,
+) -> None:
+    """List retained artifacts and delivery outputs."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    records = agent.list_retained_artifacts(
+        status=status,
+        job_id=job_id,
+        artifact_kind=artifact_kind,
+        retention_policy_id=retention_policy_id,
+        limit=limit,
+    )
+    print(orjson.dumps(records, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def show_retained_artifact_command(
+    *,
+    data_dir: str = "agent",
+    record_id: str,
+) -> None:
+    """Show one retained artifact or delivery-output record."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    record = agent.get_retained_artifact(record_id)
+    result = record or {"error": f"Retained artifact not found: {record_id}"}
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def list_cost_ledger_command(
+    *,
+    data_dir: str = "agent",
+    job_id: str = "",
+    job_kind: str = "",
+    limit: int = 50,
+) -> None:
+    """List durable per-job cost and token records."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    records = agent.list_cost_ledger(
+        job_id=job_id,
+        job_kind=job_kind,
+        limit=limit,
+    )
+    print(orjson.dumps(records, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
 async def handoff_build_delivery_command(
     *,
     data_dir: str = "agent",
@@ -722,6 +821,92 @@ def main() -> None:
         help="Limit for --list-deliveries (default: 20)",
     )
     parser.add_argument(
+        "--list-persisted-jobs",
+        action="store_true",
+        help="List durable build/review job records and exit",
+    )
+    parser.add_argument(
+        "--persisted-job-id",
+        default="",
+        help="Show one durable build/review job record by id and exit",
+    )
+    parser.add_argument(
+        "--persisted-job-kind",
+        default="",
+        choices=["", "build", "review"],
+        help="Optional job kind filter for --list-persisted-jobs",
+    )
+    parser.add_argument(
+        "--persisted-job-status",
+        default="",
+        help="Optional status filter for --list-persisted-jobs",
+    )
+    parser.add_argument(
+        "--persisted-job-limit",
+        default=20,
+        type=int,
+        help="Limit for --list-persisted-jobs (default: 20)",
+    )
+    parser.add_argument(
+        "--list-retained-artifacts",
+        action="store_true",
+        help="List retained artifacts and delivery outputs and exit",
+    )
+    parser.add_argument(
+        "--retained-artifact-id",
+        default="",
+        help="Show one retained artifact or delivery-output record by id and exit",
+    )
+    parser.add_argument(
+        "--retained-job-id",
+        default="",
+        help="Optional job id filter for --list-retained-artifacts",
+    )
+    parser.add_argument(
+        "--retained-artifact-kind",
+        default="",
+        help="Optional artifact kind filter for --list-retained-artifacts",
+    )
+    parser.add_argument(
+        "--retention-status",
+        default="",
+        choices=["", "active", "expired", "pruned"],
+        help="Optional retention status filter for --list-retained-artifacts",
+    )
+    parser.add_argument(
+        "--retention-policy-id",
+        default="",
+        help="Optional retention policy filter for --list-retained-artifacts",
+    )
+    parser.add_argument(
+        "--retained-limit",
+        default=50,
+        type=int,
+        help="Limit for --list-retained-artifacts (default: 50)",
+    )
+    parser.add_argument(
+        "--list-cost-ledger",
+        action="store_true",
+        help="List durable per-job cost and token records and exit",
+    )
+    parser.add_argument(
+        "--cost-job-id",
+        default="",
+        help="Optional job id filter for --list-cost-ledger",
+    )
+    parser.add_argument(
+        "--cost-job-kind",
+        default="",
+        choices=["", "build", "review"],
+        help="Optional job kind filter for --list-cost-ledger",
+    )
+    parser.add_argument(
+        "--cost-limit",
+        default=50,
+        type=int,
+        help="Limit for --list-cost-ledger (default: 50)",
+    )
+    parser.add_argument(
         "--handoff-build-delivery",
         default="",
         help="Mark the build delivery for this job id as handed off and exit",
@@ -928,6 +1113,49 @@ def main() -> None:
                 job_id=args.delivery_job_id,
                 workspace_id=args.delivery_workspace_id,
                 limit=args.delivery_limit,
+            )
+        )
+    elif args.list_persisted_jobs:
+        asyncio.run(
+            list_persisted_jobs_command(
+                data_dir=args.data_dir,
+                job_kind=args.persisted_job_kind,
+                status=args.persisted_job_status,
+                limit=args.persisted_job_limit,
+            )
+        )
+    elif args.persisted_job_id:
+        asyncio.run(
+            show_persisted_job_command(
+                data_dir=args.data_dir,
+                job_id=args.persisted_job_id,
+            )
+        )
+    elif args.list_retained_artifacts:
+        asyncio.run(
+            list_retained_artifacts_command(
+                data_dir=args.data_dir,
+                status=args.retention_status,
+                job_id=args.retained_job_id,
+                artifact_kind=args.retained_artifact_kind,
+                retention_policy_id=args.retention_policy_id,
+                limit=args.retained_limit,
+            )
+        )
+    elif args.retained_artifact_id:
+        asyncio.run(
+            show_retained_artifact_command(
+                data_dir=args.data_dir,
+                record_id=args.retained_artifact_id,
+            )
+        )
+    elif args.list_cost_ledger:
+        asyncio.run(
+            list_cost_ledger_command(
+                data_dir=args.data_dir,
+                job_id=args.cost_job_id,
+                job_kind=args.cost_job_kind,
+                limit=args.cost_limit,
             )
         )
     elif args.handoff_build_delivery:

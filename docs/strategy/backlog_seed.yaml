@@ -5,64 +5,64 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Durable Planning + Delivery Lifecycle slice."
+  assessed_state_note: "Snapshot after Unified Control-Plane Persistence + Retention slice."
   interpretation_date: "2026-03-27"
   theme_status:
-    T1: { status: in_progress, approx_progress: 89 }
+    T1: { status: in_progress, approx_progress: 93 }
     T2: { status: complete_for_phase, approx_progress: 85 }
     T3: { status: in_progress, approx_progress: 80 }
-    T4: { status: in_progress, approx_progress: 76 }
-    T5: { status: in_progress, approx_progress: 69 }
-    T6: { status: in_progress, approx_progress: 64 }
+    T4: { status: in_progress, approx_progress: 79 }
+    T5: { status: in_progress, approx_progress: 77 }
+    T6: { status: in_progress, approx_progress: 72 }
     T7: { status: not_started, approx_progress: 0 }
-    T8: { status: in_progress, approx_progress: 72 }
+    T8: { status: in_progress, approx_progress: 76 }
 next_execution_backlog:
   - priority: P0
-    story_id: T1-E2-S4
-    title: "Add artifact retention and recovery rules"
-    why_now: "Plan, trace, patch, diff, report, and delivery-oriented artifacts are now durable and queryable, but retention and pruning rules are still undefined."
-  - priority: P0
-    story_id: T5-E1-S1
-    title: "Extend policy model to job, artifact, delivery, and external gateway decisions"
-    why_now: "Builder now has deterministic review-gate and delivery policy profiles, but policy is still fragmented and does not yet govern all control-plane decisions uniformly."
-  - priority: P0
-    story_id: T1-E1-S3
-    title: "Persist job metadata, execution history, artifacts, and cost data"
-    why_now: "Plans, traces, and delivery records now have shared persistence, but product job metadata and cost history are still split across bounded contexts."
-  - priority: P1
-    story_id: T6-E1-S1
-    title: "Record per-job model usage and token cost"
-    why_now: "Stronger control-plane persistence now gives usage/cost data a meaningful place to land instead of remaining only a local field shell."
-  - priority: P1
     story_id: T2-E4-S5
     title: "Route Telegram and API review entrypoints through ReviewService"
-    why_now: "The product/control-plane slices are converging, but channel adapters can still drift away from the clean reviewer bounded context."
-  - priority: P1
+    why_now: "Persisted product-job and artifact state now converge through the control plane, so channel adapters are the clearest remaining place where reviewer truth can still drift from runtime truth."
+  - priority: P0
     story_id: T5-E1-S5
     title: "Bring repository and diff analysis under the shared execution and policy boundary"
-    why_now: "Review/build policy has improved, but review-side repo/diff access still sits outside the unified execution-policy model."
+    why_now: "Control-plane policy now covers persistence and retention, but review-side repo and diff access still lives outside the unified policy surface."
+  - priority: P0
+    story_id: T6-E1-S2
+    title: "Add hard budget, soft budget, and stop-loss behavior"
+    why_now: "Per-job cost entries now persist durably, so budgets can graduate from advisory planner metadata into real runtime controls."
   - priority: P1
     story_id: T4-E1-S4
     title: "Reject unsupported work cleanly and honestly"
     why_now: "git_url is honestly blocked, but intake still cannot acquire or import supported remote work."
+  - priority: P1
+    story_id: T6-E1-S4
+    title: "Surface cost and margin hints to the operator"
+    why_now: "The ledger now exists and is queryable, but the operator still does not get explicit cost posture in planning and delivery decisions."
+  - priority: P1
+    story_id: T5-E2-S2
+    title: "Support approvals for risky execution and external delivery"
+    why_now: "Shared persistence and policy now cover jobs, artifacts, bundles, and cost, so risky execution approvals are the next real governance gap."
+  - priority: P1
+    story_id: T8-E3-S1
+    title: "Add retention and evidence packaging for compliance-friendly export"
+    why_now: "Retention records now exist, but there is still no evidence bundle or compliance-oriented export path on top of them."
   - priority: P2
-    story_id: T6-E1-S2
-    title: "Add hard budget, soft budget, and stop-loss behavior"
-    why_now: "Planning already emits budget envelopes, so the next gap is binding them to durable runtime controls rather than leaving them advisory."
+    story_id: T6-E2-S1
+    title: "Track job status, failures, retries, and durations"
+    why_now: "Persisted product-job records now exist, but retry and failure telemetry is still thinner than the new control-plane surfaces around them."
 themes:
   - id: T1
     name: Platform Foundation
     goal: Unify job, artifact, state, and workspace foundations.
     status: in_progress
-    approx_progress: 89
-    current_state: Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared build/review/operate job queries, shared artifact queries, persisted plan/trace/delivery records, and richer workspace-aware approval/reporting surfaces.
-    main_gap: No unified cross-domain persistence/action layer yet.
+    approx_progress: 93
+    current_state: Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared build/review/operate job queries, shared artifact queries, persisted product-job/plan/trace/delivery records, retention-aware artifact state, and richer workspace-aware approval/reporting surfaces.
+    main_gap: No unified cross-domain action layer yet.
     epics:
       - id: T1-E1
         name: Canonical Job Model
         status: in_progress
-        approx_progress: 88
-        remaining_gap: Shared primitives and shared query models now span build/review/operate/artifact surfaces, but product-job persistence/action convergence is still incomplete.
+        approx_progress: 93
+        remaining_gap: Shared primitives, shared query models, and persisted product-job records now span build/review/operate-adjacent surfaces, but action-layer convergence is still incomplete.
         stories:
           - id: T1-E1-S1
             name: Define canonical Job schema for review, build, operate, and delivery flows
@@ -76,9 +76,9 @@ themes:
             missing: Operate/delivery lifecycle harmonization remains.
           - id: T1-E1-S3
             name: Persist job metadata, execution history, artifacts, and cost data
-            status: in_progress
-            current_state: BuildStorage persists job metadata, execution history, artifacts, and usage summary. Review artifacts recover metadata safely.
-            missing: No unified cross-system persistence layer yet.
+            status: mostly_complete
+            current_state: Build and review jobs now sync into shared ProductJobRecord persistence with status, timing, artifact refs, usage summary, persistence policy metadata, and durable per-job cost-ledger entries surfaced through the orchestrator and CLI.
+            missing: Task/job-runner/agent-loop history is still separate, and there is no unified action layer on top of the shared records yet.
           - id: T1-E1-S4
             name: Add job queries for operator inspection and automation
             status: complete_for_phase
@@ -93,8 +93,8 @@ themes:
       - id: T1-E2
         name: Artifact-First Execution
         status: mostly_complete
-        approx_progress: 90
-        remaining_gap: Typed artifacts exist across review and build, one shared artifact query/recovery surface spans both bounded contexts, and builder now exports deterministic patch/diff artifacts, but retention/policy remains open.
+        approx_progress: 95
+        remaining_gap: Typed artifacts exist across review and build, one shared artifact query/recovery surface spans both bounded contexts, builder now exports deterministic patch/diff artifacts, and retention records now exist, but pruning and deletion workflows remain open.
         stories:
           - id: T1-E2-S1
             name: Define artifact types and storage layout
@@ -107,7 +107,9 @@ themes:
             status: complete_for_phase
           - id: T1-E2-S4
             name: Add artifact retention and recovery rules
-            status: started
+            status: mostly_complete
+            current_state: Control-plane retention records now track build, review, trace, and delivery-bundle outputs with policy ids, expiry timestamps, recoverability, and derived active/expired state exposed through artifact queries and operator reporting.
+            missing: Retention is modeled and inspectable, but not yet enforced through pruning, archival, or compaction workflows.
           - id: T1-E2-S5
             name: Persist full intake, report payloads, and artifact payloads for recovery-safe reload
             status: complete_for_phase
@@ -400,20 +402,20 @@ themes:
     name: Security, Governance, And Policy
     goal: Ensure all valuable workflows remain controlled and auditable.
     status: in_progress
-    approx_progress: 69
-    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, plus deterministic review-gate and delivery policy profiles.
-    main_gap: Review and build execution still sit outside a unified shared policy boundary.
+    approx_progress: 77
+    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate and delivery policy profiles, plus shared job-persistence, artifact-retention, and gateway-default policies.
+    main_gap: Review and build execution still sit outside a single unified policy enforcement boundary.
     epics:
       - id: T5-E1
         name: Policy Control Plane
         status: in_progress
-        approx_progress: 58
+        approx_progress: 74
         stories:
           - id: T5-E1-S1
             name: Extend policy model to job, artifact, delivery, and gateway decisions
-            status: in_progress
-            current_state: Builder now uses deterministic review-gate and delivery policy profiles that are surfaced in planning metadata, traces, and delivery approval context.
-            missing: Job/artifact/gateway policy is still not unified under one shared engine.
+            status: mostly_complete
+            current_state: Shared policy now covers deterministic job-persistence, artifact-retention, delivery, review-gate, and external-gateway defaults, and those policies surface through control-plane persistence, artifact queries, reporting, and delivery metadata.
+            missing: Repository/diff execution and broader runtime actions are still not enforced through one shared policy engine.
           - id: T5-E1-S2
             name: Keep policy deny-by-default across execution modes
             status: in_progress
@@ -472,25 +474,27 @@ themes:
     name: Cost, Usage, And Observability
     goal: Make the system operable, measurable, and economically sane.
     status: in_progress
-    approx_progress: 64
-    current_state: UsageSummary in control-plane. Fields on review and build jobs. Orchestrator-visible build/review counters, durable planning/delivery traces, shared cross-system job/artifact/workspace queries, approval backlog visibility, and operator-facing reporting now include workspace health and worker execution summaries.
-    main_gap: No real per-job cost ledger or live operator UI.
+    approx_progress: 72
+    current_state: UsageSummary now lands in a durable per-job control-plane cost ledger for build and review jobs. Orchestrator-visible build/review counters, persisted product jobs, retained artifacts, durable planning/delivery traces, shared cross-system job/artifact/workspace queries, approval backlog visibility, and operator-facing reporting now include workspace health, worker execution, and recorded-cost summaries.
+    main_gap: No budget enforcement or live operator UI.
     epics:
       - id: T6-E1
         name: Cost Ledger
-        status: started
-        approx_progress: 15
+        status: in_progress
+        approx_progress: 55
         stories:
           - id: T6-E1-S1
             name: Record per-job model usage and token cost
-            status: started
+            status: mostly_complete
+            current_state: Build and review jobs now persist per-job usage, token, and cost data into the shared control-plane ledger, and the orchestrator, CLI, and operator report expose recent ledger entries plus total recorded cost.
+            missing: Budgets, escalation controls, and operator margin hints still sit outside the ledger.
           - id: T6-E1-S2
             name: Add hard budget, soft budget, and stop-loss behavior
             status: not_started
       - id: T6-E2
         name: Runtime Observability
         status: in_progress
-        approx_progress: 84
+        approx_progress: 86
         stories:
           - id: T6-E2-S1
             name: Track job status, failures, retries, and durations
@@ -551,8 +555,8 @@ themes:
     name: Enterprise Hardening
     goal: Prepare for enterprise-grade architecture without premature fragmentation.
     status: in_progress
-    approx_progress: 72
-    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted planner/delivery state, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, ADR-001 sidecar, TS operator contracts and skeleton, and policy-driven redaction.
+    approx_progress: 76
+    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, ADR-001 sidecar, TS operator contracts and skeleton, and policy-driven redaction.
     main_gap: Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants.
     epics:
       - id: T8-E1
@@ -592,14 +596,18 @@ themes:
       - id: T8-E3
         name: Compliance-Friendly Foundations
         status: in_progress
-        approx_progress: 30
+        approx_progress: 45
         stories:
           - id: T8-E3-S1
             name: Improve audit export and artifact traceability
-            status: started
+            status: in_progress
+            current_state: Persisted product-job records, retained-artifact records, and report/query surfaces now improve traceability across jobs, artifacts, bundles, and policy context.
+            missing: No dedicated evidence export package yet.
           - id: T8-E3-S2
             name: Improve redaction and retention strategy
-            status: started
+            status: mostly_complete
+            current_state: Shared artifact-retention policies now define expiry, recoverability, and retention metadata for build, review, trace, and delivery outputs.
+            missing: No pruning, archival, or enterprise retention workflow yet.
           - id: T8-E3-S3
             name: Support client-safe evidence packaging
             status: started

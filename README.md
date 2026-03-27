@@ -22,10 +22,14 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Planner handoff + traces** — persisted `JobPlan` records and durable qualification/budget/capability/delivery traces
 - **Delivery lifecycle tracking** — prepared → awaiting approval → approved/rejected → handed off with audit events
 - **Workspace joins** — workspaces now link to jobs, artifacts, approvals, and delivery bundles
+- **Retained artifact records** — build/review/delivery outputs now carry policy, expiry, and recoverability metadata
+- **Persisted product jobs** — shared control-plane record of build/review job metadata, status, usage, and artifacts
+- **Per-job cost ledger** — durable usage/token/cost entries with report and CLI inspection
+- **Shared policy registry** — deterministic job persistence, artifact retention, delivery, review-gate, and gateway defaults
 - **Control-plane queries** — shared inspection across build, review, task, job-runner, agent-loop, artifact, plan, delivery, and workspace state
 - **Runtime model** — explicit coexistence rules for product jobs, planning tasks, infrastructure jobs, and conversational queue items
-- **Operator CLI surfaces** — `--report`, `--runtime-model`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, unified `--intake-*`, and explicit build delivery handoff
-- **1260+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **Operator CLI surfaces** — `--report`, `--runtime-model`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, `--list-persisted-jobs`, `--list-retained-artifacts`, `--list-cost-ledger`, unified `--intake-*`, and explicit build delivery handoff
+- **1262+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -98,7 +102,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 1260+ passed, ~22s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1262+ passed, ~22s, $0.00
 ```
 
 | Layer | Tests | What |
@@ -147,7 +151,7 @@ This project is honest about what works and what doesn't yet.
 | Area | Status | What's missing |
 |------|--------|---------------|
 | Memory provenance | Working | Conflict detection is tag-based, not semantic. No auto-consolidation pipeline yet. |
-| Tool governance | Working | Delivery approvals now link jobs, artifacts, workspaces, and bundles, but delivery status/audit workflow is still incomplete. |
+| Tool governance | Working | Delivery approvals, persistence, and artifact retention are now shared and queryable, but review/build execution still do not run under one unified policy engine. |
 | Workspace | Working | No cleanup scheduler (must call `cleanup_expired()` manually). |
 | Routing | Working | Keyword + signal heuristics. No ML-based classification. |
 | Learning | Partial | Model failure tracking resets on restart. No eval set. |

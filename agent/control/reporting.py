@@ -69,10 +69,30 @@ class OperatorReportService:
             if self._control_plane_state is not None
             else []
         )
+        recent_persisted_jobs = (
+            [record.to_dict() for record in self._control_plane_state.list_product_jobs(limit=limit)]
+            if self._control_plane_state is not None
+            else []
+        )
+        recent_retained_artifacts = (
+            [record.to_dict() for record in self._control_plane_state.list_retained_artifacts(limit=limit)]
+            if self._control_plane_state is not None
+            else []
+        )
+        recent_cost_entries = (
+            [entry.to_dict() for entry in self._control_plane_state.list_cost_entries(limit=limit)]
+            if self._control_plane_state is not None
+            else []
+        )
         recent_workspace_records = (
             [record.to_dict() for record in self._workspace_queries.list_workspaces(limit=limit)]
             if self._workspace_queries is not None
             else []
+        )
+        control_stats = (
+            self._control_plane_state.get_stats()
+            if self._control_plane_state is not None
+            else {}
         )
 
         inbox: list[dict[str, Any]] = []
@@ -128,6 +148,20 @@ class OperatorReportService:
                         "detail": delivery["events"][-1]["detail"] if delivery["events"] else "",
                     }
                 )
+        for retention in recent_retained_artifacts[:limit]:
+            if retention["status"] == "expired":
+                inbox.append(
+                    {
+                        "kind": "retention_attention",
+                        "id": retention["record_id"],
+                        "status": retention["status"],
+                        "title": retention["title"] or retention["artifact_kind"],
+                        "detail": (
+                            f"{retention['artifact_kind']} exceeded retention policy "
+                            f"{retention['retention_policy_id']}"
+                        ),
+                    }
+                )
 
         return {
             "summary": {
@@ -135,9 +169,13 @@ class OperatorReportService:
                 "total_artifacts": len(artifacts),
                 "blocked_jobs": len(blocked_jobs),
                 "pending_approvals": len(pending_approvals),
-                "persisted_plans": len(recent_plans),
-                "recent_traces": len(recent_traces),
-                "delivery_records": len(recent_deliveries),
+                "persisted_plans": control_stats.get("plans", len(recent_plans)),
+                "recent_traces": control_stats.get("traces", len(recent_traces)),
+                "delivery_records": control_stats.get("deliveries", len(recent_deliveries)),
+                "persisted_product_jobs": control_stats.get("product_jobs", len(recent_persisted_jobs)),
+                "retained_artifacts": control_stats.get("retained_artifacts", len(recent_retained_artifacts)),
+                "cost_ledger_entries": control_stats.get("cost_entries", len(recent_cost_entries)),
+                "recorded_cost_usd": control_stats.get("recorded_cost_usd", 0.0),
                 "disabled_tools": controls.get("total_disabled", 0),
                 "active_workspaces": workspace_health.get("by_status", {}).get("active", 0),
                 "active_workers": worker_execution.get("active_jobs", 0),
@@ -148,6 +186,9 @@ class OperatorReportService:
             "recent_plans": recent_plans[:limit],
             "recent_traces": recent_traces[:limit],
             "recent_deliveries": recent_deliveries[:limit],
+            "recent_persisted_jobs": recent_persisted_jobs[:limit],
+            "recent_retained_artifacts": recent_retained_artifacts[:limit],
+            "recent_cost_entries": recent_cost_entries[:limit],
             "recent_workspace_records": recent_workspace_records[:limit],
             "pending_approvals": pending_approvals[:limit],
             "controls": controls,
