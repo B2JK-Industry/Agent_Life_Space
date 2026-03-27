@@ -323,12 +323,32 @@ class TestBuildStorage:
             artifact_kind=ArtifactKind.PATCH,
             job_id="job-123",
             content="diff content here",
+            format="diff",
         )
         storage.save_artifact(artifact)
         arts = storage.get_artifacts("job-123")
         assert len(arts) == 1
         assert arts[0]["artifact_kind"] == "patch"
         assert arts[0]["content"] == "diff content here"
+        assert arts[0]["format"] == "diff"
+
+    def test_list_and_get_artifact(self, storage):
+        artifact = BuildArtifact(
+            artifact_kind=ArtifactKind.VERIFICATION_REPORT,
+            job_id="job-123",
+            content_json={"all_passed": True},
+            format="json",
+        )
+        storage.save_artifact(artifact)
+
+        listed = storage.list_artifacts(job_id="job-123")
+        loaded = storage.get_artifact(artifact.id)
+
+        assert len(listed) == 1
+        assert listed[0]["id"] == artifact.id
+        assert listed[0]["format"] == "json"
+        assert loaded is not None
+        assert loaded["content_json"]["all_passed"] is True
 
     def test_initialize_creates_parent_directory(self):
         from pathlib import Path

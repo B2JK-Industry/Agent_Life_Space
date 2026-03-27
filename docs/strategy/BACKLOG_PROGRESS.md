@@ -6,7 +6,7 @@ This file tracks current strategic execution progress against:
 - the actual state of `main`
 
 Assessment basis:
-- branch: `main` (after Control-Plane Expansion Release candidate)
+- branch: `main` (after Runtime Model + Artifact Planning slice)
 - interpretation date: `2026-03-27`
 
 Important:
@@ -45,13 +45,22 @@ Status legend:
 - Build, review, task, job-runner, and agent-loop records are now queryable
   through one shared control-plane layer (`JobQueryService` + orchestrator
   list/get methods).
+- Build and review artifacts are now queryable and recoverable through one
+  shared control-plane layer (`ArtifactQueryService` + orchestrator list/get
+  methods), including persisted artifact formats.
+- Runtime coexistence rules are now explicit through `RuntimeModelService` and
+  the CLI surface `python -m agent --runtime-model`.
 - Approval requests are now persisted in SQLite and queryable by
   status/category/job/artifact linkage.
 - Operator now has a real report/inbox service and CLI surface
   (`python -m agent --report`), plus unified intake qualification/routing for
   build/review requests.
+- Operator intake preview/submit now emit a first-class `JobPlan` with scope
+  summary, heuristic budget envelope, planned artifacts, recommended next
+  action, and step-by-step planner output.
 - Builder now has a declared capability catalog and resumable checkpoint-based
   execution.
+- Operator report now includes recent artifacts alongside jobs and approvals.
 - Operator has a mock-driven TS skeleton with reporting/inbox contracts, but no
   live backend.
 - External Gateway and most enterprise-hardening work are still ahead.
@@ -60,14 +69,14 @@ Status legend:
 
 | Theme | Status | Approx Progress | Current Truth On `main` | Main Remaining Gap |
 |------|--------|-----------------|--------------------------|--------------------|
-| T1 Platform Foundation | in_progress | 78% | Shared control-plane primitives now back build and review directly, with workspace subsystem, shared build/review/operate job queries, and orchestrator-visible services. | Coexistence rules for the wider runtime are still not explicit enough. |
+| T1 Platform Foundation | in_progress | 84% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job and artifact queries exposed through the orchestrator. | No unified cross-domain persistence/action layer yet. |
 | T2 Reviewer Product | complete_for_phase | 85% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode | LLM analysis, API entrypoint, PR comment packs are v2 |
 | T3 Builder Product | in_progress | 68% | Builder bounded context is tracked on `main`, capability-declared, resumable, orchestrator-wired, CLI-reachable, workspace-synced, verification-gated, acceptance-aware, and review-after-build capable. | Build step is still placeholder-grade. No LLM implementation or full delivery workflow |
-| T4 Operator Product | in_progress | 30% | Unified intake routing, CLI intake preview/submit, operator report service, and mock-driven TS reporting surface. | No live backend/UI, planning layer, or delivery workflow |
+| T4 Operator Product | in_progress | 42% | Unified intake routing, `JobPlan` preview/submit output, CLI intake preview/submit, operator report service, and mock-driven TS reporting surface. | No live backend/UI, durable planning state, or delivery workflow |
 | T5 Security, Governance, And Policy | in_progress | 60% | Tool policy deny-by-default, strict delivery approval, full redaction pipeline, and persistent/queryable approval storage with job/artifact linkage | Review/build execution outside unified policy boundary |
-| T6 Cost, Usage, And Observability | in_progress | 45% | UsageSummary on jobs, orchestrator-visible build/review counters, traces, shared cross-system job queries, approval backlog visibility, and operator-facing reporting. | No real per-job cost ledger or live operator UI |
+| T6 Cost, Usage, And Observability | in_progress | 50% | UsageSummary on jobs, orchestrator-visible build/review counters, traces, shared cross-system job/artifact queries, approval backlog visibility, and operator-facing reporting. | No real per-job cost ledger or live operator UI |
 | T7 External Capability Gateway | not_started | 0% | Nothing | No gateway contract |
-| T8 Enterprise Hardening | in_progress | 58% | Shared control-plane layer, review + build bounded contexts on shared primitives, ADR-001 sidecar, TS operator contracts, unified intake, resumable builder runtime, and shared query/reporting surfaces. | No explicit coexistence/deprecation plan for the wider runtime model. |
+| T8 Enterprise Hardening | in_progress | 64% | Shared control-plane layer, explicit runtime coexistence rules, review + build bounded contexts on shared primitives, unified intake/planning, resumable builder runtime, and shared job/artifact/query/reporting surfaces. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants. |
 
 ## Epic Snapshot
 
@@ -75,8 +84,8 @@ Status legend:
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T1-E1 Canonical Job Model | in_progress | 80% | Shared JobKind, JobStatus, JobTiming, ExecutionStep, UsageSummary, and normalized job query models now back both BuildJob and ReviewJob directly. Cross-system list/get queries now bridge build, review, and operate surfaces. | JobRunner/Task/AgentLoop coexistence rules are still informal. |
-| T1-E2 Artifact-First Execution | mostly_complete | 75% | ArtifactKind shared. ReviewArtifact and BuildArtifact both produce typed artifacts. | Shared artifact query layer not yet cross-domain. |
+| T1-E1 Canonical Job Model | in_progress | 88% | Shared JobKind, JobStatus, JobTiming, ExecutionStep, UsageSummary, normalized job queries, and explicit runtime coexistence rules now cover build, review, and operate surfaces. | The rules are explicit, but not yet enforced by stronger invariants or migrations. |
+| T1-E2 Artifact-First Execution | mostly_complete | 85% | ArtifactKind shared. ReviewArtifact and BuildArtifact both produce typed artifacts, and one shared artifact query/recovery surface now spans build and review. | No unified artifact retention/policy layer and builder patch export is still shallow. |
 | T1-E3 Workspace And Execution Discipline | in_progress | 60% | Builder is workspace-first, syncs repos into workspaces, and reviewer stays explicitly READ_ONLY_HOST. | Shared cross-domain workspace, artifact, and approval linkage is still partial. |
 
 ### T2 Reviewer Product
@@ -100,8 +109,8 @@ Status legend:
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T4-E1 Intake And Qualification | in_progress | 40% | Unified operator intake model now exists with qualification, blockers, warnings, and review/build routing, plus CLI preview/submit surfaces. | No budget-aware plan or live operator UI |
-| T4-E2 Job Planning And Routing | not_started | 5% | Chat routing exists | No JobPlan layer |
+| T4-E1 Intake And Qualification | in_progress | 55% | Unified operator intake model now exists with qualification, blockers, warnings, risk level, heuristic budget envelope, and review/build routing, plus CLI preview/submit surfaces. | No policy-backed budget model or live operator UI |
+| T4-E2 Job Planning And Routing | in_progress | 35% | `JobPlan` now exists with planner steps, planned artifacts, recommended next action, and orchestrator/CLI preview output. | Plan phases, capability assignment, and durable planner state are still partial |
 | T4-E3 Delivery Workflow | started | 15% | Mock-driven TS skeleton. Reviewer delivery bundle. | No live backend or operator workflow |
 
 ### T5 Security, Governance, And Policy
@@ -117,7 +126,7 @@ Status legend:
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
 | T6-E1 Cost Ledger | started | 20% | UsageSummary in control-plane. Fields on review and build jobs. | No real ledger or budget behavior |
-| T6-E2 Runtime Observability | in_progress | 60% | Status and traces exist locally, including orchestrator-visible build/review counters, shared build/review/operate job queries, approval backlog visibility, and operator-facing report/inbox output. | No live UI or push updates |
+| T6-E2 Runtime Observability | in_progress | 68% | Status and traces exist locally, including orchestrator-visible build/review counters, shared job/artifact queries, approval backlog visibility, and operator-facing report output over jobs, approvals, and artifacts. | No live UI, push updates, or workspace/worker health depth yet |
 | T6-E3 Quality Evals | started | 20% | Tests are strong | No product-quality eval discipline |
 
 ### T7 External Capability Gateway
@@ -131,7 +140,7 @@ Status legend:
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T8-E1 Contract-First Boundaries | in_progress | 68% | Shared control-plane primitives now back build and review directly. ADR-001 sidecar, unified intake, resumable builder checkpoints, and cross-system job/query/report surfaces reinforce the boundary. | Explicit coexistence/deprecation rules for the wider runtime are still missing. |
+| T8-E1 Contract-First Boundaries | in_progress | 76% | Shared control-plane primitives now back build and review directly. ADR-001 sidecar, unified intake/planning, explicit runtime coexistence rules, and cross-system job/artifact/query/report surfaces reinforce the boundary. | Boundaries are documented and queryable, but not yet enforced as extraction-grade invariants. |
 | T8-E2 Deployment And Environment Profiles | started | 20% | Project-root discipline, sandbox defaults | No explicit environment profile matrix |
 | T8-E3 Compliance-Friendly Foundations | in_progress | 30% | Redaction module, client-safe export, delivery gating | Retention policy, evidence packaging |
 
@@ -142,10 +151,10 @@ Status legend:
 - with shared control-plane primitives
 - with meaningful governance and workspace foundations
 - with the builder runtime now actually wired into the orchestrator, capability-declared, resumable, reachable through real entrypoints, and tracked on `main`
-- with a shared control-plane query/report layer for build, review, and operate records
-- with unified operator intake qualification/routing for build and review requests
+- with shared control-plane query/report layers for build, review, operate, and artifacts
+- with unified operator intake qualification, planning, and routing for build and review requests
 - but without full builder capability (build step is placeholder)
-- and without a full planning/delivery operator workflow
+- and without a full delivery workflow or durable planner execution history
 
 Reviewer v1: `complete_for_phase`
 Builder v1: `in_progress` (foundation-grade)
@@ -161,7 +170,7 @@ Remaining Reviewer v2 gaps:
 - LLM-augmented analysis
 - workspace-bound reviewer execution
 - external delivery send workflow
-- coexistence/deprecation plan for the wider runtime model
+- stronger policy/execution boundary integration across the wider runtime
 
 ## Code Review And Fixes Applied On 2026-03-27
 
@@ -177,16 +186,27 @@ Review/audit-driven fixes landed on `main`:
 - `python -m agent --build-repo ...` now provides a thin real builder product entrypoint.
 - `ReviewJob` now uses shared control-plane primitives directly.
 - Shared job queries now cover `Task`, `JobRunner`, and `AgentLoop`.
+- Build and review artifacts are now queryable and recoverable through one
+  shared control-plane layer (`ArtifactQueryService` + orchestrator list/get
+  methods), including persisted artifact formats.
+- Runtime coexistence rules are now explicit through `RuntimeModelService` and
+  `python -m agent --runtime-model`.
 - Approval requests are now persisted and queryable with job/artifact linkage.
 - Builder now has a declared capability catalog and resumable checkpoints with CLI resume support.
 - Unified operator intake and operator-facing report/inbox surfaces now exist in the runtime and CLI.
+- Unified operator intake now emits `JobPlan` preview/submit outputs with
+  steps, planned artifacts, heuristic budget envelope, and recommended next
+  action.
+- Operator report now includes recent artifacts in addition to jobs and
+  approvals.
 
 ## Highest-Leverage Next Steps
 
 See [NEXT_BACKLOG.md](/Users/danielbabjak/Desktop/Agent_Life_Space/docs/strategy/NEXT_BACKLOG.md) for the prioritized execution queue.
 
-Now that the control-plane convergence slice has landed, the next high-leverage work is:
-1. Reconcile coexistence rules between `ReviewJob`, `Task`, `JobRunner`, and `AgentLoop`
-2. Add a shared artifact query/recovery surface across build and review
-3. Move operator intake from qualification into real planning (`JobPlan`, scope/budget, recommended execution plan)
-4. Wire real build execution (LLM-powered or tool-powered implementation)
+Now that the runtime model / artifact planning slice has landed, the next
+high-leverage work is:
+1. Deepen qualification and planning with stronger scope, risk, and budget envelopes
+2. Split `JobPlan` into richer review/build/verify/deliver phases with capability choices
+3. Capture real patch-set artifacts for builder output
+4. Add richer domain-specific acceptance evaluators and, after that, wire real build execution

@@ -52,13 +52,26 @@ class ReviewStorage:
                 artifact_type TEXT NOT NULL,
                 content TEXT NOT NULL,
                 content_json TEXT DEFAULT '',
+                format TEXT DEFAULT 'markdown',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (job_id) REFERENCES review_jobs(id)
             )
         """)
+        self._ensure_text_column("review_artifacts", "format", "markdown")
         self._db.commit()
         self._initialized = True
         logger.info("review_storage_initialized", db=self._db_path)
+
+    def _ensure_text_column(self, table: str, column: str, default: str) -> None:
+        if self._db is None:
+            return
+        rows = self._db.execute(f"PRAGMA table_info({table})").fetchall()  # noqa: S608
+        known = {row[1] for row in rows}
+        if column in known:
+            return
+        self._db.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} TEXT DEFAULT '{default}'"  # noqa: S608
+        )
 
     def save_job(self, job: ReviewJob) -> None:
         if not self._db:
@@ -105,10 +118,10 @@ class ReviewStorage:
         if len(json_str) > self._MAX_ARTIFACT_SIZE:
             json_str = ""  # Drop oversized JSON rather than corrupt it
         self._db.execute(
-            "INSERT OR REPLACE INTO review_artifacts (id, job_id, artifact_type, content, content_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO review_artifacts (id, job_id, artifact_type, content, content_json, format, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (artifact.id, artifact.job_id, artifact.artifact_type.value,
-             content, json_str, artifact.created_at),
+             content, json_str, artifact.format, artifact.created_at),
         )
         self._db.commit()
 
@@ -116,14 +129,14 @@ class ReviewStorage:
         if not self._db:
             return []
         cursor = self._db.execute(
-            "SELECT id, artifact_type, content, content_json, created_at FROM review_artifacts WHERE job_id = ?",
+            "SELECT id, artifact_type, content, content_json, format, created_at FROM review_artifacts WHERE job_id = ?",
             (job_id,),
         )
         results = []
         for r in cursor:
             entry: dict[str, Any] = {
                 "id": r[0], "artifact_type": r[1],
-                "content": r[2], "created_at": r[4],
+                "content": r[2], "format": r[4] or "markdown", "created_at": r[5],
             }
             if r[3]:
                 try:
@@ -132,6 +145,85 @@ class ReviewStorage:
                     entry["content_json"] = {}
             results.append(entry)
         return results
+
+    def list_artifacts(
+        self,
+        *,
+        job_id: str = "",
+        artifact_type: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        if job_id and artifact_type:
+            cursor = self._db.execute(
+                "SELECT id, job_id, artifact_type, content, content_json, format, created_at "
+                "FROM review_artifacts WHERE job_id = ? AND artifact_type = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (job_id, artifact_type, limit),
+            )
+        elif job_id:
+            cursor = self._db.execute(
+                "SELECT id, job_id, artifact_type, content, content_json, format, created_at "
+                "FROM review_artifacts WHERE job_id = ? ORDER BY created_at DESC LIMIT ?",
+                (job_id, limit),
+            )
+        elif artifact_type:
+            cursor = self._db.execute(
+                "SELECT id, job_id, artifact_type, content, content_json, format, created_at "
+                "FROM review_artifacts WHERE artifact_type = ? ORDER BY created_at DESC LIMIT ?",
+                (artifact_type, limit),
+            )
+        else:
+            cursor = self._db.execute(
+                "SELECT id, job_id, artifact_type, content, content_json, format, created_at "
+                "FROM review_artifacts ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        results: list[dict[str, Any]] = []
+        for row in cursor:
+            entry: dict[str, Any] = {
+                "id": row[0],
+                "job_id": row[1],
+                "artifact_type": row[2],
+                "content": row[3],
+                "format": row[5] or "markdown",
+                "created_at": row[6],
+                "content_json": {},
+            }
+            if row[4]:
+                try:
+                    entry["content_json"] = orjson.loads(row[4])
+                except Exception:
+                    entry["content_json"] = {}
+            results.append(entry)
+        return results
+
+    def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
+        if not self._db:
+            return None
+        row = self._db.execute(
+            "SELECT id, job_id, artifact_type, content, content_json, format, created_at "
+            "FROM review_artifacts WHERE id = ?",
+            (artifact_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        entry: dict[str, Any] = {
+            "id": row[0],
+            "job_id": row[1],
+            "artifact_type": row[2],
+            "content": row[3],
+            "format": row[5] or "markdown",
+            "created_at": row[6],
+            "content_json": {},
+        }
+        if row[4]:
+            try:
+                entry["content_json"] = orjson.loads(row[4])
+            except Exception:
+                entry["content_json"] = {}
+        return entry
 
     def get_stats(self) -> dict[str, Any]:
         if not self._db:

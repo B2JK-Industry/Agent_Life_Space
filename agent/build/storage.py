@@ -55,12 +55,25 @@ class BuildStorage:
                 artifact_kind TEXT,
                 content TEXT,
                 content_json TEXT,
+                format TEXT DEFAULT 'text',
                 created_at TEXT
             )
         """)
+        self._ensure_text_column("build_artifacts", "format", "text")
         self._db.commit()
         self._initialized = True
         logger.debug("build_storage_initialized", db_path=self._db_path)
+
+    def _ensure_text_column(self, table: str, column: str, default: str) -> None:
+        if self._db is None:
+            return
+        rows = self._db.execute(f"PRAGMA table_info({table})").fetchall()  # noqa: S608
+        known = {row[1] for row in rows}
+        if column in known:
+            return
+        self._db.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} TEXT DEFAULT '{default}'"  # noqa: S608
+        )
 
     def save_job(self, job: BuildJob) -> None:
         assert self._db is not None
@@ -114,17 +127,17 @@ class BuildStorage:
             content_json_str = json.dumps(artifact.content_json)
         self._db.execute(
             "INSERT OR REPLACE INTO build_artifacts "
-            "(id, job_id, artifact_kind, content, content_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "(id, job_id, artifact_kind, content, content_json, format, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (artifact.id, artifact.job_id, artifact.artifact_kind.value,
-             content, content_json_str, artifact.created_at),
+             content, content_json_str, artifact.format, artifact.created_at),
         )
         self._db.commit()
 
     def get_artifacts(self, job_id: str) -> list[dict[str, Any]]:
         assert self._db is not None
         rows = self._db.execute(
-            "SELECT id, artifact_kind, content, content_json, created_at "
+            "SELECT id, artifact_kind, content, content_json, format, created_at "
             "FROM build_artifacts WHERE job_id = ?",
             (job_id,),
         ).fetchall()
@@ -135,12 +148,84 @@ class BuildStorage:
                 "artifact_kind": r[1],
                 "content": r[2],
                 "content_json": {},
-                "created_at": r[4],
+                "format": r[4] or "text",
+                "created_at": r[5],
             }
             if r[3]:
                 d["content_json"] = json.loads(r[3])
             results.append(d)
         return results
+
+    def list_artifacts(
+        self,
+        *,
+        job_id: str = "",
+        artifact_kind: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        assert self._db is not None
+        if job_id and artifact_kind:
+            rows = self._db.execute(
+                "SELECT id, job_id, artifact_kind, content, content_json, format, created_at "
+                "FROM build_artifacts WHERE job_id = ? AND artifact_kind = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (job_id, artifact_kind, limit),
+            ).fetchall()
+        elif job_id:
+            rows = self._db.execute(
+                "SELECT id, job_id, artifact_kind, content, content_json, format, created_at "
+                "FROM build_artifacts WHERE job_id = ? ORDER BY created_at DESC LIMIT ?",
+                (job_id, limit),
+            ).fetchall()
+        elif artifact_kind:
+            rows = self._db.execute(
+                "SELECT id, job_id, artifact_kind, content, content_json, format, created_at "
+                "FROM build_artifacts WHERE artifact_kind = ? ORDER BY created_at DESC LIMIT ?",
+                (artifact_kind, limit),
+            ).fetchall()
+        else:
+            rows = self._db.execute(
+                "SELECT id, job_id, artifact_kind, content, content_json, format, created_at "
+                "FROM build_artifacts ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        artifacts: list[dict[str, Any]] = []
+        for row in rows:
+            entry: dict[str, Any] = {
+                "id": row[0],
+                "job_id": row[1],
+                "artifact_kind": row[2],
+                "content": row[3],
+                "content_json": {},
+                "format": row[5] or "text",
+                "created_at": row[6],
+            }
+            if row[4]:
+                entry["content_json"] = json.loads(row[4])
+            artifacts.append(entry)
+        return artifacts
+
+    def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
+        assert self._db is not None
+        row = self._db.execute(
+            "SELECT id, job_id, artifact_kind, content, content_json, format, created_at "
+            "FROM build_artifacts WHERE id = ?",
+            (artifact_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        result: dict[str, Any] = {
+            "id": row[0],
+            "job_id": row[1],
+            "artifact_kind": row[2],
+            "content": row[3],
+            "content_json": {},
+            "format": row[5] or "text",
+            "created_at": row[6],
+        }
+        if row[4]:
+            result["content_json"] = json.loads(row[4])
+        return result
 
     def get_stats(self) -> dict[str, Any]:
         if not self._db:

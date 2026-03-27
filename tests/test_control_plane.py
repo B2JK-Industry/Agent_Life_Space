@@ -89,6 +89,8 @@ class TestArtifactRef:
         assert ArtifactKind.PATCH.value == "patch"
         assert ArtifactKind.VERIFICATION_REPORT.value == "verification_report"
         assert ArtifactKind.ACCEPTANCE_REPORT.value == "acceptance_report"
+        assert ArtifactKind.SECURITY_REPORT.value == "security_report"
+        assert ArtifactKind.EXECUTIVE_SUMMARY.value == "executive_summary"
 
     def test_ref_roundtrip(self):
         ref = ArtifactRef(kind=ArtifactKind.PATCH, job_id="job-123")

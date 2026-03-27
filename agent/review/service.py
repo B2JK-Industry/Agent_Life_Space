@@ -557,6 +557,26 @@ class ReviewService:
         self.initialize()
         return self._storage.list_jobs(status=status, limit=limit)
 
+    def list_artifacts(
+        self,
+        *,
+        job_id: str = "",
+        artifact_kind: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List persisted review artifacts for shared query/recovery."""
+        self.initialize()
+        return self._storage.list_artifacts(
+            job_id=job_id,
+            artifact_type=artifact_kind,
+            limit=limit,
+        )
+
+    def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
+        """Load one persisted review artifact for shared query/recovery."""
+        self.initialize()
+        return self._storage.get_artifact(artifact_id)
+
     def get_stats(self) -> dict[str, Any]:
         """Summarize review service state for orchestrator status/reporting."""
         self.initialize()

@@ -11,7 +11,7 @@ Use it for:
 
 ## Current Progress Snapshot
 
-Assessment basis: after Builder Control-Plane Mini-Release.
+Assessment basis: after Runtime Model + Artifact Planning slice.
 
 Important:
 - this is a strategy progress snapshot, not a merge-state indicator
@@ -21,18 +21,18 @@ Important:
 
 | Theme | Status | Approx Progress | Current State | Gap |
 |-------|--------|-----------------|---------------|-----|
-| T1 Platform Foundation | `in_progress` | 78% | Shared control-plane primitives now back build and review directly, with workspace discipline, shared job queries, and operator report surfaces. | Coexistence rules for the wider runtime are still not explicit enough. |
+| T1 Platform Foundation | `in_progress` | 84% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job and artifact queries. | No unified cross-domain persistence/action layer yet. |
 | T2 Reviewer Product | `complete_for_phase` | 85% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction. | API entrypoint, PR comment packs, LLM analysis are v2. |
 | T3 Builder Product | `in_progress` | 68% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, verification, and review-after-build gating. | Build step is still placeholder and there is no full delivery path. |
-| T4 Operator Product | `in_progress` | 30% | Unified intake routing, CLI intake preview/submit, operator report service, and mock-driven TS reporting surface. | No live backend/UI, planning layer, or delivery workflow. |
+| T4 Operator Product | `in_progress` | 42% | Unified intake routing, `JobPlan` preview/submit output, CLI intake preview/submit, operator report service, and mock-driven TS reporting surface. | No live backend/UI, durable planning state, or delivery workflow. |
 | T5 Security, Governance, And Policy | `in_progress` | 60% | Tool policy deny-by-default, approval gating, redaction pipeline, and persistent/queryable approvals with job/artifact linkage. | Review/build still sit outside a unified policy boundary. |
-| T6 Cost, Usage, And Observability | `in_progress` | 45% | UsageSummary, local build/review counters, shared runtime queries, approval backlog visibility, and operator report/inbox surfaces. | No real cost ledger or live operator UI. |
+| T6 Cost, Usage, And Observability | `in_progress` | 50% | UsageSummary, local build/review counters, shared runtime job/artifact queries, approval backlog visibility, and operator report surfaces. | No real cost ledger or live operator UI. |
 | T7 External Capability Gateway | `not_started` | 0% | Nothing yet. | No gateway contract. |
-| T8 Enterprise Hardening | `in_progress` | 58% | Shared control-plane layer, direct review/build primitive reuse, resumable builder checkpoints, unified intake, TS operator contracts, and shared query/reporting surfaces. | No explicit coexistence/deprecation plan for the wider runtime model. |
+| T8 Enterprise Hardening | `in_progress` | 64% | Shared control-plane layer, explicit runtime coexistence rules, direct review/build primitive reuse, unified intake/planning, and shared job/artifact/query/reporting surfaces. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants. |
 
 ## Theme T1: Platform Foundation
 
-- approx_progress: 78%
+- approx_progress: 84%
 
 Goal: unify the core job, state, artifact, and execution foundation so the
 system can support reviewer, builder, and operator modes without fragmenting.
@@ -40,7 +40,7 @@ system can support reviewer, builder, and operator modes without fragmenting.
 ### Epic T1-E1: Canonical Job Model
 
 - approx_progress: 80%
-- remaining_gap: Shared primitives and shared list/get query models now exist across build, review, and operate surfaces, but coexistence rules for `ReviewJob`, `Task`, `JobRunner`, and `AgentLoop` are still informal.
+- remaining_gap: Shared primitives and shared list/get query models now exist across build, review, operate, and artifact surfaces, but persistence/action unification is still incomplete.
 
 Stories:
 - T1-E1-S1: Define canonical Job schema for review, build, operate, and delivery
@@ -62,9 +62,9 @@ Stories:
   - missing: Query actions remain read-only; planning/automation layers remain separate scope.
 - T1-E1-S5: Reconcile coexistence rules between `ReviewJob`, `JobRunner`,
   `Task`, and `AgentLoop`.
-  - status: `in_progress`
-  - current_state: BuildJob and ReviewJob now share control-plane primitives directly, and operate records are visible through the same query surface.
-  - missing: No explicit convergence/deprecation plan yet for long-term runtime coexistence.
+  - status: `complete_for_phase`
+  - current_state: `RuntimeModelService` now makes the coexistence rules explicit: `BuildJob`/`ReviewJob` are canonical product jobs, `Task` remains planning state, `JobRunner` remains infrastructure execution, and `AgentLoop` remains an ephemeral conversational queue.
+  - missing: Rules are explicit, but not yet enforced through stronger invariants or migrations.
 
 ### Epic T1-E2: Artifact-First Execution
 
@@ -75,6 +75,9 @@ Stories:
 - T1-E2-S4: Add artifact retention and recovery rules.
 - T1-E2-S5: Persist full intake, report payloads, and artifact payloads for
   recovery-safe reload.
+  - status: `complete_for_phase`
+  - current_state: `ArtifactQueryService` now exposes shared build/review artifact list/get recovery, and build/review storage both persist artifact `format` alongside content/content_json payloads.
+  - missing: Artifact retention policy and richer builder patch export remain open.
 
 ### Epic T1-E3: Workspace And Execution Discipline
 
@@ -211,7 +214,7 @@ Stories:
 ## Theme T4: Operator Product
 
 - status: `in_progress`
-- approx_progress: 30%
+- approx_progress: 42%
 
 Goal: coordinate work end-to-end and support repeatable client delivery.
 
@@ -227,13 +230,13 @@ Stories:
   - current_state: `agent/control/intake.py` now defines a unified operator intake envelope for repo paths, git URLs, diff ranges, work type, build type, acceptance criteria, and routing metadata.
   - missing: Git URL execution still requires clone support before it becomes runnable.
 - T4-E1-S2: Add qualification logic for scope, risk, and budget.
-  - status: `started`
-  - current_state: `OperatorIntakeService.qualify()` now resolves route, source kind, risk level, blockers, and warnings for review/build requests.
-  - missing: No budget-aware planner or cost envelope yet.
+  - status: `in_progress`
+  - current_state: `OperatorIntakeService.qualify()` plus `JobPlan` creation now resolve route, source kind, risk level, blockers, warnings, scope summary, and a heuristic budget envelope for review/build requests.
+  - missing: No policy-backed budget model or real cost envelope yet.
 - T4-E1-S3: Add operator-facing intake summary and recommended plan.
-  - status: `started`
-  - current_state: `python -m agent --intake-* --intake-preview` now returns a structured qualification summary and recommended route.
-  - missing: No rich JobPlan or operator UI yet.
+  - status: `mostly_complete`
+  - current_state: `python -m agent --intake-* --intake-preview` now returns qualification plus a structured `JobPlan` with steps, planned artifacts, budget envelope, and recommended next action. Submission echoes the same plan shape.
+  - missing: No operator UI or durable handoff state for reviewed plans yet.
 - T4-E1-S4: Reject unsupported work cleanly and honestly.
   - status: `in_progress`
   - current_state: Unsupported git-only intake is now modeled and explicitly rejected with blockers rather than being silently routed.
@@ -241,8 +244,14 @@ Stories:
 
 ### Epic T4-E2: Job Planning And Routing
 
+- status: `in_progress`
+- approx_progress: 35%
+
 Stories:
 - T4-E2-S1: Create JobPlan model and planner outputs.
+  - status: `mostly_complete`
+  - current_state: `JobPlan` and `JobPlanStep` now exist in `agent/control/intake.py`, and planner output is surfaced through `OperatorIntakeService.preview()`, `AgentOrchestrator.preview_operator_intake()`, and CLI preview/submit flows.
+  - missing: Plan phases, capability assignment, and durable planner state are still partial.
 - T4-E2-S2: Split work into review, build, verify, deliver phases.
 - T4-E2-S3: Assign capabilities and budget envelopes.
 - T4-E2-S4: Record execution traces for planning decisions.
@@ -296,7 +305,7 @@ Stories:
 ## Theme T6: Cost, Usage, And Observability
 
 - status: `in_progress`
-- approx_progress: 45%
+- approx_progress: 50%
 
 Goal: make the system operable, measurable, and economically sane.
 
@@ -319,7 +328,7 @@ Stories:
 - T6-E2-S3: Track approval backlog and blocked reasons.
 - T6-E2-S4: Add operator-facing reporting surface or inbox.
   - status: `complete_for_phase`
-  - current_state: `OperatorReportService`, `AgentOrchestrator.get_operator_report()`, and `python -m agent --report` now expose an operator-facing inbox/report over shared jobs and approvals. The TS operator skeleton now mirrors this with a mock reporting view.
+  - current_state: `OperatorReportService`, `AgentOrchestrator.get_operator_report()`, and `python -m agent --report` now expose an operator-facing inbox/report over shared jobs, approvals, and recent artifacts. The TS operator skeleton now mirrors this with a mock reporting view.
   - missing: No live web UI or push-based updates yet.
 
 ### Epic T6-E3: Quality Evals
@@ -357,8 +366,8 @@ premature fragmentation.
 
 ### Epic T8-E1: Contract-First Boundaries
 
-- approx_progress: 68%
-- remaining_gap: Shared control-plane primitives, intake, queries, and reporting now span build/review/operate surfaces, but coexistence and extraction rules for the wider runtime are still not explicit enough.
+- approx_progress: 76%
+- remaining_gap: Shared control-plane primitives, intake/planning, queries, and reporting now span build/review/operate/artifact surfaces, but extraction-grade invariants are still not enforced strongly enough.
 
 Stories:
 - T8-E1-S1: Define contracts between control plane, execution plane, verification,
@@ -393,12 +402,11 @@ Stories:
 
 ## Bottom Line
 
-Builder exists as a real bounded context with models, service, storage,
-verification loop, acceptance criteria engine, and orchestrator wiring.
-Shared control-plane primitives (JobKind, JobStatus, JobTiming, ExecutionStep,
-ArtifactKind, UsageSummary) live in agent/control/models.py and BuildJob
-consumes them directly. ReviewJob has not yet migrated to shared primitives —
-that is still the next convergence step. The build step itself remains a
-placeholder (no LLM implementation), but the surrounding structure (intake,
-workspace sync, verification, acceptance, artifact persistence, local status
-visibility) is now stronger than the earlier foundation-only snapshot.
+Builder and reviewer now both sit on shared control-plane primitives, and the
+runtime has explicit coexistence rules for product jobs, planning tasks,
+infrastructure jobs, and conversational loop items. Shared artifact query and
+recovery now span build and review, while operator intake preview/submit flows
+surface a real `JobPlan` instead of only a route decision. The build step
+itself still remains placeholder-grade (no real code generation), but the
+surrounding structure is now materially stronger than the earlier
+foundation-only snapshot.
