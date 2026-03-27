@@ -228,6 +228,8 @@ class BuildIntake:
     description: str = ""
     target_files: list[str] = field(default_factory=list)
     acceptance_criteria: list[AcceptanceCriterion] = field(default_factory=list)
+    run_post_build_review: bool = False
+    block_on_review_failure: bool = True
     requester: str = ""
     context: str = ""
 
@@ -249,6 +251,8 @@ class BuildIntake:
             "description": self.description,
             "target_files": self.target_files,
             "acceptance_criteria": [c.to_dict() for c in self.acceptance_criteria],
+            "run_post_build_review": self.run_post_build_review,
+            "block_on_review_failure": self.block_on_review_failure,
             "requester": self.requester,
             "context": self.context,
         }
@@ -264,6 +268,8 @@ class BuildIntake:
                 AcceptanceCriterion.from_dict(c)
                 for c in d.get("acceptance_criteria", [])
             ],
+            run_post_build_review=d.get("run_post_build_review", False),
+            block_on_review_failure=d.get("block_on_review_failure", True),
             requester=d.get("requester", ""),
             context=d.get("context", ""),
         )
@@ -343,6 +349,9 @@ class BuildJob:
     # Verification
     verification_results: list[VerificationResult] = field(default_factory=list)
     acceptance: AcceptanceVerdict = field(default_factory=AcceptanceVerdict)
+    post_build_review_job_id: str = ""
+    post_build_review_verdict: str = ""
+    post_build_review_findings: dict[str, int] = field(default_factory=dict)
 
     # Output
     artifacts: list[BuildArtifact] = field(default_factory=list)
@@ -384,6 +393,9 @@ class BuildJob:
             "timing": self.timing.to_dict(),
             "verification_results": [v.to_dict() for v in self.verification_results],
             "acceptance": self.acceptance.to_dict(),
+            "post_build_review_job_id": self.post_build_review_job_id,
+            "post_build_review_verdict": self.post_build_review_verdict,
+            "post_build_review_findings": self.post_build_review_findings,
             "artifacts": [a.to_dict() for a in self.artifacts],
             "execution_trace": [t.to_dict() for t in self.execution_trace],
             "usage": self.usage.to_dict(),
@@ -425,6 +437,9 @@ class BuildJob:
             timing=timing,
             verification_results=verifications,
             acceptance=acceptance,
+            post_build_review_job_id=d.get("post_build_review_job_id", ""),
+            post_build_review_verdict=d.get("post_build_review_verdict", ""),
+            post_build_review_findings=d.get("post_build_review_findings", {}),
             artifacts=artifacts,
             execution_trace=traces,
             usage=usage,

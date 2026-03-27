@@ -56,9 +56,11 @@ class BuildService:
         self,
         storage: BuildStorage | None = None,
         workspace_manager: Any = None,
+        review_service: Any = None,
     ) -> None:
         self._storage = storage or BuildStorage()
         self._workspace_manager = workspace_manager
+        self._review_service = review_service
         self._initialized = False
 
     def initialize(self) -> None:
@@ -210,12 +212,68 @@ class BuildService:
         job.artifacts.append(acceptance_artifact)
         self._storage.save_artifact(acceptance_artifact)
 
-        # ── Step 7: Produce diff/patch artifact ──
+        # ── Step 7: Deterministic post-build review (optional) ──
+        if job.acceptance.accepted and intake.run_post_build_review:
+            t_review = job.trace("post_build_review")
+            review_job = await self._run_post_build_review(job, workspace_path)
+            if review_job is None:
+                t_review.fail(job.error or "post-build review unavailable")
+                self._finalize(job, workspace_path)
+                return job
+
+            job.post_build_review_job_id = review_job.id
+            job.post_build_review_verdict = review_job.report.verdict
+            job.post_build_review_findings = review_job.report.finding_counts
+
+            review_artifact = BuildArtifact(
+                artifact_kind=ArtifactKind.REVIEW_REPORT,
+                job_id=job.id,
+                content_json={
+                    "review_job_id": review_job.id,
+                    "verdict": review_job.report.verdict,
+                    "finding_counts": review_job.report.finding_counts,
+                    "executive_summary": review_job.report.executive_summary,
+                    "blocking": bool(
+                        intake.block_on_review_failure
+                        and review_job.report.verdict == "fail"
+                    ),
+                },
+                format="json",
+            )
+            job.artifacts.append(review_artifact)
+            self._storage.save_artifact(review_artifact)
+
+            if review_job.report.findings:
+                findings_artifact = BuildArtifact(
+                    artifact_kind=ArtifactKind.FINDING_LIST,
+                    job_id=job.id,
+                    content_json={
+                        "review_job_id": review_job.id,
+                        "findings": [finding.to_dict() for finding in review_job.report.findings],
+                    },
+                    format="json",
+                )
+                job.artifacts.append(findings_artifact)
+                self._storage.save_artifact(findings_artifact)
+
+            if intake.block_on_review_failure and review_job.report.verdict == "fail":
+                job.status = JobStatus.BLOCKED
+                job.error = (
+                    "Post-build review blocked completion: "
+                    f"{review_job.report.finding_counts.get('critical', 0)} critical findings"
+                )
+                t_review.fail(job.error)
+            else:
+                t_review.complete(
+                    f"review verdict={review_job.report.verdict}"
+                )
+
+        # ── Step 8: Produce diff/patch artifact ──
         t_artifacts = job.trace("artifacts")
         self._capture_diff_artifact(job, workspace_path)
         t_artifacts.complete(f"{len(job.artifacts)} artifacts created")
 
-        # ── Step 8: Execution trace artifact ──
+        # ── Step 9: Execution trace artifact ──
         trace_artifact = BuildArtifact(
             artifact_kind=ArtifactKind.EXECUTION_TRACE,
             job_id=job.id,
@@ -225,7 +283,7 @@ class BuildService:
         job.artifacts.append(trace_artifact)
         self._storage.save_artifact(trace_artifact)
 
-        # ── Step 9: Complete ──
+        # ── Step 10: Complete ──
         self._finalize(job, workspace_path)
         return job
 
@@ -502,9 +560,33 @@ class BuildService:
             # Git not initialized or not available — skip diff
             pass
 
+    async def _run_post_build_review(
+        self,
+        job: BuildJob,
+        workspace_path: str,
+    ):
+        """Run deterministic review over the built workspace."""
+        if self._review_service is None:
+            job.status = JobStatus.FAILED
+            job.error = (
+                "Post-build review requested but no ReviewService is configured."
+            )
+            return None
+
+        from agent.review.models import ReviewIntake, ReviewJobType
+
+        review_intake = ReviewIntake(
+            repo_path=workspace_path,
+            review_type=ReviewJobType.REPO_AUDIT,
+            include_patterns=job.intake.target_files,
+            requester=job.requester,
+            context=f"Post-build review for build {job.id}: {job.intake.description}",
+        )
+        return await self._review_service.run_review(review_intake)
+
     def _finalize(self, job: BuildJob, workspace_path: str) -> None:
         """Finalize job — set status, persist, complete workspace."""
-        if job.status != JobStatus.FAILED:
+        if job.status not in {JobStatus.FAILED, JobStatus.BLOCKED}:
             if job.acceptance.accepted:
                 job.status = JobStatus.COMPLETED
             else:
@@ -535,6 +617,7 @@ class BuildService:
             status=job.status.value,
             verification_passed=job.verification_passed,
             acceptance=job.acceptance.accepted,
+            review_verdict=job.post_build_review_verdict,
             artifacts=len(job.artifacts),
         )
 

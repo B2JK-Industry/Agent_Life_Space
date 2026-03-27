@@ -6,47 +6,47 @@ This file is the near-term execution backlog derived from the current state of
 Assessment basis:
 - branch: `main`
 - interpretation date: `2026-03-27`
-- baseline: after Builder Runtime Integration + Review-Driven Hardening
+- baseline: after Builder Control-Plane Mini-Release
 
 ## Ready Now
 
 ### P0
 
-1. `T3-E1-S2` Expose builder through a real product entrypoint.
-   Why now: builder is tracked, workspace-synced, and orchestrator-wired, but
-   there is still no API, chat, or operator path that starts build jobs.
+1. `T1-E1-S1` Migrate `ReviewJob` onto shared control-plane primitives.
+   Why now: shared build/review list/get queries now exist, so `ReviewJob`
+   itself is the clearest remaining convergence gap.
 
-2. `T3-E2-S2` Add review-after-build before completion.
-   Why now: builder verifies code mechanically, but still lacks a reviewer pass
-   before any delivery-ready completion state.
+2. `T5-E2-S1` Persist approval requests and link them to jobs and artifacts.
+   Why now: build/review jobs are now first-class queryable runtime objects,
+   but approval history is still not durable or cross-linked enough.
 
-3. `T1-E1-S4` Add a cross-system job query layer.
-   Why now: review and build now both persist useful job state, but inspection
-   remains fragmented and operator automation has no common query surface.
+3. `T6-E2-S4` Add an operator-facing reporting surface or inbox.
+   Why now: the shared query surface exists, but there is still no place for an
+   operator to inspect and act on blocked/completed work.
 
 ### P1
 
-4. `T1-E1-S1` Migrate `ReviewJob` onto shared control-plane primitives.
-   Why now: builder already consumes the shared job model directly, so reviewer
-   is now the clearest remaining convergence gap.
+4. `T3-E1-S1` Define implementation capability catalog.
+   Why now: builder now has real entrypoints, so the next honest upgrade is to
+   make capabilities explicit instead of adding more wrappers.
 
-5. `T5-E2-S1` Persist approval requests and link them to jobs and artifacts.
-   Why now: delivery gating exists, but approvals are still not durable enough
-   for stronger audit and compliance expectations.
+5. `T3-E1-S4` Add resumable build checkpoints.
+   Why now: builder now has entrypoint, query, and review-gate foundations, so
+   interruption recovery is the next practical runtime upgrade.
 
-6. `T6-E2-S4` Add an operator-facing reporting surface or inbox.
-   Why now: local build/review counters now exist, but nobody outside local
-   process status can act on them yet.
+6. `T4-E1-S1` Create a unified operator intake model for review/build routing.
+   Why now: review and build are now both first-class runtime flows, but intake
+   still enters them through separate local models.
 
 ### P2
 
-7. `T3-E1-S4` Add resumable build checkpoints.
-   Why now: recovery-safe job storage exists, but interruption recovery still
-   restarts the whole build flow.
+7. `T1-E1-S4` Extend shared job query coverage beyond build/review.
+   Why now: list/get job queries now exist for build and review, but they still
+   do not cover `JobRunner`, `Task`, or `AgentLoop`.
 
-8. `T4-E1-S1` Create a unified operator intake model for review/build routing.
-   Why now: the product now has two meaningful bounded contexts, but operator
-   intake still does not route work between them explicitly.
+8. `T3-E3-S3` Add richer domain-specific acceptance evaluators.
+   Why now: builder now has verification, review-after-build, and structured
+   acceptance artifacts, but acceptance logic is still intentionally rule-based.
 
 ## Bug Fixes Already Closed In This Cycle
 
@@ -58,12 +58,17 @@ Assessment basis:
 - Review job recovery preserves `include_patterns` and `exclude_patterns`.
 - `AgentOrchestrator` now initializes builder storage/service and exposes local
   build/review status counters.
+- Builder can now start through shared runtime and CLI entrypoints.
+- Successful build jobs can now invoke deterministic review-after-build gating.
+- Build and review jobs are now queryable through one shared control-plane
+  surface.
 
 ## Exit Criteria For The Next Backlog Slice
 
 The next slice should be considered successful when:
-- a real entrypoint can start build jobs end-to-end
-- build completion can invoke a review-after-build gate
-- review and build jobs are queryable through one shared inspection layer
-- backlog progress can move Builder Product from early foundation toward a
-  usable controlled execution path
+- shared queries reach beyond build/review into the wider runtime surface
+- approval state becomes durable and linked to runtime job/artifact records
+- an operator-facing surface can inspect blocked/completed work from the shared
+  query layer
+- backlog progress can move from builder-only vertical slice into real
+  operator/control-plane usability

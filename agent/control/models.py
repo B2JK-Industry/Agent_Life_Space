@@ -235,3 +235,51 @@ class UsageSummary:
             model_used=d.get("model_used", ""),
             llm_calls=d.get("llm_calls", 0),
         )
+
+
+# ─────────────────────────────────────────────
+# Cross-System Job Query Models
+# ─────────────────────────────────────────────
+
+@dataclass
+class JobQuerySummary:
+    """Normalized summary view across build/review jobs."""
+    job_id: str
+    job_kind: JobKind
+    status: str
+    title: str
+    requester: str = ""
+    execution_mode: str = ""
+    created_at: str = ""
+    completed_at: str = ""
+    artifact_count: int = 0
+    scope: str = ""
+    outcome: str = ""
+    blocked_reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "job_kind": self.job_kind.value,
+            "status": self.status,
+            "title": self.title,
+            "requester": self.requester,
+            "execution_mode": self.execution_mode,
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+            "artifact_count": self.artifact_count,
+            "scope": self.scope,
+            "outcome": self.outcome,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass
+class JobQueryDetail(JobQuerySummary):
+    """Detailed cross-system view with normalized metadata."""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        base = super().to_dict()
+        base["metadata"] = self.metadata
+        return base

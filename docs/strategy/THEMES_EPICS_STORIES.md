@@ -11,7 +11,7 @@ Use it for:
 
 ## Current Progress Snapshot
 
-Assessment basis: after Builder Runtime Integration + Review-Driven Hardening.
+Assessment basis: after Builder Control-Plane Mini-Release.
 
 Important:
 - this is a strategy progress snapshot, not a merge-state indicator
@@ -21,26 +21,26 @@ Important:
 
 | Theme | Status | Approx Progress | Current State | Gap |
 |-------|--------|-----------------|---------------|-----|
-| T1 Platform Foundation | `in_progress` | 62% | Shared control-plane primitives, workspace discipline, and orchestrator-visible build/review services. | ReviewJob not yet on shared primitives. |
+| T1 Platform Foundation | `in_progress` | 68% | Shared control-plane primitives, workspace discipline, orchestrator-visible build/review services, and shared build/review job queries. | ReviewJob not yet on shared primitives. |
 | T2 Reviewer Product | `complete_for_phase` | 85% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction. | API entrypoint, PR comment packs, LLM analysis are v2. |
-| T3 Builder Product | `in_progress` | 45% | Builder bounded context is tracked on `main`, orchestrator-wired, workspace-synced, verification-gated, and acceptance-aware. | Build step is placeholder. No LLM implementation or delivery path. |
+| T3 Builder Product | `in_progress` | 55% | Builder bounded context is tracked on `main`, orchestrator-wired, CLI-reachable, workspace-synced, verification-gated, acceptance-aware, and review-after-build capable. | Build step is placeholder. No LLM implementation, capability catalog, or delivery path. |
 | T4 Operator Product | `started` | 10% | Mock-driven TS skeleton. | No live intake, planning, or delivery control plane. |
 | T5 Security, Governance, And Policy | `in_progress` | 50% | Tool policy deny-by-default, approval gating, redaction pipeline. | Review/build still sit outside a unified policy boundary. |
-| T6 Cost, Usage, And Observability | `started` | 25% | UsageSummary plus local build/review status counters and traces. | No operator-facing observability surface or real cost ledger. |
+| T6 Cost, Usage, And Observability | `started` | 30% | UsageSummary plus local build/review status counters, traces, and shared job queries. | No operator-facing observability surface or real cost ledger. |
 | T7 External Capability Gateway | `not_started` | 0% | Nothing yet. | No gateway contract. |
-| T8 Enterprise Hardening | `in_progress` | 40% | Shared control-plane layer, tracked builder runtime, ADR-001 sidecar, TS operator contracts. | ReviewJob not yet on shared primitives. No cross-system job query layer. |
+| T8 Enterprise Hardening | `in_progress` | 45% | Shared control-plane layer, tracked builder runtime, ADR-001 sidecar, TS operator contracts, and shared job query surface. | ReviewJob not yet on shared primitives. |
 
 ## Theme T1: Platform Foundation
 
-- approx_progress: 62%
+- approx_progress: 68%
 
 Goal: unify the core job, state, artifact, and execution foundation so the
 system can support reviewer, builder, and operator modes without fragmenting.
 
 ### Epic T1-E1: Canonical Job Model
 
-- approx_progress: 45%
-- remaining_gap: Shared primitives exist (JobKind, JobStatus, etc). BuildJob uses them. ReviewJob still uses own equivalents.
+- approx_progress: 60%
+- remaining_gap: Shared primitives and shared list/get query models now exist. ReviewJob still uses own equivalents.
 
 Stories:
 - T1-E1-S1: Define canonical Job schema for review, build, operate, and delivery
@@ -57,6 +57,9 @@ Stories:
   - current_state: BuildStorage persists job metadata, execution history, artifacts. UsageSummary tracks cost.
   - missing: No unified cross-system persistence.
 - T1-E1-S4: Add job queries for operator inspection and automation.
+  - status: `mostly_complete`
+  - current_state: JobQuerySummary/JobQueryDetail plus JobQueryService normalize build and review jobs behind one shared list/get surface. AgentOrchestrator exposes `list_product_jobs()` and `get_product_job()`.
+  - missing: Query surface does not yet cover JobRunner/Task/AgentLoop and has no operator UI yet.
 - T1-E1-S5: Reconcile coexistence rules between `ReviewJob`, `JobRunner`,
   `Task`, and `AgentLoop`.
   - current_state: BuildJob uses shared primitives. ReviewJob does not yet.
@@ -130,15 +133,15 @@ Stories:
 ## Theme T3: Builder Product
 
 - status: `in_progress`
-- approx_progress: 45%
+- approx_progress: 55%
 
 Goal: make implementation work first-class, controlled, and acceptance-driven.
 
 ### Epic T3-E1: Capability-Based Build Execution
 
 - status: `in_progress`
-- approx_progress: 45%
-- remaining_gap: Build flow exists and is orchestrator-wired, but build step is still placeholder. No capability catalog.
+- approx_progress: 60%
+- remaining_gap: Build flow exists, has runtime entrypoints, but build step is still placeholder. No capability catalog.
 
 Stories:
 - T3-E1-S1: Define implementation capability catalog for backend, frontend,
@@ -146,13 +149,13 @@ Stories:
   - status: `started`
   - current_state: BuildJobType enum (IMPLEMENTATION, INTEGRATION, DEVOPS, TESTING) exists.
   - missing: No capability catalog or routing.
-- T3-E1-S2: Route implementation jobs to explicit capabilities.
-  - status: `started`
-  - current_state: BuildService routes by build_type and is initialized by AgentOrchestrator.
-  - missing: No explicit capability routing.
+- T3-E1-S2: Expose builder through a real product entrypoint.
+  - status: `mostly_complete`
+  - current_state: `AgentOrchestrator.run_build_job()` now exposes builder through the shared runtime, and `python -m agent --build-repo ...` provides a thin CLI adapter on top of it.
+  - missing: No operator/chat/API entrypoint yet, and capability catalog remains separate scope.
 - T3-E1-S3: Capture patch sets, diffs, and execution traces as artifacts.
   - status: `in_progress`
-  - current_state: BuildArtifact with PATCH, DIFF, VERIFICATION_REPORT, ACCEPTANCE_REPORT kinds. Artifacts persisted via BuildStorage and surfaced through the tracked builder runtime.
+  - current_state: BuildArtifact with PATCH, DIFF, VERIFICATION_REPORT, ACCEPTANCE_REPORT, REVIEW_REPORT, and FINDING_LIST kinds. Artifacts persisted via BuildStorage and surfaced through the tracked builder runtime.
 - T3-E1-S4: Make execution resumable after interruption.
   - status: `in_progress`
   - current_state: BuildJob carries workspace_id, timing, execution_trace. From_dict() recovery exists.
@@ -161,14 +164,17 @@ Stories:
 ### Epic T3-E2: Build Verification Loop
 
 - status: `in_progress`
-- approx_progress: 55%
+- approx_progress: 70%
 
 Stories:
 - T3-E2-S1: Add test, lint, and type-check loop for implementation jobs.
   - status: `in_progress`
   - current_state: run_verification_suite() runs test + lint and adds typecheck automatically when project config is present. Custom commands supported.
-  - missing: No build-specific test discovery or review-after-build pass.
+  - missing: No build-specific test discovery.
 - T3-E2-S2: Add review-after-build pass before completion.
+  - status: `mostly_complete`
+  - current_state: Successful build jobs can now request a deterministic post-build reviewer pass through `ReviewService`. Critical reviewer failures block completion and are persisted as build artifacts/metadata.
+  - missing: Review thresholds are not yet policy-configurable and reviewer still runs in READ_ONLY_HOST mode over the built workspace path.
 - T3-E2-S3: Fail jobs clearly when acceptance criteria are not met.
   - status: `in_progress`
   - current_state: BuildService fails job when acceptance criteria unmet. AcceptanceVerdict.evaluate() checks all non-skipped criteria.
@@ -316,8 +322,8 @@ premature fragmentation.
 
 ### Epic T8-E1: Contract-First Boundaries
 
-- approx_progress: 45%
-- remaining_gap: Shared control-plane primitives. Review and build as separate bounded contexts. ReviewJob not yet on shared primitives.
+- approx_progress: 55%
+- remaining_gap: Shared control-plane primitives and job queries exist. Review and build remain separate bounded contexts. ReviewJob not yet on shared primitives.
 
 Stories:
 - T8-E1-S1: Define contracts between control plane, execution plane, verification,

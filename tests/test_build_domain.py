@@ -24,6 +24,12 @@ from agent.control.models import (
     JobKind,
     JobStatus,
 )
+from agent.review.models import (
+    ReviewFinding,
+    ReviewJob,
+    ReviewReport,
+    Severity,
+)
 
 # ─────────────────────────────────────────────
 # Acceptance Criteria
@@ -166,6 +172,7 @@ class TestBuildIntake:
             description="Add API endpoint",
             target_files=["src/api.py"],
             acceptance_criteria=[AcceptanceCriterion(description="Tests pass")],
+            run_post_build_review=True,
             requester="daniel",
         )
         d = intake.to_dict()
@@ -173,6 +180,7 @@ class TestBuildIntake:
         assert intake2.repo_path == "/tmp/test"
         assert intake2.build_type == BuildJobType.INTEGRATION
         assert len(intake2.acceptance_criteria) == 1
+        assert intake2.run_post_build_review is True
 
 
 # ─────────────────────────────────────────────
@@ -395,6 +403,15 @@ class TestBuildVerification:
 # ─────────────────────────────────────────────
 
 class TestBuildService:
+    class _FakeReviewService:
+        def __init__(self, review_job: ReviewJob) -> None:
+            self._review_job = review_job
+            self.calls: list = []
+
+        async def run_review(self, intake):
+            self.calls.append(intake)
+            return self._review_job
+
     @pytest.fixture()
     def workspace_manager(self):
         """Mock workspace manager that creates real temp dirs."""
@@ -572,3 +589,116 @@ class TestBuildService:
         steps = service._get_verification_steps(temp_repo)
 
         assert VerificationKind.TYPECHECK in steps
+
+    async def test_post_build_review_passes_through_review_service(
+        self, workspace_manager, monkeypatch
+    ):
+        from agent.build.service import BuildService
+        from agent.build.storage import BuildStorage
+
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                ),
+                VerificationResult(
+                    kind=VerificationKind.LINT,
+                    passed=True,
+                    command="ruff check .",
+                    exit_code=0,
+                ),
+            ],
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        clean_review = ReviewJob()
+        clean_review.report = ReviewReport(
+            executive_summary="No findings.",
+            verdict="pass",
+        )
+
+        review_service = self._FakeReviewService(clean_review)
+        service = BuildService(
+            storage=BuildStorage(db_path=db_path),
+            workspace_manager=workspace_manager,
+            review_service=review_service,
+        )
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Ship clean change",
+            acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
+            run_post_build_review=True,
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.COMPLETED
+        assert job.post_build_review_verdict == "pass"
+        assert job.post_build_review_job_id == clean_review.id
+        assert review_service.calls[0].repo_path == self._workspace_dir
+        assert "review_report" in [artifact.artifact_kind.value for artifact in job.artifacts]
+
+    async def test_post_build_review_blocks_on_critical_findings(
+        self, workspace_manager, monkeypatch
+    ):
+        from agent.build.service import BuildService
+        from agent.build.storage import BuildStorage
+
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                ),
+                VerificationResult(
+                    kind=VerificationKind.LINT,
+                    passed=True,
+                    command="ruff check .",
+                    exit_code=0,
+                ),
+            ],
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        blocked_review = ReviewJob()
+        blocked_review.report = ReviewReport(
+            executive_summary="Critical finding present.",
+            verdict="fail",
+            findings=[
+                ReviewFinding(
+                    severity=Severity.CRITICAL,
+                    title="Critical issue",
+                )
+            ],
+        )
+
+        review_service = self._FakeReviewService(blocked_review)
+        service = BuildService(
+            storage=BuildStorage(db_path=db_path),
+            workspace_manager=workspace_manager,
+            review_service=review_service,
+        )
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Ship risky change",
+            acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
+            run_post_build_review=True,
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.BLOCKED
+        assert job.post_build_review_verdict == "fail"
+        assert "critical findings" in job.error.lower()
+        assert "finding_list" in [artifact.artifact_kind.value for artifact in job.artifacts]

@@ -29,8 +29,11 @@ class ReviewStorage:
             db_path = str(Path(get_project_root()) / "agent" / "review" / "reviews.db")
         self._db_path = db_path
         self._db: sqlite3.Connection | None = None
+        self._initialized = False
 
     def initialize(self) -> None:
+        if self._initialized:
+            return
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(self._db_path)
         self._db.execute("""
@@ -54,6 +57,7 @@ class ReviewStorage:
             )
         """)
         self._db.commit()
+        self._initialized = True
         logger.info("review_storage_initialized", db=self._db_path)
 
     def save_job(self, job: ReviewJob) -> None:
@@ -175,3 +179,4 @@ class ReviewStorage:
         if self._db:
             self._db.close()
             self._db = None
+        self._initialized = False

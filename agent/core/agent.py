@@ -33,6 +33,8 @@ from typing import Any
 import structlog
 
 from agent.brain.decision_engine import DecisionEngine
+from agent.control.job_queries import JobQueryService
+from agent.control.models import JobKind
 from agent.core.approval import ApprovalQueue
 from agent.core.job_runner import JobConfig, JobRunner
 from agent.core.llm_router import LLMRouter
@@ -98,16 +100,6 @@ class AgentOrchestrator:
         )
         self.workspaces = WorkspaceManager()
 
-        # Build service
-        from agent.build.service import BuildService
-        from agent.build.storage import BuildStorage
-        self.build = BuildService(
-            storage=BuildStorage(
-                db_path=str(self._data_dir / "build" / "builds.db")
-            ),
-            workspace_manager=self.workspaces,
-        )
-
         # Review service
         from agent.review.service import ReviewService
         from agent.review.storage import ReviewStorage
@@ -117,6 +109,21 @@ class AgentOrchestrator:
             ),
             workspace_manager=self.workspaces,
             approval_queue=self.approval_queue,
+        )
+
+        # Build service
+        from agent.build.service import BuildService
+        from agent.build.storage import BuildStorage
+        self.build = BuildService(
+            storage=BuildStorage(
+                db_path=str(self._data_dir / "build" / "builds.db")
+            ),
+            workspace_manager=self.workspaces,
+            review_service=self.review,
+        )
+        self.jobs = JobQueryService(
+            build_service=self.build,
+            review_service=self.review,
         )
 
         # Background tasks
@@ -426,6 +433,41 @@ class AgentOrchestrator:
 
     # --- Public API ---
 
+    async def run_build_job(self, intake: Any):
+        """Run a build job through the shared orchestrator runtime."""
+        if not self._initialized:
+            await self.initialize()
+        return await self.build.run_build(intake)
+
+    async def run_review_job(self, intake: Any):
+        """Run a review job through the shared orchestrator runtime."""
+        if not self._initialized:
+            await self.initialize()
+        return await self.review.run_review(intake)
+
+    def list_product_jobs(
+        self,
+        kind: JobKind | str | None = None,
+        status: str = "",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """List build/review jobs through one shared query layer."""
+        return [
+            job.to_dict()
+            for job in self.jobs.list_jobs(kind=kind, status=status, limit=limit)
+        ]
+
+    def get_product_job(
+        self,
+        job_id: str,
+        kind: JobKind | str | None = None,
+    ) -> dict[str, Any] | None:
+        """Load one build/review job through the shared query layer."""
+        job = self.jobs.get_job(job_id=job_id, kind=kind)
+        if job is None:
+            return None
+        return job.to_dict()
+
     def get_status(self) -> dict[str, Any]:
         """Get overall agent status."""
         return {
@@ -436,6 +478,9 @@ class AgentOrchestrator:
             "finance": self.finance.get_stats(),
             "build": self.build.get_stats(),
             "review": self.review.get_stats(),
+            "control_plane": {
+                "queryable_job_kinds": ["build", "review"],
+            },
             "jobs": self.job_runner.get_stats(),
             "watchdog": self.watchdog.get_stats(),
             "router": self.router.get_metrics(),

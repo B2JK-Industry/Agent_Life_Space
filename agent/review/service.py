@@ -406,10 +406,12 @@ class ReviewService:
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         """Retrieve a stored job by ID (dict form)."""
+        self.initialize()
         return self._storage.load_job(job_id)
 
     def load_job(self, job_id: str) -> ReviewJob | None:
         """Reconstruct a full ReviewJob from storage. Recovery-safe."""
+        self.initialize()
         data = self._storage.load_job(job_id)
         if data is None:
             return None
@@ -545,6 +547,7 @@ class ReviewService:
 
     def list_jobs(self, status: str = "", limit: int = 20) -> list[dict[str, Any]]:
         """List review jobs."""
+        self.initialize()
         return self._storage.list_jobs(status=status, limit=limit)
 
     def get_stats(self) -> dict[str, Any]:

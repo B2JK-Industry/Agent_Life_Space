@@ -293,6 +293,43 @@ async def show_health(data_dir: str = "agent") -> None:
     await agent.stop()
 
 
+async def run_build_command(
+    *,
+    data_dir: str = "agent",
+    repo_path: str,
+    description: str,
+    target_files: list[str] | None = None,
+    acceptance_criteria: list[str] | None = None,
+    requester: str = "cli",
+    context: str = "",
+    skip_review: bool = False,
+) -> None:
+    """Run one build job through the shared orchestrator runtime."""
+    import orjson
+
+    from agent.build.models import AcceptanceCriterion, BuildIntake
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+
+    intake = BuildIntake(
+        repo_path=repo_path,
+        description=description,
+        target_files=target_files or [],
+        acceptance_criteria=[
+            AcceptanceCriterion(description=item)
+            for item in (acceptance_criteria or [])
+        ],
+        run_post_build_review=not skip_review,
+        requester=requester,
+        context=context,
+    )
+    job = await agent.run_build_job(intake)
+    result = agent.get_product_job(job.id, kind="build") or {"job_id": job.id}
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Agent Life Space — Self-hosted autonomous agent"
@@ -312,12 +349,64 @@ def main() -> None:
         action="store_true",
         help="Show system health and exit",
     )
+    parser.add_argument(
+        "--build-repo",
+        default="",
+        help="Run a builder job against this repository path and exit",
+    )
+    parser.add_argument(
+        "--build-description",
+        default="",
+        help="Required description for --build-repo execution",
+    )
+    parser.add_argument(
+        "--build-target-file",
+        action="append",
+        default=[],
+        help="Optional target file/glob for the builder review scope; repeatable",
+    )
+    parser.add_argument(
+        "--build-acceptance",
+        action="append",
+        default=[],
+        help="Acceptance criterion for the build job; repeatable",
+    )
+    parser.add_argument(
+        "--build-requester",
+        default="cli",
+        help="Requester label for --build-repo execution",
+    )
+    parser.add_argument(
+        "--build-context",
+        default="",
+        help="Optional free-text context for --build-repo execution",
+    )
+    parser.add_argument(
+        "--build-skip-review",
+        action="store_true",
+        help="Disable the post-build reviewer pass for --build-repo execution",
+    )
     args = parser.parse_args()
 
     if args.status:
         asyncio.run(show_status(args.data_dir))
     elif args.health:
         asyncio.run(show_health(args.data_dir))
+    elif args.build_repo:
+        if not args.build_description:
+            parser.error("--build-description is required with --build-repo")
+        asyncio.run(
+            run_build_command(
+                data_dir=args.data_dir,
+                repo_path=args.build_repo,
+                description=args.build_description,
+                target_files=args.build_target_file,
+                acceptance_criteria=args.build_acceptance,
+                requester=args.build_requester,
+                context=args.build_context,
+                skip_review=args.build_skip_review,
+            )
+        )
     else:
         asyncio.run(run_agent(args.data_dir))
 

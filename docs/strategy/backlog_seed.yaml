@@ -5,34 +5,26 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Builder Runtime Integration + Review-Driven Hardening."
+  assessed_state_note: "Snapshot after Builder Control-Plane Mini-Release."
   interpretation_date: "2026-03-27"
   theme_status:
-    T1: { status: in_progress, approx_progress: 62 }
+    T1: { status: in_progress, approx_progress: 68 }
     T2: { status: complete_for_phase, approx_progress: 85 }
-    T3: { status: in_progress, approx_progress: 45 }
+    T3: { status: in_progress, approx_progress: 55 }
     T4: { status: started, approx_progress: 10 }
     T5: { status: in_progress, approx_progress: 50 }
-    T6: { status: started, approx_progress: 25 }
+    T6: { status: started, approx_progress: 30 }
     T7: { status: not_started, approx_progress: 0 }
-    T8: { status: in_progress, approx_progress: 40 }
+    T8: { status: in_progress, approx_progress: 45 }
 next_execution_backlog:
   - priority: P0
-    story_id: T3-E1-S2
-    title: "Expose builder through a real product entrypoint"
-    why_now: "Builder is now tracked and orchestrator-wired, but there is still no API/chat/operator path that starts build jobs."
-  - priority: P0
-    story_id: T3-E2-S2
-    title: "Add review-after-build before completion"
-    why_now: "Builder verifies code mechanically but still lacks a reviewer pass before delivery-ready completion."
-  - priority: P0
     story_id: T1-E1-S4
-    title: "Add cross-system job query layer"
-    why_now: "Review and build now both produce useful persisted state, but operator/runtime inspection is still fragmented."
-  - priority: P1
+    title: "Extend shared job query coverage beyond review/build"
+    why_now: "Cross-system build/review list/get queries now exist, but JobRunner/Task/AgentLoop still sit outside the shared inspection surface."
+  - priority: P0
     story_id: T1-E1-S1
     title: "Migrate ReviewJob onto shared control-plane primitives"
-    why_now: "Builder already consumes shared primitives directly; reviewer remains the main convergence holdout."
+    why_now: "Shared queries now bridge build and review, so ReviewJob itself is the clearest remaining convergence gap."
   - priority: P1
     story_id: T5-E2-S1
     title: "Persist approval requests and link them to jobs/artifacts"
@@ -40,21 +32,33 @@ next_execution_backlog:
   - priority: P1
     story_id: T6-E2-S4
     title: "Add operator-facing reporting surface"
-    why_now: "Local status counters exist now, but there is no operator UI or inbox for acting on them."
+    why_now: "Shared runtime queries now exist, but there is still no operator UI or inbox for acting on them."
+  - priority: P1
+    story_id: T3-E1-S1
+    title: "Define implementation capability catalog"
+    why_now: "Builder now has real entrypoints, so the next gap is honest capability routing rather than another wrapper."
+  - priority: P2
+    story_id: T3-E1-S4
+    title: "Make execution resumable after interruption"
+    why_now: "Builder now has entrypoint, query, and review gate foundations, making resumability the next practical runtime upgrade."
+  - priority: P2
+    story_id: T4-E1-S1
+    title: "Create unified operator intake model"
+    why_now: "Review/build jobs are now both first-class runtime concepts, but intake still enters them through separate local models."
 themes:
   - id: T1
     name: Platform Foundation
     goal: Unify job, artifact, state, and workspace foundations.
     status: in_progress
-    approx_progress: 62
-    current_state: Shared control-plane primitives, ReviewJob recovery/artifact hydration, workspace subsystem, and orchestrator-wired build/review services with local status visibility.
+    approx_progress: 68
+    current_state: Shared control-plane primitives, ReviewJob recovery/artifact hydration, workspace subsystem, orchestrator-wired build/review services, and shared cross-system build/review job queries.
     main_gap: ReviewJob does not yet use shared primitives directly across the system.
     epics:
       - id: T1-E1
         name: Canonical Job Model
         status: in_progress
-        approx_progress: 45
-        remaining_gap: Shared primitives exist, but ReviewJob, JobRunner, Task, and AgentLoop still coexist without convergence.
+        approx_progress: 60
+        remaining_gap: Shared primitives and shared query models exist, but ReviewJob, JobRunner, Task, and AgentLoop still coexist without convergence.
         stories:
           - id: T1-E1-S1
             name: Define canonical Job schema for review, build, operate, and delivery flows
@@ -70,10 +74,12 @@ themes:
             name: Persist job metadata, execution history, artifacts, and cost data
             status: in_progress
             current_state: BuildStorage persists job metadata, execution history, artifacts, and usage summary. Review artifacts recover metadata safely.
-            missing: No unified cross-system persistence or query layer.
+            missing: No unified cross-system persistence layer yet.
           - id: T1-E1-S4
             name: Add job queries for operator inspection and automation
-            status: not_started
+            status: mostly_complete
+            current_state: JobQuerySummary/JobQueryDetail and JobQueryService now normalize build and review jobs behind one shared list/get surface. AgentOrchestrator exposes that surface directly.
+            missing: Shared queries do not yet cover JobRunner, Task, or AgentLoop and there is no operator-facing reporting UI yet.
           - id: T1-E1-S5
             name: Reconcile coexistence rules between ReviewJob, JobRunner, Task, and AgentLoop
             status: in_progress
@@ -222,15 +228,15 @@ themes:
     name: Builder Product
     goal: Make implementation controlled, testable, and acceptance-driven.
     status: in_progress
-    approx_progress: 45
-    current_state: Builder bounded context with models, service, storage, verification loop, acceptance criteria engine, workspace sync, and orchestrator wiring.
-    main_gap: No LLM implementation, no real code generation, no review-after-build, and no external build entrypoint yet.
+    approx_progress: 55
+    current_state: Builder bounded context with models, service, storage, verification loop, acceptance criteria engine, workspace sync, orchestrator runtime entrypoint, CLI entrypoint, and optional post-build review gate.
+    main_gap: No LLM implementation, no real code generation, and no capability catalog yet.
     epics:
       - id: T3-E1
         name: Capability-Based Build Execution
         status: in_progress
-        approx_progress: 45
-        remaining_gap: Build flow exists and is orchestrator-wired, but the build step is still placeholder-grade and there is no capability catalog.
+        approx_progress: 60
+        remaining_gap: Build flow exists, has real runtime entrypoints, but the build step is still placeholder-grade and there is no capability catalog.
         stories:
           - id: T3-E1-S1
             name: Define implementation capability catalog
@@ -238,14 +244,14 @@ themes:
             current_state: BuildJobType enum (IMPLEMENTATION, INTEGRATION, DEVOPS, TESTING) exists.
             missing: No capability catalog yet.
           - id: T3-E1-S2
-            name: Route implementation jobs to explicit capabilities
-            status: started
-            current_state: BuildService routes by build_type and is initialized by AgentOrchestrator.
-            missing: No explicit capability routing yet.
+            name: Expose builder through a real product entrypoint
+            status: mostly_complete
+            current_state: AgentOrchestrator now exposes run_build_job(), and python -m agent --build-repo ... routes builder work through the shared runtime.
+            missing: No operator/chat/API entrypoint yet, and capability routing remains separate scope.
           - id: T3-E1-S3
             name: Capture patch sets, diffs, and execution traces as artifacts
             status: in_progress
-            current_state: BuildArtifact includes patch, diff, verification, acceptance, and trace artifacts persisted via BuildStorage.
+            current_state: BuildArtifact includes patch, diff, verification, acceptance, review, finding-list, and trace artifacts persisted via BuildStorage.
           - id: T3-E1-S4
             name: Make execution resumable after interruption
             status: in_progress
@@ -254,16 +260,18 @@ themes:
       - id: T3-E2
         name: Build Verification Loop
         status: in_progress
-        approx_progress: 55
+        approx_progress: 70
         stories:
           - id: T3-E2-S1
             name: Add test, lint, and type-check loop for implementation jobs
             status: in_progress
             current_state: run_verification_suite() runs test and lint in workspace and adds typecheck automatically when project config is present. Custom commands are supported.
-            missing: No build-specific test discovery or review-after-build pass yet.
+            missing: No build-specific test discovery yet.
           - id: T3-E2-S2
             name: Add review-after-build pass before completion
-            status: not_started
+            status: mostly_complete
+            current_state: Successful build jobs can now request a deterministic post-build review pass through ReviewService, persist review artifacts, and block completion on review failure.
+            missing: Review thresholds are not yet policy-configurable and reviewer still operates in READ_ONLY_HOST mode over the built workspace path.
           - id: T3-E2-S3
             name: Fail jobs clearly when acceptance criteria are not met
             status: in_progress
@@ -429,8 +437,8 @@ themes:
     name: Cost, Usage, And Observability
     goal: Make the system operable, measurable, and economically sane.
     status: started
-    approx_progress: 25
-    current_state: UsageSummary in control-plane. Fields on review and build jobs. Orchestrator-visible build/review status counters exist locally.
+    approx_progress: 30
+    current_state: UsageSummary in control-plane. Fields on review and build jobs. Orchestrator-visible build/review status counters and shared cross-system job queries exist locally.
     main_gap: No real per-job cost ledger or operator-facing observability.
     epics:
       - id: T6-E1
@@ -447,7 +455,7 @@ themes:
       - id: T6-E2
         name: Runtime Observability
         status: started
-        approx_progress: 25
+        approx_progress: 35
         stories:
           - id: T6-E2-S1
             name: Track job status, failures, retries, and durations
@@ -504,14 +512,14 @@ themes:
     name: Enterprise Hardening
     goal: Prepare for enterprise-grade architecture without premature fragmentation.
     status: in_progress
-    approx_progress: 40
-    current_state: Shared control-plane layer, review and build bounded contexts, tracked builder runtime, ADR-001 sidecar, TS operator contracts and skeleton, policy-driven redaction.
-    main_gap: ReviewJob is not yet on shared primitives and there is no cross-system job query layer.
+    approx_progress: 45
+    current_state: Shared control-plane layer, review and build bounded contexts, tracked builder runtime, shared job query surface, ADR-001 sidecar, TS operator contracts and skeleton, policy-driven redaction.
+    main_gap: ReviewJob is not yet on shared primitives and the operator/reporting surface is still thin.
     epics:
       - id: T8-E1
         name: Contract-First Boundaries
         status: in_progress
-        approx_progress: 45
+        approx_progress: 55
         stories:
           - id: T8-E1-S1
             name: Define contracts between control plane, execution plane, verification, and delivery

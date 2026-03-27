@@ -8,6 +8,14 @@ This project follows [Semantic Versioning](https://semver.org/):
 - MINOR (1.x.0) — nové features, spätne kompatibilné
 - MAJOR (x.0.0) — breaking changes (len so schválením)
 
+## [Unreleased]
+
+### Builder / Control Plane
+- Builder now has a real shared-runtime entrypoint via `AgentOrchestrator.run_build_job()`
+- `python -m agent --build-repo ...` now provides a thin CLI build adapter
+- Successful build jobs can invoke deterministic review-after-build gating
+- Build and review jobs are now queryable through one shared control-plane surface
+
 ## [1.4.1] — 2026-03-27
 
 Bug-fix release for `1.4.0`.
