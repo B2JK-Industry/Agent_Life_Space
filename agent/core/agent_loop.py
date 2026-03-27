@@ -252,3 +252,14 @@ class AgentLoop:
                 self._error_count / max(total, 1), 2
             ),
         }
+
+    def get_queue_snapshot(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Return a lightweight snapshot of queued work items."""
+        return [
+            {
+                "description": item.description,
+                "created_at": item.created_at,
+                "priority": item.priority,
+            }
+            for item in list(self._queue)[:limit]
+        ]

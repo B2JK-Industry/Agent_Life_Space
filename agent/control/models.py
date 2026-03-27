@@ -248,6 +248,7 @@ class JobQuerySummary:
     job_kind: JobKind
     status: str
     title: str
+    subkind: str = ""
     requester: str = ""
     execution_mode: str = ""
     created_at: str = ""
@@ -263,6 +264,7 @@ class JobQuerySummary:
             "job_kind": self.job_kind.value,
             "status": self.status,
             "title": self.title,
+            "subkind": self.subkind,
             "requester": self.requester,
             "execution_mode": self.execution_mode,
             "created_at": self.created_at,

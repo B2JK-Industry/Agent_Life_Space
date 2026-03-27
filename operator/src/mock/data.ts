@@ -8,6 +8,10 @@ import type {
   DeliveryBundleSummary,
   ReviewJobSummary,
 } from "../models/review";
+import type {
+  ControlPlaneJobSummary,
+  OperatorReport,
+} from "../models/reporting";
 
 export const mockJobs: ReviewJobSummary[] = [
   {
@@ -109,3 +113,85 @@ export const mockApprovals: ApprovalRequestSummary[] = [
     context: { job_id: "a1b2c3d4e5f67890", verdict: "pass_with_findings" },
   },
 ];
+
+export const mockControlPlaneJobs: ControlPlaneJobSummary[] = [
+  {
+    job_id: "build-001",
+    job_kind: "build",
+    status: "blocked",
+    title: "Ship build candidate",
+    subkind: "build_job",
+    requester: "daniel",
+    execution_mode: "workspace_bound",
+    created_at: "2026-03-27T09:00:00+00:00",
+    completed_at: "",
+    artifact_count: 5,
+    scope: "agent/build/service.py",
+    outcome: "accepted; review=fail",
+    blocked_reason: "Post-build review blocked completion",
+  },
+  {
+    job_id: "review-001",
+    job_kind: "review",
+    status: "completed",
+    title: "Audit release candidate",
+    subkind: "review_job",
+    requester: "daniel",
+    execution_mode: "read_only_host",
+    created_at: "2026-03-27T08:55:00+00:00",
+    completed_at: "2026-03-27T08:56:00+00:00",
+    artifact_count: 4,
+    scope: "/tmp/repo",
+    outcome: "pass_with_findings",
+    blocked_reason: "",
+  },
+  {
+    job_id: "agent_loop",
+    job_kind: "operate",
+    status: "running",
+    title: "Agent loop",
+    subkind: "agent_loop",
+    outcome: "queue=2",
+  },
+];
+
+export const mockOperatorReport: OperatorReport = {
+  summary: {
+    total_jobs: mockControlPlaneJobs.length,
+    blocked_jobs: 1,
+    pending_approvals: mockApprovals.length,
+    disabled_tools: 1,
+  },
+  inbox: [
+    {
+      kind: "approval",
+      id: "apr-001",
+      status: "pending",
+      title: "Deliver review report for job a1b2c3d4 (pass_with_findings)",
+      detail: "Review of project — 6 findings",
+    },
+    {
+      kind: "job_attention",
+      id: "build-001",
+      status: "blocked",
+      title: "Ship build candidate",
+      detail: "Post-build review blocked completion",
+    },
+  ],
+  recent_jobs: mockControlPlaneJobs,
+  pending_approvals: mockApprovals,
+  controls: {
+    total_disabled: 1,
+    disabled_tools: {
+      web_fetch: {
+        reason: "maintenance",
+      },
+    },
+  },
+  agent_status: {
+    running: false,
+    control_plane: {
+      queryable_job_kinds: ["build", "review", "operate"],
+    },
+  },
+};

@@ -14,12 +14,20 @@ Domain objects:
 
 from __future__ import annotations
 
-import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
+
+from agent.control.models import (
+    ExecutionMode,
+    ExecutionStep,
+    JobKind,
+    JobStatus,
+    JobTiming,
+    UsageSummary,
+)
 
 # ─────────────────────────────────────────────
 # Enums
@@ -32,15 +40,7 @@ class ReviewJobType(str, Enum):
     RELEASE_REVIEW = "release_review"
 
 
-class ReviewJobStatus(str, Enum):
-    """Job lifecycle states."""
-    CREATED = "created"          # Job exists, not started
-    VALIDATING = "validating"    # Input validation in progress
-    ANALYZING = "analyzing"      # Analysis running
-    VERIFYING = "verifying"      # Verifier pass running
-    COMPLETED = "completed"      # Done, report ready
-    FAILED = "failed"            # Unrecoverable error
-    CANCELLED = "cancelled"      # Cancelled by operator
+ReviewJobStatus = JobStatus
 
 
 class Severity(str, Enum):
@@ -68,10 +68,14 @@ class Confidence(str, Enum):
     LOW = "low"
 
 
-class ExecutionMode(str, Enum):
-    """How the review was executed."""
-    READ_ONLY_HOST = "read_only_host"    # Read-only access to host filesystem
-    WORKSPACE_BOUND = "workspace_bound"  # Execution inside managed workspace
+class ReviewPhase(str, Enum):
+    """Fine-grained review phase inside the shared lifecycle envelope."""
+    CREATED = "created"
+    VALIDATING = "validating"
+    ANALYZING = "analyzing"
+    VERIFYING = "verifying"
+    REPORTING = "reporting"
+    COMPLETED = "completed"
 
 
 # ─────────────────────────────────────────────
@@ -203,43 +207,7 @@ class ReviewFinding:
 # Execution Trace
 # ─────────────────────────────────────────────
 
-@dataclass
-class ExecutionTrace:
-    """Audit record of a step during review execution."""
-    step: str = ""               # e.g. "validate", "analyze", "verify"
-    status: str = "started"      # started, completed, failed
-    started_at: float = field(default_factory=time.time)
-    completed_at: float = 0.0
-    detail: str = ""
-    error: str = ""
-
-    @property
-    def duration_ms(self) -> int:
-        if self.completed_at:
-            return int((self.completed_at - self.started_at) * 1000)
-        return 0
-
-    def complete(self, detail: str = "") -> None:
-        self.status = "completed"
-        self.completed_at = time.time()
-        if detail:
-            self.detail = detail
-
-    def fail(self, error: str) -> None:
-        self.status = "failed"
-        self.completed_at = time.time()
-        self.error = error
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "step": self.step,
-            "status": self.status,
-            "started_at": self.started_at,
-            "completed_at": self.completed_at,
-            "duration_ms": self.duration_ms,
-            "detail": self.detail,
-            "error": self.error,
-        }
+ExecutionTrace = ExecutionStep
 
 
 # ─────────────────────────────────────────────
@@ -418,6 +386,7 @@ class ReviewJob:
     """
     # Identity
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
+    job_kind: JobKind = JobKind.REVIEW
     job_type: ReviewJobType = ReviewJobType.REPO_AUDIT
     source: str = "manual"              # "telegram", "api", "manual", "scheduled"
     requester: str = ""
@@ -431,33 +400,79 @@ class ReviewJob:
     execution_mode: ExecutionMode = ExecutionMode.READ_ONLY_HOST
 
     # Lifecycle
-    status: ReviewJobStatus = ReviewJobStatus.CREATED
-    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
-    started_at: str = ""
-    completed_at: str = ""
+    status: JobStatus = JobStatus.CREATED
+    phase: ReviewPhase = ReviewPhase.CREATED
+    timing: JobTiming = field(default_factory=JobTiming)
 
     # Output
     report: ReviewReport = field(default_factory=ReviewReport)
     artifacts: list[ReviewArtifact] = field(default_factory=list)
-    execution_trace: list[ExecutionTrace] = field(default_factory=list)
+    execution_trace: list[ExecutionStep] = field(default_factory=list)
 
     # Cost
-    total_tokens: int = 0
-    total_cost_usd: float = 0.0
-    model_used: str = ""
+    usage: UsageSummary = field(default_factory=UsageSummary)
 
     # Error
     error: str = ""
 
     def trace(self, step: str) -> ExecutionTrace:
         """Start a new execution trace step."""
-        t = ExecutionTrace(step=step)
+        t = ExecutionTrace(step=step, status="started")
         self.execution_trace.append(t)
         return t
+
+    @property
+    def created_at(self) -> str:
+        return self.timing.created_at
+
+    @created_at.setter
+    def created_at(self, value: str) -> None:
+        self.timing.created_at = value
+
+    @property
+    def started_at(self) -> str:
+        return self.timing.started_at
+
+    @started_at.setter
+    def started_at(self, value: str) -> None:
+        self.timing.started_at = value
+
+    @property
+    def completed_at(self) -> str:
+        return self.timing.completed_at
+
+    @completed_at.setter
+    def completed_at(self, value: str) -> None:
+        self.timing.completed_at = value
+
+    @property
+    def total_tokens(self) -> int:
+        return self.usage.total_tokens
+
+    @total_tokens.setter
+    def total_tokens(self, value: int) -> None:
+        self.usage.total_tokens = value
+
+    @property
+    def total_cost_usd(self) -> float:
+        return self.usage.total_cost_usd
+
+    @total_cost_usd.setter
+    def total_cost_usd(self, value: float) -> None:
+        self.usage.total_cost_usd = value
+
+    @property
+    def model_used(self) -> str:
+        return self.usage.model_used
+
+    @model_used.setter
+    def model_used(self, value: str) -> None:
+        self.usage.model_used = value
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "job_kind": self.job_kind.value,
             "job_type": self.job_type.value,
             "source": self.source,
             "requester": self.requester,
@@ -476,12 +491,15 @@ class ReviewJob:
             "workspace_id": self.workspace_id,
             "execution_mode": self.execution_mode.value,
             "status": self.status.value,
+            "phase": self.phase.value,
+            "timing": self.timing.to_dict(),
             "created_at": self.created_at,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "report": self.report.to_dict(),
             "artifacts": [a.to_dict() for a in self.artifacts],
             "execution_trace": [t.to_dict() for t in self.execution_trace],
+            "usage": self.usage.to_dict(),
             "total_tokens": self.total_tokens,
             "total_cost_usd": round(self.total_cost_usd, 6),
             "model_used": self.model_used,
@@ -506,15 +524,29 @@ class ReviewJob:
             context=intake_d.get("context", ""),
         )
         report = ReviewReport.from_dict(d.get("report", {}))
-        traces = [
-            ExecutionTrace(
-                step=t.get("step", ""),
-                status=t.get("status", "completed"),
-                started_at=t.get("started_at", 0.0),
-                completed_at=t.get("completed_at", 0.0),
-                detail=t.get("detail", ""),
-                error=t.get("error", ""),
+        timing = JobTiming.from_dict(
+            d.get(
+                "timing",
+                {
+                    "created_at": d.get("created_at", ""),
+                    "started_at": d.get("started_at", ""),
+                    "completed_at": d.get("completed_at", ""),
+                },
             )
+        )
+        usage = UsageSummary.from_dict(
+            d.get(
+                "usage",
+                {
+                    "total_tokens": d.get("total_tokens", 0),
+                    "total_cost_usd": d.get("total_cost_usd", 0.0),
+                    "model_used": d.get("model_used", ""),
+                    "llm_calls": d.get("llm_calls", 0),
+                },
+            )
+        )
+        traces = [
+            ExecutionTrace.from_dict(t)
             for t in d.get("execution_trace", [])
         ]
         # Hydrate artifact metadata graph (content loaded via storage)
@@ -524,6 +556,7 @@ class ReviewJob:
         ]
         return cls(
             id=d.get("id", ""),
+            job_kind=JobKind(d.get("job_kind", "review")),
             job_type=ReviewJobType(d.get("job_type", "repo_audit")),
             source=d.get("source", "manual"),
             requester=d.get("requester", ""),
@@ -531,15 +564,12 @@ class ReviewJob:
             intake=intake,
             workspace_id=d.get("workspace_id", ""),
             execution_mode=ExecutionMode(d.get("execution_mode", "read_only_host")),
-            status=ReviewJobStatus(d.get("status", "created")),
-            created_at=d.get("created_at", ""),
-            started_at=d.get("started_at", ""),
-            completed_at=d.get("completed_at", ""),
+            status=JobStatus(d.get("status", "created")),
+            phase=ReviewPhase(d.get("phase", "created")),
+            timing=timing,
             report=report,
             artifacts=artifacts,
             execution_trace=traces,
-            total_tokens=d.get("total_tokens", 0),
-            total_cost_usd=d.get("total_cost_usd", 0.0),
-            model_used=d.get("model_used", ""),
+            usage=usage,
             error=d.get("error", ""),
         )

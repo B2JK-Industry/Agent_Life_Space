@@ -96,9 +96,31 @@ class ApprovalRequest:
             "decided_by": self.decided_by,
             "denial_reason": self.denial_reason,
             "ttl_seconds": self.ttl_seconds,
+            "executed_at": self.executed_at,
             "required_approvals": self.required_approvals,
             "approvals_received": list(self.approvals_received),
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ApprovalRequest:
+        return cls(
+            id=data.get("id", ""),
+            category=ApprovalCategory(data.get("category", "tool")),
+            description=data.get("description", ""),
+            risk_level=data.get("risk_level", "medium"),
+            reason=data.get("reason", ""),
+            proposed_by=data.get("proposed_by", "agent"),
+            context=data.get("context", {}),
+            status=ApprovalStatus(data.get("status", "pending")),
+            created_at=data.get("created_at", time.time()),
+            decided_at=data.get("decided_at", 0.0),
+            decided_by=data.get("decided_by", ""),
+            denial_reason=data.get("denial_reason", ""),
+            ttl_seconds=data.get("ttl_seconds", 3600),
+            executed_at=data.get("executed_at", 0.0),
+            required_approvals=data.get("required_approvals", 1),
+            approvals_received=data.get("approvals_received", []),
+        )
 
 
 class ApprovalQueue:
@@ -111,10 +133,14 @@ class ApprovalQueue:
         - see history of decisions
     """
 
-    def __init__(self, max_history: int = 500) -> None:
+    def __init__(self, max_history: int = 500, storage: Any = None) -> None:
         self._pending: dict[str, ApprovalRequest] = {}
         self._history: list[ApprovalRequest] = []
         self._max_history = max_history
+        self._storage = storage
+        if self._storage is not None:
+            self._storage.initialize()
+            self._load_from_storage()
 
     def propose(
         self,
@@ -139,6 +165,7 @@ class ApprovalQueue:
             required_approvals=max(1, required_approvals),
         )
         self._pending[req.id] = req
+        self._persist(req)
         logger.info("approval_proposed",
                      id=req.id, category=category.value,
                      description=description[:100])
@@ -174,6 +201,7 @@ class ApprovalQueue:
         else:
             # Partially approved — still pending
             req.status = ApprovalStatus.PARTIALLY_APPROVED
+            self._persist(req)
             logger.info("approval_partial", id=request_id, by=decided_by,
                         received=len(req.approvals_received),
                         required=req.required_approvals)
@@ -202,6 +230,7 @@ class ApprovalQueue:
             if req.id == request_id and req.status == ApprovalStatus.APPROVED:
                 req.status = ApprovalStatus.EXECUTED
                 req.executed_at = time.time()
+                self._persist(req)
                 return True
         return False
 
@@ -228,6 +257,19 @@ class ApprovalQueue:
         """List decided approvals."""
         return [r.to_dict() for r in self._history[-limit:]]
 
+    def get_request(self, request_id: str) -> dict[str, Any] | None:
+        """Retrieve a single approval by id."""
+        self.expire_stale()
+        req = self._pending.get(request_id)
+        if req is not None:
+            return req.to_dict()
+        for item in reversed(self._history):
+            if item.id == request_id:
+                return item.to_dict()
+        if self._storage is not None:
+            return self._storage.load_request(request_id)
+        return None
+
     def get_by_category(
         self, category: ApprovalCategory
     ) -> list[dict[str, Any]]:
@@ -238,6 +280,66 @@ class ApprovalQueue:
             if r.category == category
         ]
 
+    def list_requests(
+        self,
+        *,
+        status: ApprovalStatus | str | None = None,
+        category: ApprovalCategory | str | None = None,
+        job_id: str = "",
+        artifact_id: str = "",
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Query approval requests across pending and history with linkage filters."""
+        self.expire_stale()
+        normalized_status = ""
+        normalized_category = ""
+        if status not in (None, ""):
+            normalized_status = (
+                status.value if isinstance(status, ApprovalStatus) else str(status)
+            )
+        if category not in (None, ""):
+            normalized_category = (
+                category.value
+                if isinstance(category, ApprovalCategory)
+                else str(category)
+            )
+
+        records = [
+            *self._pending.values(),
+            *reversed(self._history),
+        ]
+        filtered = [
+            req.to_dict()
+            for req in records
+            if self._matches_filters(
+                req=req,
+                status=normalized_status,
+                category=normalized_category,
+                job_id=job_id,
+                artifact_id=artifact_id,
+            )
+        ]
+        if self._storage is not None:
+            persisted = [
+                ApprovalRequest.from_dict(data)
+                for data in self._storage.list_requests(
+                    status=normalized_status,
+                    limit=max(limit, 5000),
+                )
+            ]
+            filtered = [
+                req.to_dict()
+                for req in persisted
+                if self._matches_filters(
+                    req=req,
+                    status=normalized_status,
+                    category=normalized_category,
+                    job_id=job_id,
+                    artifact_id=artifact_id,
+                )
+            ]
+        return filtered[:limit]
+
     def get_stats(self) -> dict[str, Any]:
         self.expire_stale()
         by_status: dict[str, int] = {}
@@ -247,9 +349,49 @@ class ApprovalQueue:
             "pending": len(self._pending),
             "history_total": len(self._history),
             "by_status": by_status,
+            "storage_enabled": self._storage is not None,
         }
 
     def _archive(self, req: ApprovalRequest) -> None:
+        self._persist(req)
         self._history.append(req)
         if len(self._history) > self._max_history:
             self._history.pop(0)
+
+    def _persist(self, req: ApprovalRequest) -> None:
+        if self._storage is not None:
+            self._storage.save_request(req)
+
+    def _load_from_storage(self) -> None:
+        if self._storage is None:
+            return
+        for data in reversed(self._storage.list_requests(limit=5000)):
+            req = ApprovalRequest.from_dict(data)
+            if req.status in (
+                ApprovalStatus.PENDING,
+                ApprovalStatus.PARTIALLY_APPROVED,
+            ):
+                self._pending[req.id] = req
+            else:
+                self._history.append(req)
+
+    def _matches_filters(
+        self,
+        *,
+        req: ApprovalRequest,
+        status: str = "",
+        category: str = "",
+        job_id: str = "",
+        artifact_id: str = "",
+    ) -> bool:
+        if status and req.status.value != status:
+            return False
+        if category and req.category.value != category:
+            return False
+        if job_id and req.context.get("job_id") != job_id:
+            return False
+        if artifact_id:
+            artifact_ids = req.context.get("artifact_ids", [])
+            if artifact_id not in artifact_ids:
+                return False
+        return True

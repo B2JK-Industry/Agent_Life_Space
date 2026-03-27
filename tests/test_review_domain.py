@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from agent.control.models import JobKind
 from agent.review.models import (
     ArtifactType,
     Confidence,
@@ -27,6 +28,7 @@ from agent.review.models import (
     ReviewJob,
     ReviewJobStatus,
     ReviewJobType,
+    ReviewPhase,
     ReviewReport,
     Severity,
 )
@@ -222,6 +224,28 @@ class TestReviewJob:
         assert d["job_type"] == "pr_review"
         assert d["status"] == "created"
         assert "findings" in d["report"]
+
+    def test_shared_control_plane_fields_roundtrip(self):
+        job = ReviewJob(
+            job_type=ReviewJobType.REPO_AUDIT,
+            requester="daniel",
+        )
+        job.phase = ReviewPhase.REPORTING
+        job.timing.mark_started()
+        job.timing.mark_completed()
+        job.total_tokens = 321
+        job.total_cost_usd = 0.123
+        job.model_used = "gpt-test"
+
+        recovered = ReviewJob.from_dict(job.to_dict())
+
+        assert recovered.job_kind == JobKind.REVIEW
+        assert recovered.phase.value == "reporting"
+        assert recovered.started_at != ""
+        assert recovered.completed_at != ""
+        assert recovered.total_tokens == 321
+        assert recovered.total_cost_usd == pytest.approx(0.123)
+        assert recovered.model_used == "gpt-test"
 
 
 # ─────────────────────────────────────────────

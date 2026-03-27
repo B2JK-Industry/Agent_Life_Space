@@ -50,6 +50,19 @@ class BuildPhase(str, Enum):
     TYPE_CHECKING = "type_checking"
 
 
+class BuildCheckpointPhase(str, Enum):
+    """Major resumable checkpoints in the build flow."""
+    VALIDATED = "validated"
+    WORKSPACE_READY = "workspace_ready"
+    REPO_SYNCED = "repo_synced"
+    BUILT = "built"
+    VERIFIED = "verified"
+    ACCEPTANCE_EVALUATED = "acceptance_evaluated"
+    REVIEWED = "reviewed"
+    ARTIFACTS_CAPTURED = "artifacts_captured"
+    COMPLETED = "completed"
+
+
 # ─────────────────────────────────────────────
 # Acceptance Criteria
 # ─────────────────────────────────────────────
@@ -216,6 +229,29 @@ class VerificationResult:
         )
 
 
+@dataclass
+class BuildCheckpoint:
+    """Recorded milestone for resumable build execution."""
+    phase: BuildCheckpointPhase = BuildCheckpointPhase.VALIDATED
+    detail: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase.value,
+            "detail": self.detail,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> BuildCheckpoint:
+        return cls(
+            phase=BuildCheckpointPhase(d.get("phase", "validated")),
+            detail=d.get("detail", ""),
+            created_at=d.get("created_at", ""),
+        )
+
+
 # ─────────────────────────────────────────────
 # Build Intake
 # ─────────────────────────────────────────────
@@ -225,6 +261,7 @@ class BuildIntake:
     """Input specification for a build job."""
     repo_path: str = ""
     build_type: BuildJobType = BuildJobType.IMPLEMENTATION
+    capability_id: str = ""
     description: str = ""
     target_files: list[str] = field(default_factory=list)
     acceptance_criteria: list[AcceptanceCriterion] = field(default_factory=list)
@@ -248,6 +285,7 @@ class BuildIntake:
         return {
             "repo_path": self.repo_path,
             "build_type": self.build_type.value,
+            "capability_id": self.capability_id,
             "description": self.description,
             "target_files": self.target_files,
             "acceptance_criteria": [c.to_dict() for c in self.acceptance_criteria],
@@ -262,6 +300,7 @@ class BuildIntake:
         return cls(
             repo_path=d.get("repo_path", ""),
             build_type=BuildJobType(d.get("build_type", "implementation")),
+            capability_id=d.get("capability_id", ""),
             description=d.get("description", ""),
             target_files=d.get("target_files", []),
             acceptance_criteria=[
@@ -330,9 +369,12 @@ class BuildJob:
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
     job_kind: JobKind = JobKind.BUILD
     build_type: BuildJobType = BuildJobType.IMPLEMENTATION
+    capability_id: str = ""
     source: str = "manual"
     requester: str = ""
     owner: str = "agent"
+    resumed_from_job_id: str = ""
+    resume_count: int = 0
 
     # Input
     intake: BuildIntake = field(default_factory=BuildIntake)
@@ -352,6 +394,7 @@ class BuildJob:
     post_build_review_job_id: str = ""
     post_build_review_verdict: str = ""
     post_build_review_findings: dict[str, int] = field(default_factory=dict)
+    checkpoints: list[BuildCheckpoint] = field(default_factory=list)
 
     # Output
     artifacts: list[BuildArtifact] = field(default_factory=list)
@@ -369,6 +412,22 @@ class BuildJob:
         self.execution_trace.append(t)
         return t
 
+    def record_checkpoint(
+        self,
+        phase: BuildCheckpointPhase,
+        detail: str = "",
+    ) -> None:
+        self.checkpoints.append(BuildCheckpoint(phase=phase, detail=detail))
+
+    @property
+    def last_checkpoint(self) -> BuildCheckpoint | None:
+        if not self.checkpoints:
+            return None
+        return self.checkpoints[-1]
+
+    def has_checkpoint(self, phase: BuildCheckpointPhase) -> bool:
+        return any(checkpoint.phase == phase for checkpoint in self.checkpoints)
+
     @property
     def verification_passed(self) -> bool:
         """True if all verification results passed."""
@@ -382,9 +441,12 @@ class BuildJob:
             "id": self.id,
             "job_kind": self.job_kind.value,
             "build_type": self.build_type.value,
+            "capability_id": self.capability_id,
             "source": self.source,
             "requester": self.requester,
             "owner": self.owner,
+            "resumed_from_job_id": self.resumed_from_job_id,
+            "resume_count": self.resume_count,
             "intake": self.intake.to_dict(),
             "workspace_id": self.workspace_id,
             "execution_mode": self.execution_mode.value,
@@ -396,6 +458,7 @@ class BuildJob:
             "post_build_review_job_id": self.post_build_review_job_id,
             "post_build_review_verdict": self.post_build_review_verdict,
             "post_build_review_findings": self.post_build_review_findings,
+            "checkpoints": [checkpoint.to_dict() for checkpoint in self.checkpoints],
             "artifacts": [a.to_dict() for a in self.artifacts],
             "execution_trace": [t.to_dict() for t in self.execution_trace],
             "usage": self.usage.to_dict(),
@@ -413,6 +476,10 @@ class BuildJob:
         artifacts = [
             BuildArtifact.from_dict(a) for a in d.get("artifacts", [])
         ]
+        checkpoints = [
+            BuildCheckpoint.from_dict(checkpoint)
+            for checkpoint in d.get("checkpoints", [])
+        ]
         verifications = [
             VerificationResult.from_dict(v)
             for v in d.get("verification_results", [])
@@ -424,9 +491,12 @@ class BuildJob:
             id=d.get("id", ""),
             job_kind=JobKind(d.get("job_kind", "build")),
             build_type=BuildJobType(d.get("build_type", "implementation")),
+            capability_id=d.get("capability_id", ""),
             source=d.get("source", "manual"),
             requester=d.get("requester", ""),
             owner=d.get("owner", "agent"),
+            resumed_from_job_id=d.get("resumed_from_job_id", ""),
+            resume_count=d.get("resume_count", 0),
             intake=intake,
             workspace_id=d.get("workspace_id", ""),
             execution_mode=ExecutionMode(
@@ -440,6 +510,7 @@ class BuildJob:
             post_build_review_job_id=d.get("post_build_review_job_id", ""),
             post_build_review_verdict=d.get("post_build_review_verdict", ""),
             post_build_review_findings=d.get("post_build_review_findings", {}),
+            checkpoints=checkpoints,
             artifacts=artifacts,
             execution_trace=traces,
             usage=usage,

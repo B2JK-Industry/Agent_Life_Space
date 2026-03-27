@@ -24,6 +24,13 @@ export type {
   ApprovalRequestSummary,
   ExecutionTraceStep,
 } from "./models/review";
+export type {
+  ControlPlaneJobKind,
+  ControlPlaneJobSummary,
+  OperatorInboxItem,
+  OperatorReport,
+  OperatorReportSummary,
+} from "./models/reporting";
 
 export type {
   ClientSafeFinding,
@@ -70,5 +77,17 @@ export {
 } from "./views/approval-queue";
 export type { ApprovalQueueStats } from "./views/approval-queue";
 
+export {
+  getBlockedJobs,
+  getInboxItems,
+  getOperatorReport,
+} from "./views/reporting";
+
 // Mock data (for development only)
-export { mockJobs, mockBundle, mockApprovals } from "./mock/data";
+export {
+  mockApprovals,
+  mockBundle,
+  mockControlPlaneJobs,
+  mockJobs,
+  mockOperatorReport,
+} from "./mock/data";
