@@ -74,6 +74,45 @@ class ControlPlaneStorage:
             )
             """
         )
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS product_job_records (
+                job_id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                job_kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                workspace_id TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS artifact_retention_records (
+                record_id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                job_kind TEXT NOT NULL,
+                artifact_kind TEXT NOT NULL,
+                retention_policy_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                expires_at TEXT DEFAULT '',
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cost_ledger_entries (
+                entry_id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                job_kind TEXT NOT NULL,
+                recorded_at TEXT NOT NULL
+            )
+            """
+        )
         self._db.commit()
         self._initialized = True
         logger.info("control_plane_storage_initialized", db_path=self._db_path)
@@ -262,12 +301,186 @@ class ControlPlaneStorage:
         rows = self._db.execute(query, tuple(params)).fetchall()
         return [orjson.loads(row[0]) for row in rows]
 
+    def save_product_job_record(self, record: Any) -> None:
+        if self._db is None:
+            return
+        payload = orjson.dumps(record.to_dict()).decode()
+        self._db.execute(
+            """
+            INSERT OR REPLACE INTO product_job_records
+            (job_id, data, job_kind, status, workspace_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.job_id,
+                payload,
+                record.job_kind.value,
+                record.status,
+                record.workspace_id,
+                record.created_at,
+                record.updated_at,
+            ),
+        )
+        self._db.commit()
+
+    def load_product_job_record(self, job_id: str) -> dict[str, Any] | None:
+        if self._db is None:
+            return None
+        row = self._db.execute(
+            "SELECT data FROM product_job_records WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return orjson.loads(row[0])
+
+    def list_product_job_records(
+        self,
+        *,
+        job_kind: str = "",
+        status: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        if self._db is None:
+            return []
+        query = """
+            SELECT data FROM product_job_records
+            WHERE 1 = 1
+        """
+        params: list[Any] = []
+        if job_kind:
+            query += " AND job_kind = ?"
+            params.append(job_kind)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self._db.execute(query, tuple(params)).fetchall()
+        return [orjson.loads(row[0]) for row in rows]
+
+    def save_artifact_retention_record(self, record: Any) -> None:
+        if self._db is None:
+            return
+        payload = orjson.dumps(record.to_dict()).decode()
+        self._db.execute(
+            """
+            INSERT OR REPLACE INTO artifact_retention_records
+            (record_id, data, job_id, job_kind, artifact_kind, retention_policy_id, status, expires_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.record_id,
+                payload,
+                record.job_id,
+                record.job_kind.value,
+                record.artifact_kind.value,
+                record.retention_policy_id,
+                record.status.value,
+                record.expires_at,
+                record.updated_at,
+            ),
+        )
+        self._db.commit()
+
+    def load_artifact_retention_record(self, record_id: str) -> dict[str, Any] | None:
+        if self._db is None:
+            return None
+        row = self._db.execute(
+            "SELECT data FROM artifact_retention_records WHERE record_id = ?",
+            (record_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return orjson.loads(row[0])
+
+    def list_artifact_retention_records(
+        self,
+        *,
+        status: str = "",
+        job_id: str = "",
+        artifact_kind: str = "",
+        retention_policy_id: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        if self._db is None:
+            return []
+        query = """
+            SELECT data FROM artifact_retention_records
+            WHERE 1 = 1
+        """
+        params: list[Any] = []
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        if job_id:
+            query += " AND job_id = ?"
+            params.append(job_id)
+        if artifact_kind:
+            query += " AND artifact_kind = ?"
+            params.append(artifact_kind)
+        if retention_policy_id:
+            query += " AND retention_policy_id = ?"
+            params.append(retention_policy_id)
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self._db.execute(query, tuple(params)).fetchall()
+        return [orjson.loads(row[0]) for row in rows]
+
+    def save_cost_ledger_entry(self, entry: Any) -> None:
+        if self._db is None:
+            return
+        payload = orjson.dumps(entry.to_dict()).decode()
+        self._db.execute(
+            """
+            INSERT OR REPLACE INTO cost_ledger_entries
+            (entry_id, data, job_id, job_kind, recorded_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                entry.entry_id,
+                payload,
+                entry.job_id,
+                entry.job_kind.value,
+                entry.recorded_at,
+            ),
+        )
+        self._db.commit()
+
+    def list_cost_ledger_entries(
+        self,
+        *,
+        job_id: str = "",
+        job_kind: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        if self._db is None:
+            return []
+        query = """
+            SELECT data FROM cost_ledger_entries
+            WHERE 1 = 1
+        """
+        params: list[Any] = []
+        if job_id:
+            query += " AND job_id = ?"
+            params.append(job_id)
+        if job_kind:
+            query += " AND job_kind = ?"
+            params.append(job_kind)
+        query += " ORDER BY recorded_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self._db.execute(query, tuple(params)).fetchall()
+        return [orjson.loads(row[0]) for row in rows]
+
     def get_stats(self) -> dict[str, Any]:
         if self._db is None:
             return {
                 "plans": 0,
                 "traces": 0,
                 "deliveries": 0,
+                "product_jobs": 0,
+                "retained_artifacts": 0,
+                "cost_entries": 0,
             }
         plans = self._db.execute(
             "SELECT COUNT(*) FROM job_plan_records"
@@ -278,10 +491,22 @@ class ControlPlaneStorage:
         deliveries = self._db.execute(
             "SELECT COUNT(*) FROM delivery_records"
         ).fetchone()[0]
+        product_jobs = self._db.execute(
+            "SELECT COUNT(*) FROM product_job_records"
+        ).fetchone()[0]
+        retained_artifacts = self._db.execute(
+            "SELECT COUNT(*) FROM artifact_retention_records"
+        ).fetchone()[0]
+        cost_entries = self._db.execute(
+            "SELECT COUNT(*) FROM cost_ledger_entries"
+        ).fetchone()[0]
         return {
             "plans": plans,
             "traces": traces,
             "deliveries": deliveries,
+            "product_jobs": product_jobs,
+            "retained_artifacts": retained_artifacts,
+            "cost_entries": cost_entries,
         }
 
     def close(self) -> None:

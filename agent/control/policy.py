@@ -1,12 +1,41 @@
 """
 Agent Life Space — Control-Plane Policies
 
-Deterministic policy profiles for build review gates and delivery decisions.
+Deterministic policy profiles for jobs, artifacts, delivery, review gates,
+and external gateway decisions.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from agent.control.models import ArtifactKind, JobKind
+
+
+@dataclass(frozen=True)
+class JobPersistencePolicy:
+    """Deterministic persistence profile for product jobs."""
+
+    id: str
+    label: str
+    job_kind: JobKind
+    retain_days: int
+    keep_execution_history: bool = True
+    keep_artifact_links: bool = True
+    record_cost_ledger: bool = True
+
+
+@dataclass(frozen=True)
+class ArtifactRetentionPolicy:
+    """Deterministic retention and recovery profile."""
+
+    id: str
+    label: str
+    description: str
+    retain_days: int
+    keep_snapshot: bool = True
+    recoverable: bool = True
+    max_snapshot_bytes: int = 5 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -31,6 +60,18 @@ class DeliveryDecisionPolicy:
     approval_required: bool = True
     allow_external_send: bool = False
     gateway_required: bool = False
+
+
+@dataclass(frozen=True)
+class ExternalGatewayPolicy:
+    """Deterministic external-gateway policy profile."""
+
+    id: str
+    label: str
+    enabled: bool = False
+    require_approval: bool = True
+    record_cost: bool = True
+    allow_network: bool = False
 
 
 _REVIEW_GATE_POLICIES: dict[str, ReviewGatePolicy] = {
@@ -61,6 +102,48 @@ _REVIEW_GATE_POLICIES: dict[str, ReviewGatePolicy] = {
     ),
 }
 
+_JOB_PERSISTENCE_POLICIES: dict[str, JobPersistencePolicy] = {
+    "build_persistent": JobPersistencePolicy(
+        id="build_persistent",
+        label="Build job persistence",
+        job_kind=JobKind.BUILD,
+        retain_days=365,
+    ),
+    "review_persistent": JobPersistencePolicy(
+        id="review_persistent",
+        label="Review job persistence",
+        job_kind=JobKind.REVIEW,
+        retain_days=365,
+    ),
+}
+
+_ARTIFACT_RETENTION_POLICIES: dict[str, ArtifactRetentionPolicy] = {
+    "delivery_evidence_365d": ArtifactRetentionPolicy(
+        id="delivery_evidence_365d",
+        label="Delivery evidence",
+        description="Keep delivery and client-facing evidence for one year with recovery snapshots.",
+        retain_days=365,
+        keep_snapshot=True,
+        recoverable=True,
+    ),
+    "artifact_recovery_180d": ArtifactRetentionPolicy(
+        id="artifact_recovery_180d",
+        label="Artifact recovery",
+        description="Keep implementation artifacts and reports for 180 days with recovery snapshots.",
+        retain_days=180,
+        keep_snapshot=True,
+        recoverable=True,
+    ),
+    "operational_trace_30d": ArtifactRetentionPolicy(
+        id="operational_trace_30d",
+        label="Operational traces",
+        description="Keep operational traces and verification telemetry for 30 days.",
+        retain_days=30,
+        keep_snapshot=True,
+        recoverable=True,
+    ),
+}
+
 _DELIVERY_POLICIES: dict[str, DeliveryDecisionPolicy] = {
     "approval_required": DeliveryDecisionPolicy(
         id="approval_required",
@@ -78,6 +161,25 @@ _DELIVERY_POLICIES: dict[str, DeliveryDecisionPolicy] = {
     ),
 }
 
+_EXTERNAL_GATEWAY_POLICIES: dict[str, ExternalGatewayPolicy] = {
+    "disabled_by_default": ExternalGatewayPolicy(
+        id="disabled_by_default",
+        label="Disabled by default",
+        enabled=False,
+        require_approval=True,
+        record_cost=True,
+        allow_network=False,
+    ),
+    "approval_before_gateway": ExternalGatewayPolicy(
+        id="approval_before_gateway",
+        label="Approval before gateway",
+        enabled=True,
+        require_approval=True,
+        record_cost=True,
+        allow_network=False,
+    ),
+}
+
 
 def get_review_gate_policy(policy_id: str = "critical_findings") -> ReviewGatePolicy:
     """Resolve a configured review gate policy."""
@@ -89,6 +191,63 @@ def list_review_gate_policies() -> list[ReviewGatePolicy]:
     return list(_REVIEW_GATE_POLICIES.values())
 
 
+def get_job_persistence_policy(job_kind: JobKind | str) -> JobPersistencePolicy:
+    """Resolve the persistence profile for a product job kind."""
+    normalized = job_kind if isinstance(job_kind, JobKind) else JobKind(str(job_kind))
+    if normalized == JobKind.REVIEW:
+        return _JOB_PERSISTENCE_POLICIES["review_persistent"]
+    return _JOB_PERSISTENCE_POLICIES["build_persistent"]
+
+
+def list_job_persistence_policies() -> list[JobPersistencePolicy]:
+    """Return known product-job persistence profiles."""
+    return list(_JOB_PERSISTENCE_POLICIES.values())
+
+
+def get_artifact_retention_policy(
+    policy_id: str = "artifact_recovery_180d",
+) -> ArtifactRetentionPolicy:
+    """Resolve a configured artifact retention policy."""
+    return _ARTIFACT_RETENTION_POLICIES.get(
+        policy_id,
+        _ARTIFACT_RETENTION_POLICIES["artifact_recovery_180d"],
+    )
+
+
+def list_artifact_retention_policies() -> list[ArtifactRetentionPolicy]:
+    """Return known artifact retention profiles."""
+    return list(_ARTIFACT_RETENTION_POLICIES.values())
+
+
+def select_artifact_retention_policy(
+    *,
+    job_kind: JobKind | str,
+    artifact_kind: ArtifactKind | str,
+) -> ArtifactRetentionPolicy:
+    """Select a deterministic retention profile for a shared artifact."""
+    _ = job_kind if isinstance(job_kind, JobKind) else JobKind(str(job_kind))
+    kind = (
+        artifact_kind
+        if isinstance(artifact_kind, ArtifactKind)
+        else ArtifactKind(str(artifact_kind))
+    )
+    if kind in {
+        ArtifactKind.REVIEW_REPORT,
+        ArtifactKind.FINDING_LIST,
+        ArtifactKind.SECURITY_REPORT,
+        ArtifactKind.EXECUTIVE_SUMMARY,
+        ArtifactKind.DELIVERY_BUNDLE,
+    }:
+        return _ARTIFACT_RETENTION_POLICIES["delivery_evidence_365d"]
+    if kind in {
+        ArtifactKind.PATCH,
+        ArtifactKind.DIFF,
+        ArtifactKind.ACCEPTANCE_REPORT,
+    }:
+        return _ARTIFACT_RETENTION_POLICIES["artifact_recovery_180d"]
+    return _ARTIFACT_RETENTION_POLICIES["operational_trace_30d"]
+
+
 def get_delivery_policy(policy_id: str = "approval_required") -> DeliveryDecisionPolicy:
     """Resolve a configured delivery decision policy."""
     return _DELIVERY_POLICIES.get(policy_id, _DELIVERY_POLICIES["approval_required"])
@@ -97,3 +256,18 @@ def get_delivery_policy(policy_id: str = "approval_required") -> DeliveryDecisio
 def list_delivery_policies() -> list[DeliveryDecisionPolicy]:
     """Return known delivery decision policies."""
     return list(_DELIVERY_POLICIES.values())
+
+
+def get_external_gateway_policy(
+    policy_id: str = "disabled_by_default",
+) -> ExternalGatewayPolicy:
+    """Resolve a configured external gateway policy."""
+    return _EXTERNAL_GATEWAY_POLICIES.get(
+        policy_id,
+        _EXTERNAL_GATEWAY_POLICIES["disabled_by_default"],
+    )
+
+
+def list_external_gateway_policies() -> list[ExternalGatewayPolicy]:
+    """Return known external gateway policy profiles."""
+    return list(_EXTERNAL_GATEWAY_POLICIES.values())

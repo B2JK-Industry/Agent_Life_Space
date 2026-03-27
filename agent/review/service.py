@@ -26,7 +26,7 @@ from typing import Any
 
 import structlog
 
-from agent.control.models import ExecutionMode, JobStatus
+from agent.control.models import ArtifactKind, ExecutionMode, JobStatus
 from agent.review.analyzers import (
     analyze_diff,
     analyze_repo_structure,
@@ -62,10 +62,12 @@ class ReviewService:
         storage: ReviewStorage | None = None,
         workspace_manager: Any = None,
         approval_queue: Any = None,
+        control_plane_state: Any = None,
     ) -> None:
         self._storage = storage or ReviewStorage()
         self._workspace_manager = workspace_manager
         self._approval_queue = approval_queue
+        self._control_plane_state = control_plane_state
         self._initialized = False
 
     def initialize(self) -> None:
@@ -91,13 +93,13 @@ class ReviewService:
             t_validate.fail("; ".join(errors))
             job.status = JobStatus.FAILED
             job.error = f"Validation failed: {'; '.join(errors)}"
-            self._storage.save_job(job)
+            self._save_job(job)
             return job
 
         t_validate.complete(f"input valid: {intake.review_type.value}")
         job.status = JobStatus.VALIDATING
         job.phase = ReviewPhase.VALIDATING
-        self._storage.save_job(job)
+        self._save_job(job)
 
         # ── Step 1b: Workspace + execution mode ──
         # Workspace is created for lifecycle tracking, but v1 analyzers
@@ -184,7 +186,7 @@ class ReviewService:
             format="markdown",
         )
         job.artifacts.append(md_artifact)
-        self._storage.save_artifact(md_artifact)
+        self._save_artifact(job, md_artifact)
 
         # JSON report
         json_artifact = ReviewArtifact(
@@ -195,7 +197,7 @@ class ReviewService:
             format="json",
         )
         job.artifacts.append(json_artifact)
-        self._storage.save_artifact(json_artifact)
+        self._save_artifact(job, json_artifact)
 
         # Execution trace artifact
         trace_artifact = ReviewArtifact(
@@ -206,7 +208,7 @@ class ReviewService:
             format="json",
         )
         job.artifacts.append(trace_artifact)
-        self._storage.save_artifact(trace_artifact)
+        self._save_artifact(job, trace_artifact)
 
         # Findings-only export (if there are findings)
         if report.findings:
@@ -218,7 +220,7 @@ class ReviewService:
                 format="json",
             )
             job.artifacts.append(findings_artifact)
-            self._storage.save_artifact(findings_artifact)
+            self._save_artifact(job, findings_artifact)
 
         t_artifacts.complete(f"{len(job.artifacts)} artifacts created")
 
@@ -226,7 +228,7 @@ class ReviewService:
         job.status = JobStatus.COMPLETED
         job.phase = ReviewPhase.COMPLETED
         job.timing.mark_completed()
-        self._storage.save_job(job)
+        self._save_job(job)
 
         logger.info(
             "review_completed",
@@ -399,6 +401,102 @@ class ReviewService:
             parts.append("CI: áno.")
         return " ".join(parts)
 
+    def _save_job(self, job: ReviewJob) -> None:
+        self._storage.save_job(job)
+        self._sync_product_job(job)
+
+    def _save_artifact(self, job: ReviewJob, artifact: ReviewArtifact) -> None:
+        self._storage.save_artifact(artifact)
+        if self._control_plane_state is None:
+            return
+        self._control_plane_state.record_retained_artifact(
+            record_id=artifact.id,
+            artifact_id=artifact.id,
+            job_id=job.id,
+            job_kind=job.job_kind,
+            artifact_kind=self._shared_artifact_kind(artifact.artifact_type),
+            source_type="review_artifact",
+            title=artifact.artifact_type.value,
+            artifact_format=artifact.format,
+            created_at=artifact.created_at,
+            content=artifact.content,
+            content_json=artifact.content_json,
+            metadata={
+                "workspace_id": job.workspace_id,
+                "review_type": job.job_type.value,
+                "verdict": job.report.verdict,
+            },
+        )
+
+    def _sync_product_job(self, job: ReviewJob) -> None:
+        if self._control_plane_state is None:
+            return
+        self._control_plane_state.record_product_job(
+            job_id=job.id,
+            job_kind=job.job_kind,
+            title=job.intake.context or job.job_type.value,
+            status=job.status.value,
+            subkind="review_job",
+            requester=job.requester,
+            source=job.source,
+            execution_mode=job.execution_mode.value,
+            workspace_id=job.workspace_id,
+            scope=job.intake.diff_spec or job.intake.repo_path,
+            outcome=job.report.verdict,
+            blocked_reason=job.error,
+            artifact_ids=[artifact.id for artifact in job.artifacts],
+            created_at=job.timing.created_at,
+            completed_at=job.timing.completed_at,
+            usage=job.usage,
+            metadata={
+                "review_type": job.job_type.value,
+                "phase": job.phase.value,
+                "timing": job.timing.to_dict(),
+                "finding_counts": job.report.finding_counts,
+                "focus_areas": list(job.intake.focus_areas),
+                "include_patterns": list(job.intake.include_patterns),
+                "exclude_patterns": list(job.intake.exclude_patterns),
+                "error": job.error,
+            },
+        )
+
+    def _record_delivery_bundle_retention(
+        self,
+        *,
+        job: ReviewJob,
+        bundle: dict[str, Any],
+    ) -> None:
+        if self._control_plane_state is None:
+            return
+        self._control_plane_state.record_retained_artifact(
+            record_id=f"review-delivery-{job.id}",
+            bundle_id=f"review-delivery-{job.id}",
+            job_id=job.id,
+            job_kind=job.job_kind,
+            artifact_kind=ArtifactKind.DELIVERY_BUNDLE,
+            source_type="review_delivery_bundle",
+            title=f"Review delivery bundle for {job.id[:8]}",
+            artifact_format="json",
+            created_at=job.created_at,
+            content_json=bundle,
+            metadata={
+                "workspace_id": job.workspace_id,
+                "verdict": job.report.verdict,
+                "artifact_count": bundle.get("artifact_count", 0),
+            },
+        )
+
+    def _shared_artifact_kind(self, artifact_type: ArtifactType) -> ArtifactKind:
+        mapping = {
+            ArtifactType.REVIEW_REPORT: ArtifactKind.REVIEW_REPORT,
+            ArtifactType.FINDING_LIST: ArtifactKind.FINDING_LIST,
+            ArtifactType.EXECUTION_TRACE: ArtifactKind.EXECUTION_TRACE,
+            ArtifactType.DIFF_ANALYSIS: ArtifactKind.DIFF_ANALYSIS,
+            ArtifactType.SECURITY_REPORT: ArtifactKind.SECURITY_REPORT,
+            ArtifactType.EXECUTIVE_SUMMARY: ArtifactKind.EXECUTIVE_SUMMARY,
+        }
+        return mapping.get(artifact_type, ArtifactKind.REVIEW_REPORT)
+
     def _get_analysis_path(self, job: ReviewJob) -> str:
         """Single source of truth for the path analyzers read from.
 
@@ -455,7 +553,7 @@ class ReviewService:
             if atype == "finding_list" and a.get("content_json"):
                 findings_data = a["content_json"].get("findings", [])
 
-        return {
+        bundle = {
             "job_id": job.id,
             "job_type": job.job_type.value,
             "status": job.status.value,
@@ -475,6 +573,8 @@ class ReviewService:
             "created_at": job.created_at,
             "completed_at": job.completed_at,
         }
+        self._record_delivery_bundle_retention(job=job, bundle=bundle)
+        return bundle
 
     def request_delivery_approval(self, job_id: str) -> dict[str, Any]:
         """Gate review delivery through approval queue.

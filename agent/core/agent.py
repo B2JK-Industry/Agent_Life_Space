@@ -127,6 +127,7 @@ class AgentOrchestrator:
             ),
             workspace_manager=self.workspaces,
             approval_queue=self.approval_queue,
+            control_plane_state=self.control_plane,
         )
 
         # Build service
@@ -151,6 +152,7 @@ class AgentOrchestrator:
         self.artifacts = ArtifactQueryService(
             build_service=self.build,
             review_service=self.review,
+            control_plane_state=self.control_plane,
         )
         self.intake_router = OperatorIntakeService(
             budget_status_provider=self.finance.check_budget,
@@ -666,6 +668,75 @@ class AgentOrchestrator:
             )
         ]
 
+    def list_persisted_product_jobs(
+        self,
+        *,
+        job_kind: str = "",
+        status: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List durable build/review job records from the shared control plane."""
+        return [
+            record.to_dict()
+            for record in self.control_plane.list_product_jobs(
+                job_kind=job_kind,
+                status=status,
+                limit=limit,
+            )
+        ]
+
+    def get_persisted_product_job(self, job_id: str) -> dict[str, Any] | None:
+        """Load one durable build/review job record from the shared control plane."""
+        record = self.control_plane.get_product_job(job_id)
+        if record is None:
+            return None
+        return record.to_dict()
+
+    def list_retained_artifacts(
+        self,
+        *,
+        status: str = "",
+        job_id: str = "",
+        artifact_kind: str = "",
+        retention_policy_id: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List retained artifact and delivery-output records."""
+        return [
+            record.to_dict()
+            for record in self.control_plane.list_retained_artifacts(
+                status=status,
+                job_id=job_id,
+                artifact_kind=artifact_kind,
+                retention_policy_id=retention_policy_id,
+                limit=limit,
+            )
+        ]
+
+    def get_retained_artifact(self, record_id: str) -> dict[str, Any] | None:
+        """Load one retained artifact or delivery-output record."""
+        record = self.control_plane.get_retained_artifact(record_id)
+        if record is None:
+            return None
+        return record.to_dict()
+
+    def list_cost_ledger(
+        self,
+        *,
+        job_id: str = "",
+        job_kind: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List durable per-job cost and token records."""
+        return [
+            entry.to_dict()
+            for entry in self.control_plane.list_cost_entries(
+                job_id=job_id,
+                job_kind=job_kind,
+                limit=limit,
+            )
+        ]
+
     def list_approval_requests(
         self,
         *,
@@ -812,12 +883,17 @@ class AgentOrchestrator:
                     "patch",
                     "diff",
                     "verification_report",
-                "acceptance_report",
-                "execution_trace",
+                    "acceptance_report",
+                    "delivery_bundle",
+                    "execution_trace",
                 ],
                 "persisted_plans": control_stats["plans"],
                 "persisted_traces": control_stats["traces"],
                 "persisted_deliveries": control_stats["deliveries"],
+                "persisted_product_jobs": control_stats["product_jobs"],
+                "retained_artifacts": control_stats["retained_artifacts"],
+                "cost_ledger_entries": control_stats["cost_entries"],
+                "recorded_cost_usd": control_stats["recorded_cost_usd"],
                 "operator_intake_work_types": ["auto", "review", "build"],
                 "runtime_model_status": self.runtime_model.get_model()["status"],
             },

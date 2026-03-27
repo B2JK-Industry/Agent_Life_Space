@@ -173,6 +173,7 @@ class ArtifactKind(str, Enum):
     DIFF = "diff"
     VERIFICATION_REPORT = "verification_report"
     ACCEPTANCE_REPORT = "acceptance_report"
+    DELIVERY_BUNDLE = "delivery_bundle"
     # Shared
     EXECUTION_TRACE = "execution_trace"
 
@@ -224,6 +225,10 @@ class ArtifactQuerySummary:
     content_length: int = 0
     has_json: bool = False
     title: str = ""
+    retention_policy_id: str = ""
+    retention_status: str = ""
+    expires_at: str = ""
+    recoverable: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -237,6 +242,10 @@ class ArtifactQuerySummary:
             "content_length": self.content_length,
             "has_json": self.has_json,
             "title": self.title,
+            "retention_policy_id": self.retention_policy_id,
+            "retention_status": self.retention_status,
+            "expires_at": self.expires_at,
+            "recoverable": self.recoverable,
         }
 
 
@@ -522,6 +531,198 @@ class DeliveryRecord:
                 DeliveryEvent.from_dict(item)
                 for item in data.get("events", [])
             ],
+        )
+
+
+# ─────────────────────────────────────────────
+# Persisted Product Jobs — shared durable runtime records
+# ─────────────────────────────────────────────
+
+@dataclass
+class ProductJobRecord:
+    """Shared persisted view of a build/review product job."""
+
+    job_id: str
+    job_kind: JobKind
+    title: str
+    status: str
+    subkind: str = ""
+    requester: str = ""
+    source: str = ""
+    execution_mode: str = ""
+    workspace_id: str = ""
+    scope: str = ""
+    outcome: str = ""
+    blocked_reason: str = ""
+    artifact_ids: list[str] = field(default_factory=list)
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    completed_at: str = ""
+    usage: UsageSummary = field(default_factory=lambda: UsageSummary())
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "job_kind": self.job_kind.value,
+            "title": self.title,
+            "status": self.status,
+            "subkind": self.subkind,
+            "requester": self.requester,
+            "source": self.source,
+            "execution_mode": self.execution_mode,
+            "workspace_id": self.workspace_id,
+            "scope": self.scope,
+            "outcome": self.outcome,
+            "blocked_reason": self.blocked_reason,
+            "artifact_ids": list(self.artifact_ids),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "completed_at": self.completed_at,
+            "usage": self.usage.to_dict(),
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ProductJobRecord:
+        return cls(
+            job_id=data.get("job_id", ""),
+            job_kind=JobKind(data.get("job_kind", "build")),
+            title=data.get("title", ""),
+            status=data.get("status", ""),
+            subkind=data.get("subkind", ""),
+            requester=data.get("requester", ""),
+            source=data.get("source", ""),
+            execution_mode=data.get("execution_mode", ""),
+            workspace_id=data.get("workspace_id", ""),
+            scope=data.get("scope", ""),
+            outcome=data.get("outcome", ""),
+            blocked_reason=data.get("blocked_reason", ""),
+            artifact_ids=list(data.get("artifact_ids", [])),
+            created_at=data.get("created_at", ""),
+            updated_at=data.get("updated_at", ""),
+            completed_at=data.get("completed_at", ""),
+            usage=UsageSummary.from_dict(data.get("usage", {})),
+            metadata=dict(data.get("metadata", {})),
+        )
+
+
+class ArtifactRetentionStatus(str, Enum):
+    """Lifecycle state for retained artifacts and delivery outputs."""
+
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    PRUNED = "pruned"
+
+
+@dataclass
+class ArtifactRetentionRecord:
+    """Durable retention/recovery metadata for artifacts and delivery outputs."""
+
+    record_id: str
+    artifact_id: str = ""
+    bundle_id: str = ""
+    job_id: str = ""
+    job_kind: JobKind = JobKind.BUILD
+    artifact_kind: ArtifactKind = ArtifactKind.EXECUTION_TRACE
+    source_type: str = ""
+    title: str = ""
+    format: str = "text"
+    retention_policy_id: str = ""
+    status: ArtifactRetentionStatus = ArtifactRetentionStatus.ACTIVE
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    expires_at: str = ""
+    recoverable: bool = True
+    content: str = ""
+    content_json: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "record_id": self.record_id,
+            "artifact_id": self.artifact_id,
+            "bundle_id": self.bundle_id,
+            "job_id": self.job_id,
+            "job_kind": self.job_kind.value,
+            "artifact_kind": self.artifact_kind.value,
+            "source_type": self.source_type,
+            "title": self.title,
+            "format": self.format,
+            "retention_policy_id": self.retention_policy_id,
+            "status": self.status.value,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "expires_at": self.expires_at,
+            "recoverable": self.recoverable,
+            "content": self.content,
+            "content_json": dict(self.content_json),
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ArtifactRetentionRecord:
+        return cls(
+            record_id=data.get("record_id", ""),
+            artifact_id=data.get("artifact_id", ""),
+            bundle_id=data.get("bundle_id", ""),
+            job_id=data.get("job_id", ""),
+            job_kind=JobKind(data.get("job_kind", "build")),
+            artifact_kind=ArtifactKind(data.get("artifact_kind", "execution_trace")),
+            source_type=data.get("source_type", ""),
+            title=data.get("title", ""),
+            format=data.get("format", "text"),
+            retention_policy_id=data.get("retention_policy_id", ""),
+            status=ArtifactRetentionStatus(data.get("status", "active")),
+            created_at=data.get("created_at", ""),
+            updated_at=data.get("updated_at", ""),
+            expires_at=data.get("expires_at", ""),
+            recoverable=bool(data.get("recoverable", False)),
+            content=data.get("content", ""),
+            content_json=dict(data.get("content_json", {})),
+            metadata=dict(data.get("metadata", {})),
+        )
+
+
+@dataclass
+class CostLedgerEntry:
+    """Durable per-job token and cost snapshot."""
+
+    entry_id: str
+    job_id: str
+    job_kind: JobKind
+    title: str = ""
+    workspace_id: str = ""
+    recorded_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    usage: UsageSummary = field(default_factory=lambda: UsageSummary())
+    source_type: str = "job_usage_snapshot"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "entry_id": self.entry_id,
+            "job_id": self.job_id,
+            "job_kind": self.job_kind.value,
+            "title": self.title,
+            "workspace_id": self.workspace_id,
+            "recorded_at": self.recorded_at,
+            "usage": self.usage.to_dict(),
+            "source_type": self.source_type,
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CostLedgerEntry:
+        return cls(
+            entry_id=data.get("entry_id", ""),
+            job_id=data.get("job_id", ""),
+            job_kind=JobKind(data.get("job_kind", "build")),
+            title=data.get("title", ""),
+            workspace_id=data.get("workspace_id", ""),
+            recorded_at=data.get("recorded_at", ""),
+            usage=UsageSummary.from_dict(data.get("usage", {})),
+            source_type=data.get("source_type", "job_usage_snapshot"),
+            metadata=dict(data.get("metadata", {})),
         )
 
 

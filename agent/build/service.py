@@ -109,7 +109,7 @@ class BuildService:
             t_validate.fail("; ".join(errors))
             job.status = JobStatus.FAILED
             job.error = f"Validation failed: {'; '.join(errors)}"
-            self._storage.save_job(job)
+            self._save_job(job)
             return job
         try:
             capability = self._resolve_capability(intake)
@@ -117,7 +117,7 @@ class BuildService:
             t_validate.fail(str(e))
             job.status = JobStatus.FAILED
             job.error = str(e)
-            self._storage.save_job(job)
+            self._save_job(job)
             return job
         job.capability_id = capability.id
         t_validate.complete(f"input valid: {intake.build_type.value}")
@@ -135,7 +135,7 @@ class BuildService:
             t_ws.fail("No workspace manager — build requires workspace")
             job.status = JobStatus.FAILED
             job.error = "Build jobs require a workspace manager."
-            self._storage.save_job(job)
+            self._save_job(job)
             return job
 
         try:
@@ -156,7 +156,7 @@ class BuildService:
             t_ws.fail(str(e))
             job.status = JobStatus.FAILED
             job.error = f"Workspace setup failed: {e}"
-            self._storage.save_job(job)
+            self._save_job(job)
             return job
 
         workspace_path = ws.path
@@ -229,7 +229,7 @@ class BuildService:
             if self._workspace_manager is None:
                 job.status = JobStatus.FAILED
                 job.error = "Build jobs require a workspace manager."
-                self._storage.save_job(job)
+                self._save_job(job)
                 return job
             ws = self._workspace_manager.create(
                 name=f"build-{job.id[:8]}",
@@ -350,7 +350,7 @@ class BuildService:
             format="json",
         )
         job.artifacts.append(verification_artifact)
-        self._storage.save_artifact(verification_artifact)
+        self._save_artifact(job, verification_artifact)
 
         change_set = self._collect_workspace_changes(job, workspace_path)
 
@@ -380,7 +380,7 @@ class BuildService:
                 format="json",
             )
             job.artifacts.append(review_artifact)
-            self._storage.save_artifact(review_artifact)
+            self._save_artifact(job, review_artifact)
 
             if review_job.report.findings:
                 findings_artifact = BuildArtifact(
@@ -393,12 +393,12 @@ class BuildService:
                     format="json",
                 )
                 job.artifacts.append(findings_artifact)
-                self._storage.save_artifact(findings_artifact)
+                self._save_artifact(job, findings_artifact)
 
             blocked_by_policy, block_reason = self._apply_review_gate_policy(job)
             review_artifact.content_json["blocking"] = blocked_by_policy
             review_artifact.content_json["blocking_reason"] = block_reason
-            self._storage.save_artifact(review_artifact)
+            self._save_artifact(job, review_artifact)
             self._record_control_trace(
                 trace_kind=TraceRecordKind.REVIEW_POLICY,
                 title="Post-build review gate policy",
@@ -472,7 +472,7 @@ class BuildService:
             format="json",
         )
         job.artifacts.append(acceptance_artifact)
-        self._storage.save_artifact(acceptance_artifact)
+        self._save_artifact(job, acceptance_artifact)
 
         # ── Step 8: Produce diff/patch artifact ──
         t_artifacts = job.trace("artifacts")
@@ -492,7 +492,7 @@ class BuildService:
             format="json",
         )
         job.artifacts.append(trace_artifact)
-        self._storage.save_artifact(trace_artifact)
+        self._save_artifact(job, trace_artifact)
 
         # ── Step 10: Complete ──
         self._finalize(job, workspace_path)
@@ -886,6 +886,103 @@ class BuildService:
         return False, (
             f"Review gate passed under policy {policy.id}: "
             f"verdict={verdict}; critical={critical}; high={high}"
+        )
+
+    def _save_job(self, job: BuildJob) -> None:
+        self._storage.save_job(job)
+        self._sync_product_job(job)
+
+    def _save_artifact(self, job: BuildJob, artifact: BuildArtifact) -> None:
+        self._storage.save_artifact(artifact)
+        if self._control_plane_state is None:
+            return
+        self._control_plane_state.record_retained_artifact(
+            record_id=artifact.id,
+            artifact_id=artifact.id,
+            job_id=job.id,
+            job_kind=job.job_kind,
+            artifact_kind=artifact.artifact_kind,
+            source_type="build_artifact",
+            title=artifact.artifact_kind.value,
+            artifact_format=artifact.format,
+            created_at=artifact.created_at,
+            content=artifact.content,
+            content_json=artifact.content_json,
+            metadata={
+                "workspace_id": job.workspace_id,
+                "build_type": job.build_type.value,
+                "capability_id": job.capability_id,
+            },
+        )
+
+    def _sync_product_job(self, job: BuildJob) -> None:
+        if self._control_plane_state is None:
+            return
+        outcome = "accepted" if job.acceptance.accepted else "rejected"
+        if job.post_build_review_verdict:
+            outcome = f"{outcome}; review={job.post_build_review_verdict}"
+        self._control_plane_state.record_product_job(
+            job_id=job.id,
+            job_kind=job.job_kind,
+            title=job.intake.description or job.build_type.value,
+            status=job.status.value,
+            subkind="build_job",
+            requester=job.requester,
+            source=job.source,
+            execution_mode=job.execution_mode.value,
+            workspace_id=job.workspace_id,
+            scope=", ".join(job.intake.target_files[:3]),
+            outcome=outcome,
+            blocked_reason=job.error if job.status == JobStatus.BLOCKED else "",
+            artifact_ids=[artifact.id for artifact in job.artifacts],
+            created_at=job.timing.created_at,
+            completed_at=job.timing.completed_at,
+            usage=job.usage,
+            metadata={
+                "build_type": job.build_type.value,
+                "capability_id": job.capability_id,
+                "phase": job.phase.value,
+                "timing": job.timing.to_dict(),
+                "checkpoints": [checkpoint.to_dict() for checkpoint in job.checkpoints],
+                "verification_passed": job.verification_passed,
+                "verification_results": [item.to_dict() for item in job.verification_results],
+                "acceptance": job.acceptance.to_dict(),
+                "post_build_review": {
+                    "requested": job.intake.run_post_build_review,
+                    "job_id": job.post_build_review_job_id,
+                    "verdict": job.post_build_review_verdict,
+                    "finding_counts": job.post_build_review_findings,
+                    "review_gate_policy_id": job.intake.review_gate_policy_id,
+                },
+                "delivery_policy_id": job.intake.delivery_policy_id,
+                "error": job.error,
+            },
+        )
+
+    def _record_delivery_bundle_retention(
+        self,
+        *,
+        job: BuildJob,
+        bundle: dict[str, Any],
+    ) -> None:
+        if self._control_plane_state is None:
+            return
+        self._control_plane_state.record_retained_artifact(
+            record_id=bundle["bundle_id"],
+            bundle_id=bundle["bundle_id"],
+            job_id=job.id,
+            job_kind=job.job_kind,
+            artifact_kind=ArtifactKind.DELIVERY_BUNDLE,
+            source_type="build_delivery_bundle",
+            title=bundle["title"],
+            artifact_format="json",
+            created_at=bundle["created_at"],
+            content_json=bundle,
+            metadata={
+                "workspace_id": job.workspace_id,
+                "artifact_ids": list(bundle.get("artifact_ids", [])),
+                "delivery_ready": bundle.get("delivery_ready", False),
+            },
         )
 
     def _record_control_trace(
@@ -1285,8 +1382,8 @@ class BuildService:
             format="text",
         )
         job.artifacts.extend([patch_artifact, diff_artifact])
-        self._storage.save_artifact(patch_artifact)
-        self._storage.save_artifact(diff_artifact)
+        self._save_artifact(job, patch_artifact)
+        self._save_artifact(job, diff_artifact)
 
     async def _run_post_build_review(
         self,
@@ -1378,7 +1475,7 @@ class BuildService:
             BuildCheckpointPhase.COMPLETED,
             detail=f"status={job.status.value}",
         )
-        self._storage.save_job(job)
+        self._save_job(job)
 
         # Complete or fail workspace
         if self._workspace_manager and job.workspace_id:
@@ -1524,7 +1621,9 @@ class BuildService:
             event_type="prepared",
             detail="Build delivery package assembled",
         )
-        return package.to_dict()
+        package_dict = package.to_dict()
+        self._record_delivery_bundle_retention(job=job, bundle=package_dict)
+        return package_dict
 
     def request_delivery_approval(self, job_id: str) -> dict[str, Any]:
         """Gate build delivery through the approval queue."""

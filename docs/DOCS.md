@@ -37,21 +37,24 @@ python -m agent --health     # Zdravie
 python -m agent --report     # Operator report / inbox
 python -m agent --runtime-model   # Explicitný runtime model
 python -m agent --list-artifacts  # Shared artifact query surface
+python -m agent --list-persisted-jobs
+python -m agent --list-retained-artifacts
+python -m agent --list-cost-ledger
 python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-preview
 python -m agent --list-plans
 python -m agent --list-deliveries
-python -m pytest tests/ -q   # Testy (1260+ testov)
+python -m pytest tests/ -q   # Testy (1262+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.5.0** — Durable planning and delivery lifecycle release.
+Aktuálna: **v1.6.0** — Unified control-plane persistence and retention release.
 
-Nové v `v1.5.0`:
-- operator intake preview/submit teraz persistuje `JobPlan` handoff recordy
-- planning decisions teraz emitujú durable trace recordy
-- build delivery teraz drží lifecycle stav a audit eventy až po handoff
-- workspace records sú queryovateľné ako shared joins cez joby, artifacty, approvals a bundles
-- builder verification discovery a post-build review gating sú viac policy-driven
+Nové v `v1.6.0`:
+- build a review joby teraz persistujú shared `ProductJobRecord` metadata v control plane
+- retained artifact records držia policy id, expiry, recoverability a retention status pre build/review/delivery výstupy
+- shared policy model teraz pokrýva job persistence, artifact retention a external gateway defaults
+- per-job usage/token/cost záznamy padajú do durable cost ledgeru
+- operator report a CLI teraz vedia listovať persisted jobs, retained artifacts a cost ledger
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

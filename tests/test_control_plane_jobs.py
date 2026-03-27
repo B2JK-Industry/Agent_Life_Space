@@ -551,6 +551,80 @@ class TestOrchestratorEntryPoints:
 
         await agent.stop()
 
+    @pytest.mark.asyncio
+    async def test_orchestrator_persists_jobs_retention_and_cost_records(
+        self, tmp_path, monkeypatch
+    ):
+        from agent.core.agent import AgentOrchestrator
+
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        (repo_dir / "app.py").write_text("def main():\n    return 1\n")
+        (repo_dir / "tests").mkdir()
+        (repo_dir / "tests" / "test_app.py").write_text("def test_ok():\n    assert True\n")
+
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [],
+        )
+
+        agent = AgentOrchestrator(data_dir=str(tmp_path / "agent"), watchdog_interval=60.0)
+        agent.workspaces._root = tmp_path / "workspaces"
+        agent.workspaces._db_path = str(tmp_path / "workspaces" / "workspaces.db")
+        await agent.initialize()
+
+        build_job = await agent.run_build_job(
+            BuildIntake(
+                repo_path=str(repo_dir),
+                description="Persist control-plane build state",
+                acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
+            )
+        )
+        review_job = await agent.run_review_job(
+            ReviewIntake(
+                repo_path=str(repo_dir),
+                review_type=ReviewJobType.REPO_AUDIT,
+                context="Persist control-plane review state",
+            )
+        )
+
+        persisted_jobs = agent.list_persisted_product_jobs(limit=10)
+        persisted_build = agent.get_persisted_product_job(build_job.id)
+        persisted_review = agent.get_persisted_product_job(review_job.id)
+        build_artifacts = agent.list_product_artifacts(
+            kind="build",
+            job_id=build_job.id,
+            limit=10,
+        )
+        artifact_detail = agent.get_product_artifact(
+            build_artifacts[0]["artifact_id"],
+            kind="build",
+        )
+        retained = agent.list_retained_artifacts(job_id=build_job.id, limit=20)
+        bundle = agent.get_build_delivery_bundle(build_job.id)
+        retained_bundle = agent.get_retained_artifact(bundle["bundle_id"]) if bundle else None
+        costs = agent.list_cost_ledger(limit=20)
+        report = agent.get_operator_report(limit=20)
+
+        assert len(persisted_jobs) >= 2
+        assert persisted_build is not None
+        assert persisted_build["metadata"]["persistence_policy_id"] == "build_persistent"
+        assert persisted_review is not None
+        assert persisted_review["metadata"]["persistence_policy_id"] == "review_persistent"
+        assert artifact_detail is not None
+        assert artifact_detail["retention_policy_id"]
+        assert retained
+        assert any(item["retention_policy_id"] for item in retained)
+        assert retained_bundle is not None
+        assert retained_bundle["artifact_kind"] == "delivery_bundle"
+        assert any(entry["job_id"] == build_job.id for entry in costs)
+        assert report["recent_persisted_jobs"]
+        assert report["recent_retained_artifacts"]
+        assert report["recent_cost_entries"]
+        assert report["summary"]["persisted_product_jobs"] >= 2
+
+        await agent.stop()
+
 
 class TestUnifiedOperatorIntake:
     def test_qualification_routes_diff_to_review(self):

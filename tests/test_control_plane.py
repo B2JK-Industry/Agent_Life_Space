@@ -1,8 +1,12 @@
 """Tests for shared control-plane foundation (agent.control.models)."""
 
+import tempfile
+from datetime import UTC, datetime, timedelta
+
 from agent.control.models import (
     ArtifactKind,
     ArtifactRef,
+    ArtifactRetentionStatus,
     ExecutionMode,
     ExecutionStep,
     JobKind,
@@ -89,6 +93,7 @@ class TestArtifactRef:
         assert ArtifactKind.PATCH.value == "patch"
         assert ArtifactKind.VERIFICATION_REPORT.value == "verification_report"
         assert ArtifactKind.ACCEPTANCE_REPORT.value == "acceptance_report"
+        assert ArtifactKind.DELIVERY_BUNDLE.value == "delivery_bundle"
         assert ArtifactKind.SECURITY_REPORT.value == "security_report"
         assert ArtifactKind.EXECUTIVE_SUMMARY.value == "executive_summary"
 
@@ -108,3 +113,32 @@ class TestUsageSummary:
         assert u2.total_tokens == 1000
         assert u2.total_cost_usd == 0.05
         assert u2.model_used == "test"
+
+
+class TestRetentionState:
+    def test_retention_record_expires_under_policy(self):
+        from agent.control.state import ControlPlaneStateService
+        from agent.control.storage import ControlPlaneStorage
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db:
+            state = ControlPlaneStateService(
+                storage=ControlPlaneStorage(db_path=db.name)
+            )
+            expired_created_at = (datetime.now(UTC) - timedelta(days=40)).isoformat()
+
+            state.record_retained_artifact(
+                record_id="artifact-1",
+                artifact_id="artifact-1",
+                job_id="build-1",
+                job_kind=JobKind.BUILD,
+                artifact_kind=ArtifactKind.EXECUTION_TRACE,
+                source_type="build_artifact",
+                created_at=expired_created_at,
+                content_json={"trace": []},
+            )
+
+            record = state.get_retained_artifact("artifact-1")
+
+        assert record is not None
+        assert record.retention_policy_id == "operational_trace_30d"
+        assert record.status == ArtifactRetentionStatus.EXPIRED

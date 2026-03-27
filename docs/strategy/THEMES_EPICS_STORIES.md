@@ -11,7 +11,7 @@ Use it for:
 
 ## Current Progress Snapshot
 
-Assessment basis: after Durable Planning + Delivery Lifecycle slice.
+Assessment basis: after Unified Control-Plane Persistence + Retention slice.
 
 Important:
 - this is a strategy progress snapshot, not a merge-state indicator
@@ -21,26 +21,26 @@ Important:
 
 | Theme | Status | Approx Progress | Current State | Gap |
 |-------|--------|-----------------|---------------|-----|
-| T1 Platform Foundation | `in_progress` | 89% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted plan/trace/delivery records, and first-class workspace joins. | No unified cross-domain persistence/action layer yet. |
+| T1 Platform Foundation | `in_progress` | 93% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted job/plan/trace/delivery records, retention-aware artifact records, and first-class workspace joins. | No unified cross-domain action layer yet. |
 | T2 Reviewer Product | `complete_for_phase` | 85% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction. | API entrypoint, PR comment packs, LLM analysis are v2. |
 | T3 Builder Product | `in_progress` | 80% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery, policy-driven review gating, and deterministic patch/diff plus persisted delivery lifecycle output. | Build step is still placeholder and there is no external delivery send path. |
-| T4 Operator Product | `in_progress` | 76% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, delivery lifecycle state, workspace joins, and richer operator report/CLI surfaces now exist. | No live backend/UI, no review delivery migration onto the shared lifecycle, and no remote acquisition path. |
-| T5 Security, Governance, And Policy | `in_progress` | 69% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, plus deterministic review-gate and delivery policy profiles. | Review/build still sit outside a unified policy boundary. |
-| T6 Cost, Usage, And Observability | `in_progress` | 64% | UsageSummary, local build/review counters, durable plan/trace/delivery telemetry, shared runtime job/artifact/workspace queries, approval backlog visibility, and richer operator reporting now exist. | No real cost ledger or live operator UI. |
+| T4 Operator Product | `in_progress` | 79% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, delivery lifecycle state, workspace joins, and richer operator report/CLI surfaces now exist, including persisted jobs, retained artifacts, and cost-ledger inspection. | No live backend/UI, no review delivery migration onto the shared lifecycle, and no remote acquisition path. |
+| T5 Security, Governance, And Policy | `in_progress` | 77% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate and delivery policy profiles, plus shared job-persistence, artifact-retention, and gateway-default policy models. | Review/build still sit outside a unified policy enforcement boundary. |
+| T6 Cost, Usage, And Observability | `in_progress` | 72% | UsageSummary, a durable per-job cost ledger, local build/review counters, durable plan/trace/delivery telemetry, shared runtime job/artifact/workspace queries, approval backlog visibility, and richer operator reporting now exist. | No budget enforcement or live operator UI. |
 | T7 External Capability Gateway | `not_started` | 0% | Nothing yet. | No gateway contract. |
-| T8 Enterprise Hardening | `in_progress` | 72% | Shared control-plane layer, explicit runtime coexistence rules, direct review/build primitive reuse, persisted plan/delivery state, workspace joins, unified intake/planning, and shared job/artifact/query/reporting surfaces. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants. |
+| T8 Enterprise Hardening | `in_progress` | 76% | Shared control-plane layer, explicit runtime coexistence rules, direct review/build primitive reuse, persisted product-job/plan/delivery state, retention-aware artifact records, workspace joins, unified intake/planning, and shared job/artifact/query/reporting surfaces. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants. |
 
 ## Theme T1: Platform Foundation
 
-- approx_progress: 89%
+- approx_progress: 93%
 
 Goal: unify the core job, state, artifact, and execution foundation so the
 system can support reviewer, builder, and operator modes without fragmenting.
 
 ### Epic T1-E1: Canonical Job Model
 
-- approx_progress: 88%
-- remaining_gap: Shared primitives and shared list/get query models now exist across build, review, operate, and artifact surfaces, but persistence/action unification is still incomplete.
+- approx_progress: 93%
+- remaining_gap: Shared primitives, shared list/get query models, and persisted product-job records now exist across build/review/operate-adjacent surfaces, but action-layer convergence is still incomplete.
 
 Stories:
 - T1-E1-S1: Define canonical Job schema for review, build, operate, and delivery
@@ -53,9 +53,9 @@ Stories:
   - current_state: Shared JobStatus with CREATED/VALIDATING/RUNNING/VERIFYING/COMPLETED/FAILED/CANCELLED/BLOCKED and JobTiming with mark_started/mark_completed are now used by both build and review flows.
   - missing: Operate/delivery lifecycle harmonization remains.
 - T1-E1-S3: Persist job metadata, execution history, artifacts, and cost data.
-  - status: `in_progress`
-  - current_state: BuildStorage persists job metadata, execution history, artifacts. UsageSummary tracks cost.
-  - missing: No unified cross-system persistence.
+  - status: `mostly_complete`
+  - current_state: Build and review jobs now sync into shared `ProductJobRecord` persistence with status, timing, artifact refs, usage summary, and a durable per-job cost-ledger entry surfaced through the orchestrator and CLI.
+  - missing: Task/job-runner/agent-loop history is still separate, and there is no unified action layer on top of the shared records.
 - T1-E1-S4: Add job queries for operator inspection and automation.
   - status: `complete_for_phase`
   - current_state: JobQuerySummary/JobQueryDetail plus JobQueryService now normalize build, review, task, job-runner, and agent-loop records behind one shared list/get surface. AgentOrchestrator exposes `list_product_jobs()` and `get_product_job()`.
@@ -68,14 +68,17 @@ Stories:
 
 ### Epic T1-E2: Artifact-First Execution
 
-- approx_progress: 90%
-- remaining_gap: Shared artifact query/recovery now spans build and review, and builder exports deterministic patch/diff artifacts, but retention/policy remains open.
+- approx_progress: 95%
+- remaining_gap: Shared artifact query/recovery now spans build and review, builder exports deterministic patch/diff artifacts, and retention records now exist, but there is still no pruning scheduler or deletion workflow.
 
 Stories:
 - T1-E2-S1: Define artifact types and storage layout.
 - T1-E2-S2: Link artifacts to jobs and execution traces.
 - T1-E2-S3: Add export support for Markdown, JSON, and delivery bundles.
 - T1-E2-S4: Add artifact retention and recovery rules.
+  - status: `mostly_complete`
+  - current_state: Control-plane retention records now track build, review, trace, and delivery-bundle outputs with policy ids, expiry timestamps, recoverability, and derived active/expired state exposed through artifact queries and operator reporting.
+  - missing: Retention is modeled and inspectable, but not yet enforced through pruning, archival, or compaction workflows.
 - T1-E2-S5: Persist full intake, report payloads, and artifact payloads for
   recovery-safe reload.
   - status: `complete_for_phase`
@@ -297,7 +300,7 @@ Stories:
 ## Theme T5: Security, Governance, And Policy
 
 - status: `in_progress`
-- approx_progress: 69%
+- approx_progress: 77%
 
 Goal: ensure all valuable workflows remain controlled and auditable.
 
@@ -306,9 +309,9 @@ Goal: ensure all valuable workflows remain controlled and auditable.
 Stories:
 - T5-E1-S1: Extend policy model to job, artifact, delivery, and external gateway
   decisions.
-  - status: `in_progress`
-  - current_state: Builder now uses deterministic review-gate and delivery policy profiles that are surfaced in planning metadata, traces, and delivery approval context.
-  - missing: Job/artifact/gateway policy is still not unified under one shared engine.
+  - status: `mostly_complete`
+  - current_state: Shared policy now covers deterministic job-persistence, artifact-retention, delivery, review-gate, and external-gateway defaults, and those policies surface through control-plane persistence, artifact queries, reporting, and delivery metadata.
+  - missing: Repository/diff execution and broader runtime actions are still not enforced through one shared policy engine.
 - T5-E1-S2: Keep policy deny-by-default across execution modes.
 - T5-E1-S3: Add structured denial reasons everywhere.
 - T5-E1-S4: Ensure policy is deterministic and separately testable.
@@ -343,7 +346,7 @@ Stories:
 ## Theme T6: Cost, Usage, And Observability
 
 - status: `in_progress`
-- approx_progress: 64%
+- approx_progress: 72%
 
 Goal: make the system operable, measurable, and economically sane.
 
@@ -351,6 +354,9 @@ Goal: make the system operable, measurable, and economically sane.
 
 Stories:
 - T6-E1-S1: Record per-job model usage and token cost.
+  - status: `mostly_complete`
+  - current_state: Build and review jobs now persist per-job usage, token, and cost data into the shared control-plane ledger, and the orchestrator/CLI/operator report expose recent ledger entries and total recorded cost.
+  - missing: Budgets, escalation controls, and operator margin hints still sit outside the ledger.
 - T6-E1-S2: Add hard budget, soft budget, and stop-loss behavior.
 - T6-E1-S3: Make escalation budget-aware.
 - T6-E1-S4: Surface cost and margin hints to the operator.
@@ -433,9 +439,17 @@ Stories:
 
 ### Epic T8-E3: Compliance-Friendly Foundations
 
+- approx_progress: 45%
+
 Stories:
 - T8-E3-S1: Improve audit export and artifact traceability.
+  - status: `in_progress`
+  - current_state: Persisted product-job records, retained-artifact records, and report/query surfaces now improve traceability across jobs, artifacts, bundles, and policy context.
+  - missing: No dedicated evidence export package yet.
 - T8-E3-S2: Improve redaction and retention strategy.
+  - status: `mostly_complete`
+  - current_state: Shared artifact-retention policies now define expiry, recoverability, and retention metadata for build, review, trace, and delivery outputs.
+  - missing: No pruning, archival, or enterprise retention workflow yet.
 - T8-E3-S3: Support client-safe evidence packaging.
 - T8-E3-S4: Prepare data-handling rules for future enterprise requirements.
 
@@ -448,6 +462,8 @@ runtime has explicit coexistence rules for product jobs, planning tasks,
 infrastructure jobs, and conversational loop items. Shared artifact query and
 recovery now span build and review, while operator intake preview/submit flows
 surface a phase-aware `JobPlan` with scope, risk, budget, and capability
-decisions instead of only a route decision. The build step itself still remains
-placeholder-grade (no real code generation), but the surrounding structure is
-now materially stronger than the earlier foundation-only snapshot.
+decisions instead of only a route decision. Persisted product-job records,
+retention-aware artifact state, and per-job cost ledger entries now make the
+shared control plane materially more auditable than the earlier foundation-only
+snapshot, even though the build step itself still remains placeholder-grade (no
+real code generation).
