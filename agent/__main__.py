@@ -306,6 +306,56 @@ async def show_operator_report(data_dir: str = "agent") -> None:
     await agent.stop()
 
 
+async def show_runtime_model(data_dir: str = "agent") -> None:
+    """Show explicit runtime coexistence rules."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    print(orjson.dumps(agent.get_runtime_model(), option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def list_artifacts_command(
+    *,
+    data_dir: str = "agent",
+    kind: str = "",
+    job_id: str = "",
+    artifact_kind: str = "",
+    limit: int = 20,
+) -> None:
+    """List shared build/review artifacts."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    artifacts = agent.list_product_artifacts(
+        kind=kind or None,
+        job_id=job_id,
+        artifact_kind=artifact_kind,
+        limit=limit,
+    )
+    print(orjson.dumps(artifacts, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def show_artifact_command(
+    *,
+    data_dir: str = "agent",
+    artifact_id: str,
+    kind: str = "",
+) -> None:
+    """Show one shared build/review artifact."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    artifact = agent.get_product_artifact(artifact_id, kind=kind or None)
+    result = artifact or {"error": f"Artifact not found: {artifact_id}"}
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
 async def run_build_command(
     *,
     data_dir: str = "agent",
@@ -397,8 +447,7 @@ async def run_intake_command(
     agent = AgentOrchestrator(data_dir=data_dir)
     await agent.initialize()
     if preview_only:
-        qualification = agent.qualify_operator_intake(intake)
-        result = {"accepted": qualification["supported"], "qualification": qualification}
+        result = agent.preview_operator_intake(intake)
     else:
         result = await agent.submit_operator_intake(intake)
     print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
@@ -428,6 +477,11 @@ def main() -> None:
         "--report",
         action="store_true",
         help="Show operator report/inbox snapshot and exit",
+    )
+    parser.add_argument(
+        "--runtime-model",
+        action="store_true",
+        help="Show explicit runtime coexistence rules and exit",
     )
     parser.add_argument(
         "--build-repo",
@@ -470,6 +524,38 @@ def main() -> None:
         "--build-skip-review",
         action="store_true",
         help="Disable the post-build reviewer pass for --build-repo execution",
+    )
+    parser.add_argument(
+        "--artifact-id",
+        default="",
+        help="Show one shared build/review artifact by id and exit",
+    )
+    parser.add_argument(
+        "--artifact-kind",
+        default="",
+        help="Filter shared artifact listing by artifact kind",
+    )
+    parser.add_argument(
+        "--artifact-job-id",
+        default="",
+        help="Filter shared artifact listing by job id",
+    )
+    parser.add_argument(
+        "--artifact-job-kind",
+        default="",
+        choices=["", "build", "review"],
+        help="Filter shared artifact listing by job kind",
+    )
+    parser.add_argument(
+        "--list-artifacts",
+        action="store_true",
+        help="List shared build/review artifacts and exit",
+    )
+    parser.add_argument(
+        "--artifact-limit",
+        default=20,
+        type=int,
+        help="Limit for --list-artifacts (default: 20)",
     )
     parser.add_argument(
         "--intake-repo",
@@ -544,6 +630,26 @@ def main() -> None:
         asyncio.run(show_health(args.data_dir))
     elif args.report:
         asyncio.run(show_operator_report(args.data_dir))
+    elif args.runtime_model:
+        asyncio.run(show_runtime_model(args.data_dir))
+    elif args.artifact_id:
+        asyncio.run(
+            show_artifact_command(
+                data_dir=args.data_dir,
+                artifact_id=args.artifact_id,
+                kind=args.artifact_job_kind,
+            )
+        )
+    elif args.list_artifacts:
+        asyncio.run(
+            list_artifacts_command(
+                data_dir=args.data_dir,
+                kind=args.artifact_job_kind,
+                job_id=args.artifact_job_id,
+                artifact_kind=args.artifact_kind,
+                limit=args.artifact_limit,
+            )
+        )
     elif args.build_resume:
         asyncio.run(resume_build_command(data_dir=args.data_dir, job_id=args.build_resume))
     elif args.build_repo:

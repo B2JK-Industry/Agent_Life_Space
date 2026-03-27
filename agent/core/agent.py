@@ -33,10 +33,12 @@ from typing import Any
 import structlog
 
 from agent.brain.decision_engine import DecisionEngine
+from agent.control.artifact_queries import ArtifactQueryService
 from agent.control.intake import OperatorIntakeService, OperatorWorkType
 from agent.control.job_queries import JobQueryService
 from agent.control.models import JobKind
 from agent.control.reporting import OperatorReportService
+from agent.control.runtime_model import RuntimeModelService
 from agent.core.approval import ApprovalQueue
 from agent.core.approval_storage import ApprovalStorage
 from agent.core.job_runner import JobConfig, JobRunner
@@ -136,9 +138,15 @@ class AgentOrchestrator:
             job_runner=self.job_runner,
             agent_loop_provider=lambda: self.agent_loop,
         )
+        self.artifacts = ArtifactQueryService(
+            build_service=self.build,
+            review_service=self.review,
+        )
         self.intake_router = OperatorIntakeService()
+        self.runtime_model = RuntimeModelService()
         self.reporting = OperatorReportService(
             job_queries=self.jobs,
+            artifact_queries=self.artifacts,
             approval_queue=self.approval_queue,
             operator_controls=self.operator_controls,
             status_provider=self.get_status,
@@ -474,15 +482,21 @@ class AgentOrchestrator:
         """Return routing/qualification result for unified operator intake."""
         return self.intake_router.qualify(intake).to_dict()
 
+    def preview_operator_intake(self, intake: Any) -> dict[str, Any]:
+        """Return qualification plus planner output for unified intake."""
+        return self.intake_router.preview(intake)
+
     async def submit_operator_intake(self, intake: Any) -> dict[str, Any]:
         """Route unified operator intake into review/build runtime flows."""
         if not self._initialized:
             await self.initialize()
 
         qualification = self.intake_router.qualify(intake)
+        plan = self.intake_router.create_plan(intake, qualification=qualification)
         result: dict[str, Any] = {
             "accepted": qualification.supported,
             "qualification": qualification.to_dict(),
+            "plan": plan.to_dict(),
         }
         if not qualification.supported:
             result["error"] = "; ".join(qualification.blockers)
@@ -550,9 +564,44 @@ class AgentOrchestrator:
             return None
         return job.to_dict()
 
+    def list_product_artifacts(
+        self,
+        *,
+        kind: JobKind | str | None = None,
+        job_id: str = "",
+        artifact_kind: str = "",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """List build/review artifacts through one shared query layer."""
+        return [
+            artifact.to_dict()
+            for artifact in self.artifacts.list_artifacts(
+                kind=kind,
+                job_id=job_id,
+                artifact_kind=artifact_kind,
+                limit=limit,
+            )
+        ]
+
+    def get_product_artifact(
+        self,
+        artifact_id: str,
+        *,
+        kind: JobKind | str | None = None,
+    ) -> dict[str, Any] | None:
+        """Load one build/review artifact through the shared query layer."""
+        artifact = self.artifacts.get_artifact(artifact_id=artifact_id, kind=kind)
+        if artifact is None:
+            return None
+        return artifact.to_dict()
+
     def get_operator_report(self, limit: int = 20) -> dict[str, Any]:
         """Return a compact operator-facing report/inbox."""
         return self.reporting.get_report(limit=limit)
+
+    def get_runtime_model(self) -> dict[str, Any]:
+        """Return explicit coexistence rules for runtime surfaces."""
+        return self.runtime_model.get_model()
 
     def get_status(self) -> dict[str, Any]:
         """Get overall agent status."""
@@ -567,7 +616,20 @@ class AgentOrchestrator:
             "review": self.review.get_stats(),
             "control_plane": {
                 "queryable_job_kinds": ["build", "review", "operate"],
+                "queryable_artifact_kinds": [
+                    "review_report",
+                    "finding_list",
+                    "diff_analysis",
+                    "security_report",
+                    "executive_summary",
+                    "patch",
+                    "diff",
+                    "verification_report",
+                    "acceptance_report",
+                    "execution_trace",
+                ],
                 "operator_intake_work_types": ["auto", "review", "build"],
+                "runtime_model_status": self.runtime_model.get_model()["status"],
             },
             "jobs": self.job_runner.get_stats(),
             "watchdog": self.watchdog.get_stats(),

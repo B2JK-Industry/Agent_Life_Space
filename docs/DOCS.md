@@ -35,17 +35,19 @@ python -m agent              # Spusti agenta
 python -m agent --status     # Stav
 python -m agent --health     # Zdravie
 python -m agent --report     # Operator report / inbox
-python -m pytest tests/ -q   # Testy (1241+ testov)
+python -m agent --runtime-model   # Explicitný runtime model
+python -m agent --list-artifacts  # Shared artifact query surface
+python -m pytest tests/ -q   # Testy (1248+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.4.2** — Control-plane expansion release.
+Aktuálna: **v1.4.3** — Runtime model and artifact planning release.
 
-Nové v `v1.4.2`:
-- shared job queries teraz pokrývajú aj `Task`, `JobRunner` a `AgentLoop`
-- approvals sú perzistentné a queryovateľné s väzbou na `job_id` / `artifact_ids`
-- builder má capability catalog a resumable checkpoints
-- pribudol unified operator intake a `python -m agent --report`
+Nové v `v1.4.3`:
+- explicitný runtime model cez `python -m agent --runtime-model`
+- shared artifact query/recovery surface cez `ArtifactQueryService` a CLI
+- unified operator intake teraz vracia aj `JobPlan`
+- operator report teraz zahŕňa aj recent artifacts
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

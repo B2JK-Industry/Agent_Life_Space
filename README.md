@@ -18,9 +18,10 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Tool governance** — capability manifest, policy engine, 4-step action pipeline with audit trail
 - **Workspace persistence** — SQLite-backed workspaces with audit trail, limits, TTL, recovery
 - **Approval queue** — structured propose → approve/deny → execute workflow with persistent storage and linkage
-- **Control-plane queries** — shared inspection across build, review, task, job-runner, and agent-loop state
-- **Operator CLI surfaces** — `--report`, unified `--intake-*`, and resumable `--build-resume`
-- **1241+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **Control-plane queries** — shared inspection across build, review, task, job-runner, agent-loop, and artifact state
+- **Runtime model** — explicit coexistence rules for product jobs, planning tasks, infrastructure jobs, and conversational queue items
+- **Operator CLI surfaces** — `--report`, `--runtime-model`, shared artifact inspection, unified `--intake-*`, and resumable `--build-resume`
+- **1248+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -93,7 +94,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 1241+ passed, ~22s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1248+ passed, ~23s, $0.00
 ```
 
 | Layer | Tests | What |

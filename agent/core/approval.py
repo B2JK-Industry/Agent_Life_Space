@@ -24,7 +24,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -267,7 +267,7 @@ class ApprovalQueue:
             if item.id == request_id:
                 return item.to_dict()
         if self._storage is not None:
-            return self._storage.load_request(request_id)
+            return cast(dict[str, Any] | None, self._storage.load_request(request_id))
         return None
 
     def get_by_category(

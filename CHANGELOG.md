@@ -10,6 +10,28 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.4.3] — 2026-03-27
+
+Runtime model and artifact planning release.
+
+### Platform / Control Plane
+- Explicit runtime coexistence rules added through `RuntimeModelService` and
+  `python -m agent --runtime-model`
+- Shared artifact query/recovery now spans build and review through
+  `ArtifactQueryService`, orchestrator list/get methods, and CLI artifact
+  inspection
+- Build and review artifact storage now persist artifact `format` alongside
+  content recovery payloads
+
+### Operator
+- Unified operator intake now emits a real `JobPlan` preview/submit output with
+  steps, planned artifacts, heuristic budget envelope, and recommended next
+  action
+- Operator report now includes recent artifacts alongside jobs and approvals
+
+### Verification
+- Local release verification passed with `1248 passed, 4 skipped`
+
 ## [1.4.2] — 2026-03-27
 
 Control-plane expansion release.

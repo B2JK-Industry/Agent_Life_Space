@@ -7,14 +7,23 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent.build.models import AcceptanceCriterion, BuildIntake, BuildJob
+from agent.build.models import (
+    AcceptanceCriterion,
+    BuildArtifact,
+    BuildIntake,
+    BuildJob,
+)
+from agent.control.artifact_queries import ArtifactQueryService
 from agent.control.intake import OperatorIntake, OperatorIntakeService
 from agent.control.job_queries import JobQueryService
-from agent.control.models import JobKind, JobStatus
+from agent.control.models import ArtifactKind, JobKind, JobStatus
 from agent.control.reporting import OperatorReportService
+from agent.control.runtime_model import RuntimeModelService
 from agent.core.job_runner import JobRecord
 from agent.core.job_runner import JobStatus as RunnerJobStatus
 from agent.review.models import (
+    ArtifactType,
+    ReviewArtifact,
     ReviewIntake,
     ReviewJob,
     ReviewJobStatus,
@@ -165,6 +174,73 @@ class TestJobQueryService:
         assert loop_detail is not None
         assert loop_detail.metadata["status"]["queue_size"] == 2
 
+    def test_list_artifacts_normalizes_build_and_review(self, services):
+        build_service, review_service = services
+
+        build_job = BuildJob(requester="builder")
+        build_service._storage.save_job(build_job)
+        build_artifact = BuildArtifact(
+            artifact_kind=ArtifactKind.VERIFICATION_REPORT,
+            job_id=build_job.id,
+            content_json={"all_passed": True},
+            format="json",
+        )
+        build_service._storage.save_artifact(build_artifact)
+
+        review_job = ReviewJob(
+            requester="reviewer",
+            intake=ReviewIntake(repo_path="/tmp/repo", context="Audit"),
+        )
+        review_service._storage.save_job(review_job)
+        review_service._storage.save_artifact(
+            ReviewArtifact(
+                artifact_type=ArtifactType.REVIEW_REPORT,
+                job_id=review_job.id,
+                content="# Report",
+                format="markdown",
+            )
+        )
+
+        query = ArtifactQueryService(
+            build_service=build_service,
+            review_service=review_service,
+        )
+        artifacts = query.list_artifacts(limit=10)
+
+        assert len(artifacts) == 2
+        assert {artifact.job_kind for artifact in artifacts} == {
+            JobKind.BUILD,
+            JobKind.REVIEW,
+        }
+        assert {artifact.artifact_kind.value for artifact in artifacts} == {
+            "verification_report",
+            "review_report",
+        }
+
+    def test_get_artifact_returns_recoverable_payload(self, services):
+        build_service, review_service = services
+
+        build_job = BuildJob(requester="builder")
+        build_service._storage.save_job(build_job)
+        artifact = BuildArtifact(
+            artifact_kind=ArtifactKind.ACCEPTANCE_REPORT,
+            job_id=build_job.id,
+            content_json={"accepted": True},
+            format="json",
+        )
+        build_service._storage.save_artifact(artifact)
+
+        query = ArtifactQueryService(
+            build_service=build_service,
+            review_service=review_service,
+        )
+        detail = query.get_artifact(artifact.id)
+
+        assert detail is not None
+        assert detail.job_kind == JobKind.BUILD
+        assert detail.content_json["accepted"] is True
+        assert detail.metadata["domain"] == "build"
+
     def test_operator_report_builds_inbox_from_jobs_and_approvals(self):
         job_query_service = MagicMock()
         job_query_service.list_jobs.return_value = [
@@ -189,6 +265,17 @@ class TestJobQueryService:
                 }
             ),
         ]
+        artifact_query_service = MagicMock()
+        artifact_query_service.list_artifacts.return_value = [
+            MagicMock(
+                to_dict=lambda: {
+                    "artifact_id": "art-1",
+                    "artifact_kind": "review_report",
+                    "job_id": "review-1",
+                    "job_kind": "review",
+                }
+            )
+        ]
         approval_queue = MagicMock()
         approval_queue.get_pending.return_value = [
             {
@@ -203,12 +290,14 @@ class TestJobQueryService:
 
         report = OperatorReportService(
             job_queries=job_query_service,
+            artifact_queries=artifact_query_service,
             approval_queue=approval_queue,
             operator_controls=controls,
             status_provider=lambda: {"running": False},
         ).get_report(limit=10)
 
         assert report["summary"]["blocked_jobs"] == 1
+        assert report["summary"]["total_artifacts"] == 1
         assert report["summary"]["pending_approvals"] == 1
         assert {item["kind"] for item in report["inbox"]} == {
             "approval",
@@ -271,6 +360,8 @@ class TestOrchestratorEntryPoints:
         )
 
         agent = AgentOrchestrator(data_dir=str(tmp_path / "agent"), watchdog_interval=60.0)
+        agent.workspaces._root = tmp_path / "workspaces"
+        agent.workspaces._db_path = str(tmp_path / "workspaces" / "workspaces.db")
         await agent.initialize()
 
         build_job = await agent.run_build_job(
@@ -303,6 +394,47 @@ class TestOrchestratorEntryPoints:
 
         await agent.stop()
 
+    @pytest.mark.asyncio
+    async def test_orchestrator_lists_shared_artifacts_and_runtime_model(
+        self, tmp_path, monkeypatch
+    ):
+        from agent.core.agent import AgentOrchestrator
+
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        (repo_dir / "app.py").write_text("def main():\n    return 1\n")
+        (repo_dir / "tests").mkdir()
+        (repo_dir / "tests" / "test_app.py").write_text("def test_ok():\n    assert True\n")
+
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [],
+        )
+
+        agent = AgentOrchestrator(data_dir=str(tmp_path / "agent"), watchdog_interval=60.0)
+        agent.workspaces._root = tmp_path / "workspaces"
+        agent.workspaces._db_path = str(tmp_path / "workspaces" / "workspaces.db")
+        await agent.initialize()
+
+        build_job = await agent.run_build_job(
+            BuildIntake(
+                repo_path=str(repo_dir),
+                description="Builder artifact query",
+                acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
+            )
+        )
+
+        artifacts = agent.list_product_artifacts(kind="build", job_id=build_job.id, limit=10)
+        detail = agent.get_product_artifact(artifacts[0]["artifact_id"], kind="build")
+        runtime_model = agent.get_runtime_model()
+
+        assert artifacts
+        assert detail is not None
+        assert detail["job_kind"] == "build"
+        assert runtime_model["status"] == "explicit_for_current_phase"
+
+        await agent.stop()
+
 
 class TestUnifiedOperatorIntake:
     def test_qualification_routes_diff_to_review(self):
@@ -318,6 +450,26 @@ class TestUnifiedOperatorIntake:
 
         assert qualification.supported is True
         assert qualification.resolved_work_type.value == "review"
+
+    def test_preview_returns_job_plan(self):
+        service = OperatorIntakeService()
+        intake = OperatorIntake(
+            repo_path="/tmp/repo",
+            work_type="build",
+            description="Implement endpoint",
+            acceptance_criteria=["Tests pass"],
+            target_files=["src/app.py"],
+        )
+
+        preview = service.preview(intake)
+
+        assert preview["accepted"] is True
+        assert preview["plan"]["resolved_work_type"] == "build"
+        assert preview["plan"]["budget_envelope"] in {"small", "medium", "large"}
+        assert any(
+            step["title"] == "Verify and evaluate acceptance"
+            for step in preview["plan"]["steps"]
+        )
 
     def test_qualification_requires_description_for_build(self):
         service = OperatorIntakeService()
@@ -357,6 +509,7 @@ class TestUnifiedOperatorIntake:
         assert result["accepted"] is True
         assert result["job_kind"] == "build"
         assert result["job"]["job_id"] == "build-789"
+        assert result["plan"]["resolved_work_type"] == "build"
 
     @pytest.mark.asyncio
     async def test_orchestrator_submit_operator_intake_rejects_git_only(
@@ -377,3 +530,20 @@ class TestUnifiedOperatorIntake:
 
         assert result["accepted"] is False
         assert "git_url intake" in result["error"]
+        assert result["plan"]["blockers"]
+
+
+class TestRuntimeModel:
+    def test_runtime_model_exposes_coexistence_rules(self):
+        model = RuntimeModelService().get_model()
+
+        assert model["status"] == "explicit_for_current_phase"
+        surfaces = {item["surface"] for item in model["surfaces"]}
+        assert surfaces == {
+            "BuildJob",
+            "ReviewJob",
+            "Task",
+            "JobRunner",
+            "AgentLoop",
+        }
+        assert any("BuildJob" in rule or "ReviewJob" in rule for rule in model["convergence_plan"])

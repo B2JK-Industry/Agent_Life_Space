@@ -165,6 +165,9 @@ class ArtifactKind(str, Enum):
     # Review artifacts
     REVIEW_REPORT = "review_report"
     FINDING_LIST = "finding_list"
+    DIFF_ANALYSIS = "diff_analysis"
+    SECURITY_REPORT = "security_report"
+    EXECUTIVE_SUMMARY = "executive_summary"
     # Build artifacts
     PATCH = "patch"
     DIFF = "diff"
@@ -205,6 +208,52 @@ class ArtifactRef:
             format=d.get("format", "json"),
             created_at=d.get("created_at", ""),
         )
+
+
+@dataclass
+class ArtifactQuerySummary:
+    """Normalized summary view across build/review artifacts."""
+
+    artifact_id: str
+    artifact_kind: ArtifactKind
+    job_id: str
+    job_kind: JobKind
+    source_type: str = ""
+    format: str = ""
+    created_at: str = ""
+    content_length: int = 0
+    has_json: bool = False
+    title: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_id": self.artifact_id,
+            "artifact_kind": self.artifact_kind.value,
+            "job_id": self.job_id,
+            "job_kind": self.job_kind.value,
+            "source_type": self.source_type,
+            "format": self.format,
+            "created_at": self.created_at,
+            "content_length": self.content_length,
+            "has_json": self.has_json,
+            "title": self.title,
+        }
+
+
+@dataclass
+class ArtifactQueryDetail(ArtifactQuerySummary):
+    """Detailed cross-system artifact view with recoverable payload."""
+
+    content: str = ""
+    content_json: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        base = super().to_dict()
+        base["content"] = self.content
+        base["content_json"] = self.content_json
+        base["metadata"] = self.metadata
+        return base
 
 
 # ─────────────────────────────────────────────

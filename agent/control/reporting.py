@@ -15,17 +15,24 @@ class OperatorReportService:
     def __init__(
         self,
         job_queries: Any,
+        artifact_queries: Any = None,
         approval_queue: Any = None,
         operator_controls: Any = None,
         status_provider: Any = None,
     ) -> None:
         self._job_queries = job_queries
+        self._artifact_queries = artifact_queries
         self._approval_queue = approval_queue
         self._operator_controls = operator_controls
         self._status_provider = status_provider
 
     def get_report(self, limit: int = 20) -> dict[str, Any]:
         jobs = [job.to_dict() for job in self._job_queries.list_jobs(limit=limit)]
+        artifacts = (
+            [artifact.to_dict() for artifact in self._artifact_queries.list_artifacts(limit=limit)]
+            if self._artifact_queries is not None
+            else []
+        )
         blocked_jobs = [
             job for job in jobs
             if job["status"] in {"blocked", "failed", "dead_lettered"}
@@ -67,12 +74,14 @@ class OperatorReportService:
         return {
             "summary": {
                 "total_jobs": len(jobs),
+                "total_artifacts": len(artifacts),
                 "blocked_jobs": len(blocked_jobs),
                 "pending_approvals": len(pending_approvals),
                 "disabled_tools": controls.get("total_disabled", 0),
             },
             "inbox": inbox[:limit],
             "recent_jobs": jobs[:limit],
+            "recent_artifacts": artifacts[:limit],
             "pending_approvals": pending_approvals[:limit],
             "controls": controls,
             "agent_status": agent_status,

@@ -401,11 +401,30 @@ class TestReviewStorage:
             artifact_type=ArtifactType.REVIEW_REPORT,
             job_id="test-job",
             content="# Report\nAll good.",
+            format="markdown",
         )
         storage.save_artifact(artifact)
         artifacts = storage.get_artifacts("test-job")
         assert len(artifacts) == 1
         assert artifacts[0]["artifact_type"] == "review_report"
+        assert artifacts[0]["format"] == "markdown"
+
+    def test_list_and_get_artifact(self, storage):
+        artifact = ReviewArtifact(
+            artifact_type=ArtifactType.FINDING_LIST,
+            job_id="test-job",
+            content_json={"findings": [{"id": "f-1"}]},
+            format="json",
+        )
+        storage.save_artifact(artifact)
+
+        artifacts = storage.list_artifacts(job_id="test-job")
+        loaded = storage.get_artifact(artifact.id)
+
+        assert len(artifacts) == 1
+        assert artifacts[0]["format"] == "json"
+        assert loaded is not None
+        assert loaded["content_json"]["findings"][0]["id"] == "f-1"
 
 
 # ─────────────────────────────────────────────
