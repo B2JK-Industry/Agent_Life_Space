@@ -42,6 +42,7 @@ from agent.control.gateway import ExternalGatewayService
 from agent.control.intake import OperatorIntake, OperatorIntakeService, OperatorWorkType
 from agent.control.job_queries import JobQueryService
 from agent.control.models import JobKind, PlanRecordStatus, TraceRecordKind
+from agent.control.policy import evaluate_release_readiness
 from agent.control.reporting import OperatorReportService
 from agent.control.runtime_model import RuntimeModelService
 from agent.control.state import ControlPlaneStateService
@@ -1388,6 +1389,32 @@ class AgentOrchestrator:
     ) -> dict[str, Any]:
         """Run deterministic golden reviewer cases and return quality telemetry."""
         return await self.review_quality.evaluate_goldens(release_label=release_label)
+
+    async def evaluate_release_readiness(
+        self,
+        *,
+        release_label: str = "",
+        policy_id: str = "phase2_closure",
+    ) -> dict[str, Any]:
+        """Run release-readiness checks over quality telemetry and gateway posture."""
+        quality = await self.review_quality.evaluate_goldens(release_label=release_label)
+        gateway_catalog = self.gateway.describe_capability_catalog()
+        readiness = evaluate_release_readiness(
+            quality_summary=quality,
+            gateway_catalog=gateway_catalog,
+            policy_id=policy_id,
+        )
+        self.control_plane.record_trace(
+            trace_kind=TraceRecordKind.RELEASE,
+            title="Release readiness evaluation",
+            detail=(
+                f"ready={readiness['ready']}; "
+                f"blocking_reasons={len(readiness['blocking_reasons'])}; "
+                f"warnings={len(readiness['warnings'])}"
+            ),
+            metadata=readiness,
+        )
+        return readiness
 
     def get_gateway_catalog(
         self,

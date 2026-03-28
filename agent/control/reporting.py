@@ -95,6 +95,17 @@ class OperatorReportService:
             if self._control_plane_state is not None
             else []
         )
+        recent_release_traces = (
+            [
+                trace.to_dict()
+                for trace in self._control_plane_state.list_traces(
+                    trace_kind="release",
+                    limit=limit,
+                )
+            ]
+            if self._control_plane_state is not None
+            else []
+        )
         recent_deliveries = (
             [delivery.to_dict() for delivery in self._control_plane_state.list_deliveries(limit=limit)]
             if self._control_plane_state is not None
@@ -126,6 +137,15 @@ class OperatorReportService:
             else {}
         )
         gateway_summary = gateway_catalog.get("summary", {})
+        provider_delivery_views = [
+            item
+            for item in (
+                self._provider_delivery_view(delivery)
+                for delivery in recent_deliveries
+            )
+            if item is not None
+        ]
+        provider_delivery_summary = self._provider_delivery_summary(provider_delivery_views)
         retention_posture = (
             self._control_plane_state.get_retention_posture(limit=max(limit, 500))
             if self._control_plane_state is not None
@@ -240,6 +260,11 @@ class OperatorReportService:
             if recent_quality_traces
             else {}
         )
+        latest_release_readiness = (
+            recent_release_traces[0]["metadata"]
+            if recent_release_traces
+            else {}
+        )
         review_quality_trend = dict(latest_review_quality.get("trend", {}))
         if review_quality_trend.get("regression_detected"):
             inbox.append(
@@ -251,6 +276,22 @@ class OperatorReportService:
                     "detail": review_quality_trend.get(
                         "summary",
                         "Golden review quality regressed versus the previous release.",
+                    ),
+                }
+            )
+        if latest_release_readiness and not latest_release_readiness.get("ready", True):
+            inbox.append(
+                {
+                    "kind": "release_attention",
+                    "id": "release_readiness",
+                    "status": "blocked",
+                    "title": "Release readiness gate is failing",
+                    "detail": "; ".join(
+                        latest_release_readiness.get("blocking_reasons", [])
+                    )
+                    or latest_release_readiness.get(
+                        "summary",
+                        "Release readiness checks failed.",
                     ),
                 }
             )
@@ -270,6 +311,17 @@ class OperatorReportService:
                     ),
                 }
             )
+        for provider_delivery in provider_delivery_views[:limit]:
+            if provider_delivery["attention_required"]:
+                inbox.append(
+                    {
+                        "kind": "provider_delivery_attention",
+                        "id": provider_delivery["bundle_id"],
+                        "status": provider_delivery["outcome"],
+                        "title": provider_delivery["title"],
+                        "detail": provider_delivery["detail"],
+                    }
+                )
 
         approval_backlog = self._approval_backlog(all_approvals)
 
@@ -291,6 +343,7 @@ class OperatorReportService:
                 "persisted_plans": control_stats.get("plans", len(recent_plans)),
                 "recent_traces": control_stats.get("traces", len(recent_traces)),
                 "recent_gateway_traces": len(recent_gateway_traces),
+                "release_ready": latest_release_readiness.get("ready", True),
                 "delivery_records": control_stats.get("deliveries", len(recent_deliveries)),
                 "persisted_product_jobs": control_stats.get("product_jobs", len(recent_persisted_jobs)),
                 "retained_artifacts": control_stats.get("retained_artifacts", len(recent_retained_artifacts)),
@@ -300,6 +353,14 @@ class OperatorReportService:
                 "recorded_cost_usd": control_stats.get("recorded_cost_usd", 0.0),
                 "gateway_routes_total": gateway_summary.get("total_routes", 0),
                 "gateway_routes_configured": gateway_summary.get("configured_routes", 0),
+                "provider_delivery_pending": provider_delivery_summary["by_outcome"].get(
+                    "pending",
+                    0,
+                ),
+                "provider_delivery_failed": provider_delivery_summary["by_outcome"].get(
+                    "failed",
+                    0,
+                ),
                 "disabled_tools": controls.get("total_disabled", 0),
                 "active_workspaces": workspace_health.get("by_status", {}).get("active", 0),
                 "active_workers": worker_execution.get("active_jobs", 0),
@@ -348,7 +409,10 @@ class OperatorReportService:
             "recent_gateway_traces": recent_gateway_traces[:limit],
             "latest_review_quality": latest_review_quality,
             "review_quality_trend": review_quality_trend,
+            "latest_release_readiness": latest_release_readiness,
             "gateway_catalog": gateway_catalog,
+            "provider_delivery_summary": provider_delivery_summary,
+            "recent_provider_deliveries": provider_delivery_views[:limit],
             "recent_deliveries": recent_deliveries[:limit],
             "recent_persisted_jobs": recent_persisted_jobs[:limit],
             "recent_retained_artifacts": recent_retained_artifacts[:limit],
@@ -405,3 +469,55 @@ class OperatorReportService:
             or job.get("blocked_reason", "")
             or job.get("outcome", "")
         )
+
+    def _provider_delivery_view(self, delivery: dict[str, Any]) -> dict[str, Any] | None:
+        provider = dict(delivery.get("summary", {}).get("provider_delivery", {}))
+        if not provider:
+            return None
+        provider_id = provider.get("provider_id", "")
+        route_id = provider.get("route_id", "")
+        provider_status = provider.get("provider_status", "")
+        outcome = provider.get("outcome", "unknown")
+        detail_parts = []
+        if provider_id:
+            detail_parts.append(f"provider={provider_id}")
+        if route_id:
+            detail_parts.append(f"route={route_id}")
+        if provider_status:
+            detail_parts.append(f"provider_status={provider_status}")
+        if provider.get("target_url"):
+            detail_parts.append(f"target={provider['target_url']}")
+        if provider.get("error"):
+            detail_parts.append(provider["error"])
+        return {
+            "bundle_id": delivery.get("bundle_id", ""),
+            "job_id": delivery.get("job_id", ""),
+            "title": delivery.get("title", ""),
+            "status": delivery.get("status", ""),
+            "provider_id": provider_id,
+            "capability_id": provider.get("capability_id", ""),
+            "route_id": route_id,
+            "provider_status": provider_status,
+            "outcome": outcome,
+            "attention_required": bool(provider.get("attention_required", False)),
+            "receipt": dict(provider.get("receipt", {})),
+            "detail": "; ".join(detail_parts),
+        }
+
+    def _provider_delivery_summary(
+        self,
+        provider_deliveries: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        by_outcome: dict[str, int] = {}
+        by_provider: dict[str, int] = {}
+        for item in provider_deliveries:
+            outcome = str(item.get("outcome", "unknown"))
+            provider_id = str(item.get("provider_id", ""))
+            by_outcome[outcome] = by_outcome.get(outcome, 0) + 1
+            if provider_id:
+                by_provider[provider_id] = by_provider.get(provider_id, 0) + 1
+        return {
+            "total": len(provider_deliveries),
+            "by_outcome": by_outcome,
+            "by_provider": by_provider,
+        }

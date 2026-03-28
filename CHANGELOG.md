@@ -10,6 +10,44 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.15.0] — 2026-03-28
+
+Phase 2 closure and release-readiness release.
+
+### Builder / Execution
+- Builder's bounded local implementation engine now supports deterministic
+  `copy_file` and `move_file` operations in addition to the earlier
+  write/append/replace/insert/delete/json mutations
+- Build capability guardrails now validate both source and target scope for
+  file-moving operations instead of only the destination mutation path
+- Build delivery and acceptance output now expose implementation-backed
+  summaries over changed operations, changed paths, operation types, and
+  implementation mode for cleaner operator handoff
+
+### Policy / Gateway / Release Gating
+- Builder guardrails, provider receipt handling, provider outcome
+  classification, and release-readiness thresholds now live on deterministic
+  policy helpers with targeted tests
+- Delivery reporting now carries provider outcomes alongside gateway traces and
+  receipts instead of flattening everything into raw receipt metadata
+- ALS now has a deterministic release-readiness gate through
+  `python -m agent --release-readiness ...`, and CI runs the same gate
+
+### Docs / Phase 2 Closure
+- Strategy docs now mark Builder v1 as `complete_for_phase` for Phase 2 rather
+  than leaving it in a vague near-done state
+- Added deployment guidance for controlled local-owner, operator-controlled,
+  and enterprise-hardened environments, including gateway/vault config and
+  release-readiness workflow
+- The next backlog now pivots honestly toward Phase 3 operatorization instead
+  of more Phase 2 cleanup slices
+
+### Verification
+- Full release verification passed with `REPLACE_PYTEST_COUNT`
+- Targeted builder/control-plane/gateway/quality regression coverage passed
+  with `132 passed`
+- `ruff check .` and operator `npm run typecheck` both passed
+
 ## [1.14.0] — 2026-03-28
 
 Phase 2 builder-engine and provider-receipt release.

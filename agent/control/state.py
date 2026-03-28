@@ -28,6 +28,7 @@ from agent.control.models import (
     UsageSummary,
 )
 from agent.control.policy import (
+    classify_provider_delivery_outcome,
     get_artifact_retention_policy,
     get_job_persistence_policy,
     select_artifact_retention_policy,
@@ -268,6 +269,11 @@ class ControlPlaneStateService:
             detail=detail,
             metadata=metadata or {},
         )
+        self._update_delivery_summary_from_event(
+            record,
+            event_type=event_type,
+            metadata=metadata or {},
+        )
         self._storage.save_delivery_record(record)
         return record
 
@@ -356,6 +362,11 @@ class ControlPlaneStateService:
             record,
             event_type=event_type,
             detail=detail,
+            metadata=metadata or {},
+        )
+        self._update_delivery_summary_from_event(
+            record,
+            event_type=event_type,
             metadata=metadata or {},
         )
         self._storage.save_delivery_record(record)
@@ -714,6 +725,69 @@ class ControlPlaneStateService:
         ):
             return
         record.events.append(candidate)
+
+    def _update_delivery_summary_from_event(
+        self,
+        record: DeliveryRecord,
+        *,
+        event_type: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        provider_context = dict(metadata.get("provider_context", {}))
+        provider_id = (
+            str(metadata.get("provider_id", ""))
+            or str(provider_context.get("provider_id", ""))
+        )
+        capability_id = (
+            str(metadata.get("capability_id", ""))
+            or str(provider_context.get("capability_id", ""))
+        )
+        route_id = (
+            str(metadata.get("route_id", ""))
+            or str(provider_context.get("route_id", ""))
+        )
+        provider_receipt = dict(metadata.get("provider_receipt", {}))
+        provider_status = str(
+            provider_receipt.get("status")
+            or metadata.get("provider_status", "")
+        )
+
+        if not (provider_id or capability_id or route_id or provider_receipt or event_type.startswith("gateway_")):
+            return
+
+        provider_summary = dict(record.summary.get("provider_delivery", {}))
+        provider_summary.update(
+            {
+                "provider_id": provider_id or provider_summary.get("provider_id", ""),
+                "capability_id": capability_id or provider_summary.get("capability_id", ""),
+                "route_id": route_id or provider_summary.get("route_id", ""),
+                "gateway_run_id": str(
+                    metadata.get("gateway_run_id", provider_summary.get("gateway_run_id", ""))
+                ),
+                "target_url": str(metadata.get("target_url", provider_summary.get("target_url", ""))),
+                "receipt": provider_receipt or provider_summary.get("receipt", {}),
+                "last_event_type": event_type,
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+        )
+
+        if event_type == "gateway_requested":
+            provider_summary.setdefault("outcome", "requested")
+            provider_summary.setdefault("provider_status", "")
+        elif event_type == "gateway_succeeded":
+            outcome = classify_provider_delivery_outcome(
+                receipt_status=provider_status,
+                ok=True,
+            )
+            provider_summary.update(outcome)
+        elif event_type == "gateway_failed":
+            outcome = classify_provider_delivery_outcome(ok=False)
+            provider_summary.update(outcome)
+            provider_summary["error"] = str(metadata.get("error", ""))
+
+        if provider_status:
+            provider_summary["provider_status"] = provider_status
+        record.summary["provider_delivery"] = provider_summary
 
     def _coerce_usage(
         self,

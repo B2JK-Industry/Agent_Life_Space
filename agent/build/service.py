@@ -23,7 +23,6 @@ This service does NOT:
 from __future__ import annotations
 
 import difflib
-import fnmatch
 import json
 import re
 import shlex
@@ -67,6 +66,7 @@ from agent.control.models import (
     TraceRecordKind,
 )
 from agent.control.policy import (
+    evaluate_build_capability_guardrails,
     get_build_execution_policy,
     get_delivery_policy,
     get_review_gate_policy,
@@ -980,6 +980,95 @@ class BuildService:
                 detail=f"Deleted text from {operation.path}.",
             )
 
+        if operation.operation_type == BuildOperationType.COPY_FILE:
+            source = self._resolve_workspace_operation_path(
+                workspace_root,
+                operation.source_path,
+            )
+            if not source.exists():
+                raise ValueError(
+                    f"Source file does not exist: {operation.source_path}"
+                )
+            if source.is_dir():
+                raise ValueError(
+                    f"copy_file does not support directories: {operation.source_path}"
+                )
+            source_content = source.read_text(encoding="utf-8")
+            existing = (
+                target.read_text(encoding="utf-8")
+                if target.exists() and target.is_file()
+                else None
+            )
+            if existing == source_content:
+                return BuildOperationResult(
+                    operation_id=operation.id,
+                    operation_type=operation.operation_type,
+                    path=operation.path,
+                    status=BuildOperationStatus.NOOP,
+                    changed=False,
+                    detail=(
+                        f"{operation.path} already matches source "
+                        f"{operation.source_path}."
+                    ),
+                )
+            target.write_text(source_content, encoding="utf-8")
+            self._record_workspace_file(job, target)
+            return BuildOperationResult(
+                operation_id=operation.id,
+                operation_type=operation.operation_type,
+                path=operation.path,
+                status=BuildOperationStatus.APPLIED,
+                changed=True,
+                detail=f"Copied {operation.source_path} to {operation.path}.",
+            )
+
+        if operation.operation_type == BuildOperationType.MOVE_FILE:
+            source = self._resolve_workspace_operation_path(
+                workspace_root,
+                operation.source_path,
+            )
+            if not source.exists():
+                if target.exists():
+                    return BuildOperationResult(
+                        operation_id=operation.id,
+                        operation_type=operation.operation_type,
+                        path=operation.path,
+                        status=BuildOperationStatus.NOOP,
+                        changed=False,
+                        detail=(
+                            f"Source {operation.source_path} is already absent and "
+                            f"{operation.path} exists."
+                        ),
+                    )
+                raise ValueError(
+                    f"Source file does not exist: {operation.source_path}"
+                )
+            if source.is_dir():
+                raise ValueError(
+                    f"move_file does not support directories: {operation.source_path}"
+                )
+            if source.resolve() == target.resolve():
+                return BuildOperationResult(
+                    operation_id=operation.id,
+                    operation_type=operation.operation_type,
+                    path=operation.path,
+                    status=BuildOperationStatus.NOOP,
+                    changed=False,
+                    detail="Source and target already point to the same file.",
+                )
+            if target.exists() and target.is_file():
+                target.unlink()
+            source.replace(target)
+            self._record_workspace_file(job, target)
+            return BuildOperationResult(
+                operation_id=operation.id,
+                operation_type=operation.operation_type,
+                path=operation.path,
+                status=BuildOperationStatus.APPLIED,
+                changed=True,
+                detail=f"Moved {operation.source_path} to {operation.path}.",
+            )
+
         if operation.operation_type == BuildOperationType.JSON_SET:
             if target.exists():
                 try:
@@ -1080,19 +1169,49 @@ class BuildService:
         self._workspace_manager.record_file(job.workspace_id, str(path))
 
     def _build_step_summary(self, job: BuildJob) -> str:
+        summary = self._implementation_summary(job)
         if job.implementation_mode == BuildImplementationMode.AUDIT_MARKER_ONLY:
             return "No structured implementation plan supplied; audit marker recorded."
+        operation_mix = ", ".join(
+            f"{kind}={count}"
+            for kind, count in self._operation_mix(job.intake.implementation_plan).items()
+        )
+        return (
+            "Structured implementation plan executed via bounded local engine: "
+            f"{summary['operation_count']} operations, "
+            f"{summary['applied_operations']} applied, "
+            f"{summary['noop_operations']} noop, "
+            f"{summary['changed_paths_count']} changed path(s), "
+            f"mix={operation_mix or 'none'}."
+        )
 
-        applied = sum(
-            1
-            for result in job.implementation_results
-            if result.status == BuildOperationStatus.APPLIED
+    def _workspace_execution_evidence(self, job: BuildJob) -> str:
+        if job.implementation_mode == BuildImplementationMode.AUDIT_MARKER_ONLY:
+            return "Workspace synchronized; no structured implementation plan supplied."
+        implementation = self._implementation_summary(job)
+        summary = ", ".join(implementation["changed_paths"][:5]) or "none"
+        return (
+            f"Workspace synchronized; bounded local engine ran "
+            f"{implementation['operation_count']} operations; changed_paths={summary}"
         )
-        noop = sum(
-            1
-            for result in job.implementation_results
-            if result.status == BuildOperationStatus.NOOP
-        )
+
+    def _implementation_metadata(self, job: BuildJob) -> dict[str, Any]:
+        summary = self._implementation_summary(job)
+        return {
+            "mode": job.implementation_mode.value,
+            "operation_count": summary["operation_count"],
+            "operation_mix": self._operation_mix(job.intake.implementation_plan),
+            "changed_operations": summary["changed_operations"],
+            "applied_operations": summary["applied_operations"],
+            "noop_operations": summary["noop_operations"],
+            "failed_operations": summary["failed_operations"],
+            "changed_paths": summary["changed_paths"],
+            "result_status_counts": dict(summary["result_status_counts"]),
+            "plan": [operation.to_dict() for operation in job.intake.implementation_plan],
+            "results": [result.to_dict() for result in job.implementation_results],
+        }
+
+    def _implementation_summary(self, job: BuildJob) -> dict[str, Any]:
         changed_paths = sorted(
             {
                 result.path
@@ -1100,63 +1219,35 @@ class BuildService:
                 if result.changed
             }
         )
-        operation_mix = ", ".join(
-            f"{kind}={count}"
-            for kind, count in self._operation_mix(job.intake.implementation_plan).items()
-        )
-        return (
-            "Structured implementation plan executed via bounded local engine: "
-            f"{len(job.implementation_results)} operations, "
-            f"{applied} applied, {noop} noop, {len(changed_paths)} changed path(s), "
-            f"mix={operation_mix or 'none'}."
-        )
-
-    def _workspace_execution_evidence(self, job: BuildJob) -> str:
-        if job.implementation_mode == BuildImplementationMode.AUDIT_MARKER_ONLY:
-            return "Workspace synchronized; no structured implementation plan supplied."
-        changed_paths = [
-            result.path
-            for result in job.implementation_results
-            if result.changed
-        ]
-        summary = ", ".join(changed_paths[:5]) or "none"
-        return (
-            f"Workspace synchronized; bounded local engine ran "
-            f"{len(job.implementation_results)} operations; changed_paths={summary}"
-        )
-
-    def _implementation_metadata(self, job: BuildJob) -> dict[str, Any]:
-        return {
-            "mode": job.implementation_mode.value,
-            "operation_count": len(job.intake.implementation_plan),
-            "operation_mix": self._operation_mix(job.intake.implementation_plan),
-            "changed_operations": sum(
-                1 for result in job.implementation_results if result.changed
+        status_counts = {
+            BuildOperationStatus.APPLIED.value: sum(
+                1
+                for result in job.implementation_results
+                if result.status == BuildOperationStatus.APPLIED
             ),
-            "failed_operations": sum(
+            BuildOperationStatus.NOOP.value: sum(
+                1
+                for result in job.implementation_results
+                if result.status == BuildOperationStatus.NOOP
+            ),
+            BuildOperationStatus.FAILED.value: sum(
                 1
                 for result in job.implementation_results
                 if result.status == BuildOperationStatus.FAILED
             ),
-            "result_status_counts": {
-                BuildOperationStatus.APPLIED.value: sum(
-                    1
-                    for result in job.implementation_results
-                    if result.status == BuildOperationStatus.APPLIED
-                ),
-                BuildOperationStatus.NOOP.value: sum(
-                    1
-                    for result in job.implementation_results
-                    if result.status == BuildOperationStatus.NOOP
-                ),
-                BuildOperationStatus.FAILED.value: sum(
-                    1
-                    for result in job.implementation_results
-                    if result.status == BuildOperationStatus.FAILED
-                ),
-            },
-            "plan": [operation.to_dict() for operation in job.intake.implementation_plan],
-            "results": [result.to_dict() for result in job.implementation_results],
+        }
+        return {
+            "mode": job.implementation_mode.value,
+            "operation_count": len(job.intake.implementation_plan),
+            "changed_operations": sum(
+                1 for result in job.implementation_results if result.changed
+            ),
+            "applied_operations": status_counts[BuildOperationStatus.APPLIED.value],
+            "noop_operations": status_counts[BuildOperationStatus.NOOP.value],
+            "failed_operations": status_counts[BuildOperationStatus.FAILED.value],
+            "changed_paths": changed_paths,
+            "changed_paths_count": len(changed_paths),
+            "result_status_counts": status_counts,
         }
 
     def _operation_mix(
@@ -1175,50 +1266,12 @@ class BuildService:
         intake: BuildIntake,
         capability: Any,
     ) -> list[str]:
-        if not intake.implementation_plan:
-            return []
-
-        errors: list[str] = []
-        if len(intake.implementation_plan) > capability.max_operation_count:
-            errors.append(
-                f"capability {capability.id} allows at most "
-                f"{capability.max_operation_count} structured operation(s)"
-            )
-
-        supported_operation_types = {
-            item.value for item in capability.supported_operation_types
-        }
-        for operation in intake.implementation_plan:
-            if operation.operation_type.value not in supported_operation_types:
-                errors.append(
-                    f"capability {capability.id} does not allow "
-                    f"{operation.operation_type.value}"
-                )
-            if intake.target_files and not self._path_matches_declared_targets(
-                operation.path,
-                intake.target_files,
-            ):
-                errors.append(
-                    f"operation path {operation.path} is outside declared target_files"
-                )
-        return errors
-
-    def _path_matches_declared_targets(
-        self,
-        path: str,
-        target_files: list[str],
-    ) -> bool:
-        candidate = Path(path).as_posix()
-        for declared in target_files:
-            target = str(declared).strip().replace("\\", "/")
-            if not target:
-                continue
-            normalized = target.rstrip("/")
-            if candidate == normalized or candidate.startswith(f"{normalized}/"):
-                return True
-            if fnmatch.fnmatch(candidate, target):
-                return True
-        return False
+        decision = evaluate_build_capability_guardrails(
+            capability=capability,
+            operations=intake.implementation_plan,
+            target_files=intake.target_files,
+        )
+        return list(decision["errors"])
 
     def _discover_verification_plan(
         self,
@@ -1825,6 +1878,7 @@ class BuildService:
         job: BuildJob,
         verification_passed: bool,
     ) -> dict[str, Any]:
+        implementation_summary = self._implementation_summary(job)
         by_evaluator: dict[str, int] = {}
         by_kind: dict[str, int] = {}
         structured_count = 0
@@ -1862,6 +1916,7 @@ class BuildService:
             "report_kind": "delivery_acceptance",
             "verification_passed": verification_passed,
             "review_verdict": job.post_build_review_verdict or "not_requested",
+            "implementation_summary": implementation_summary,
             "criteria_by_status": criteria_by_status,
             "met_criteria": criteria_by_status["met"],
             "unmet_criteria": criteria_by_status["unmet"],
@@ -1890,6 +1945,7 @@ class BuildService:
                 "structured_count": structured_count,
                 "by_evaluator": by_evaluator,
                 "by_kind": by_kind,
+                "implementation": implementation_summary,
             },
         }
 
@@ -2003,6 +2059,14 @@ class BuildService:
                 )
                 continue
 
+            if criterion.evaluator == CriterionEvaluator.IMPLEMENTATION:
+                self._evaluate_implementation_backed_criterion(
+                    job=job,
+                    criterion=criterion,
+                    normalized=normalized,
+                )
+                continue
+
             if normalized.startswith("verify:"):
                 self._evaluate_verify_command(
                     job=job,
@@ -2075,6 +2139,19 @@ class BuildService:
                 )
                 continue
 
+            if (
+                "implementation" in normalized
+                or "mutation" in normalized
+                or "operation" in normalized
+                or "engine" in normalized
+            ):
+                self._evaluate_implementation_backed_criterion(
+                    job=job,
+                    criterion=criterion,
+                    normalized=normalized,
+                )
+                continue
+
             if criterion.kind == CriterionKind.QUALITY:
                 self._evaluate_quality_backed_criterion(job=job, criterion=criterion)
                 continue
@@ -2126,6 +2203,13 @@ class BuildService:
             "review_verdict",
             "verdict",
         }
+        implementation_keys = {
+            "minimum_changed_operations",
+            "maximum_noop_operations",
+            "required_operation_types",
+            "required_changed_paths",
+            "implementation_mode",
+        }
 
         if criterion.evaluator == CriterionEvaluator.VERIFICATION or "verification_kind" in metadata:
             self._evaluate_explicit_verification_criterion(
@@ -2162,6 +2246,15 @@ class BuildService:
                 normalized=normalized,
                 workspace_path=workspace_path,
                 change_set=change_set,
+            )
+            return True
+        if criterion.evaluator == CriterionEvaluator.IMPLEMENTATION or any(
+            key in metadata for key in implementation_keys
+        ):
+            self._evaluate_implementation_backed_criterion(
+                job=job,
+                criterion=criterion,
+                normalized=normalized,
             )
             return True
         return False
@@ -2629,6 +2722,115 @@ class BuildService:
             return
         passed = ", ".join(result.kind.value for result in job.verification_results)
         criterion.meet(f"Quality gates passed: {passed}")
+
+    def _evaluate_implementation_backed_criterion(
+        self,
+        *,
+        job: BuildJob,
+        criterion,
+        normalized: str,
+    ) -> None:
+        summary = self._implementation_summary(job)
+        metadata = criterion.metadata or {}
+        issues: list[str] = []
+        evidence_parts = [
+            (
+                f"implementation mode={summary['mode']}; "
+                f"operations={summary['operation_count']}; "
+                f"changed={summary['changed_operations']}; "
+                f"noop={summary['noop_operations']}; "
+                f"failed={summary['failed_operations']}"
+            )
+        ]
+
+        minimum_changed = metadata.get("minimum_changed_operations")
+        if minimum_changed is not None and summary["changed_operations"] < int(minimum_changed):
+            issues.append(
+                f"changed operations below threshold: {summary['changed_operations']} < {int(minimum_changed)}"
+            )
+
+        maximum_noop = metadata.get("maximum_noop_operations")
+        if maximum_noop is not None and summary["noop_operations"] > int(maximum_noop):
+            issues.append(
+                f"noop operations exceed threshold: {summary['noop_operations']} > {int(maximum_noop)}"
+            )
+
+        required_operation_types = metadata.get("required_operation_types", [])
+        if isinstance(required_operation_types, str):
+            required_operation_types = [required_operation_types]
+        operation_types = {
+            result.operation_type.value
+            for result in job.implementation_results
+        }
+        if required_operation_types:
+            missing_types = [
+                str(item)
+                for item in required_operation_types
+                if str(item) not in operation_types
+            ]
+            if missing_types:
+                issues.append(
+                    "required implementation operation type(s) missing: "
+                    + ", ".join(missing_types)
+                )
+            else:
+                evidence_parts.append("required operation types observed")
+
+        required_changed_paths = metadata.get("required_changed_paths", [])
+        if isinstance(required_changed_paths, str):
+            required_changed_paths = [required_changed_paths]
+        changed_lookup = {path.casefold() for path in summary["changed_paths"]}
+        if required_changed_paths:
+            missing_paths = [
+                str(path)
+                for path in required_changed_paths
+                if str(path).casefold() not in changed_lookup
+            ]
+            if missing_paths:
+                issues.append(
+                    "required changed path(s) missing: " + ", ".join(missing_paths)
+                )
+            else:
+                evidence_parts.append("required changed paths captured")
+
+        required_mode = metadata.get("implementation_mode")
+        if required_mode and summary["mode"] != str(required_mode):
+            issues.append(
+                f"implementation mode mismatch: expected {required_mode}, got {summary['mode']}"
+            )
+
+        if not metadata:
+            if job.implementation_mode == BuildImplementationMode.AUDIT_MARKER_ONLY:
+                criterion.meet("No structured implementation plan supplied; audit marker only.")
+                return
+            criterion.meet(
+                f"Structured implementation engine ran {summary['operation_count']} operation(s) "
+                f"with {summary['changed_operations']} changed operation(s)."
+            )
+            return
+
+        if summary["failed_operations"] > 0:
+            issues.append(
+                f"{summary['failed_operations']} implementation operation(s) failed"
+            )
+
+        if "no noop" in normalized and summary["noop_operations"] > 0:
+            issues.append(
+                f"noop operations present: {summary['noop_operations']}"
+            )
+        if (
+            "changed path" in normalized
+            or "implementation path" in normalized
+        ) and summary["changed_paths"]:
+            evidence_parts.append(
+                "changed paths=" + ", ".join(summary["changed_paths"][:5])
+            )
+
+        evidence = "; ".join(evidence_parts)
+        if issues:
+            criterion.fail(f"{evidence}; {'; '.join(issues)}")
+        else:
+            criterion.meet(evidence)
 
     def _evaluate_review_backed_criterion(
         self,
@@ -3214,6 +3416,10 @@ class BuildService:
             "structured_count": delivery_summary.get("structured_count", 0),
             "by_evaluator": delivery_summary.get("by_evaluator", {}),
             "by_kind": delivery_summary.get("by_kind", {}),
+            "implementation": delivery_summary.get(
+                "implementation",
+                acceptance_payload.get("implementation_summary", {}),
+            ),
             "verification_passed": acceptance_payload.get(
                 "verification_passed",
                 job.verification_passed,
@@ -3372,6 +3578,7 @@ class BuildService:
                 "changed_operations": sum(
                     1 for result in job.implementation_results if result.changed
                 ),
+                "implementation_summary": self._implementation_summary(job),
                 "verification_passed": job.verification_passed,
                 "acceptance_accepted": job.acceptance.accepted,
                 "structured_acceptance_criteria": acceptance_summary["structured_count"],
@@ -3396,6 +3603,7 @@ class BuildService:
                 "acceptance_report": acceptance_payload,
                 "acceptance_summary": acceptance_summary,
                 "implementation": self._implementation_metadata(job),
+                "implementation_summary": self._implementation_summary(job),
                 "patch": {
                     "artifact_id": (patch_artifact or {}).get("id", ""),
                     "content": (patch_artifact or {}).get("content", ""),

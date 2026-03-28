@@ -714,6 +714,29 @@ async def evaluate_review_quality_command(
     await agent.stop()
 
 
+async def evaluate_release_readiness_command(
+    *,
+    data_dir: str = "agent",
+    release_label: str = "",
+    policy_id: str = "phase2_closure",
+) -> None:
+    """Run release-readiness checks and fail closed when the gate is not ready."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    try:
+        result = await agent.evaluate_release_readiness(
+            release_label=release_label,
+            policy_id=policy_id,
+        )
+        print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    finally:
+        await agent.stop()
+    if not result.get("ready", False):
+        raise SystemExit(1)
+
+
 async def show_artifact_command(
     *,
     data_dir: str = "agent",
@@ -1221,6 +1244,21 @@ def main() -> None:
         help="Optional release label to attach to --review-quality-eval",
     )
     parser.add_argument(
+        "--release-readiness",
+        action="store_true",
+        help="Run release-readiness checks and exit non-zero when the gate is not ready",
+    )
+    parser.add_argument(
+        "--release-readiness-release-label",
+        default="",
+        help="Optional release label to attach to --release-readiness",
+    )
+    parser.add_argument(
+        "--release-readiness-policy-id",
+        default="phase2_closure",
+        help="Policy id for --release-readiness",
+    )
+    parser.add_argument(
         "--runtime-model",
         action="store_true",
         help="Show explicit runtime coexistence rules and exit",
@@ -1541,6 +1579,14 @@ def main() -> None:
             evaluate_review_quality_command(
                 data_dir=args.data_dir,
                 release_label=args.review_quality_release_label,
+            )
+        )
+    elif args.release_readiness:
+        asyncio.run(
+            evaluate_release_readiness_command(
+                data_dir=args.data_dir,
+                release_label=args.release_readiness_release_label,
+                policy_id=args.release_readiness_policy_id,
             )
         )
     elif args.gateway_catalog:

@@ -11,7 +11,7 @@ Use it for:
 
 ## Current Progress Snapshot
 
-Assessment basis: after Phase 2 Builder Engine v2 and Provider Receipt slice.
+Assessment basis: after Phase 2 closure and release-readiness slice.
 
 Important:
 - this is a strategy progress snapshot, not a merge-state indicator
@@ -23,11 +23,11 @@ Important:
 |-------|--------|-----------------|---------------|-----|
 | T1 Platform Foundation | `in_progress` | 96% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted job/plan/trace/delivery records, retention-aware artifact records with prune flow, first-class workspace joins, and explicit environment profiles for review/build/acquisition/export flows. | No unified cross-domain action layer yet. |
 | T2 Reviewer Product | `complete_for_phase` | 96% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, converged Telegram and structured API review entrypoints, shared delivery lifecycle state, and reusable handoff summary artifacts now flow through the shared runtime. | LLM analysis and richer external delivery automation are v2. |
-| T3 Builder Product | `in_progress` | 98% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery across Python/Node/Make/CI signals, source-aware execution policy traces and blocking, deterministic patch/diff, richer verification/acceptance delivery evidence, a bounded local implementation engine with insert/delete-safe mutations plus capability guardrails, structured acceptance criteria, and an explicit gateway send path for approved build bundles. | No general code generation yet and no semantic requirement engine. |
-| T4 Operator Product | `in_progress` | 95% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report/CLI surfaces, operation-count-aware builder planning, acceptance-summary-aware planning, and explicit gateway handoff actions now exist. | No live backend/UI and no provider-specific operator workflow yet. |
-| T5 Security, Governance, And Policy | `in_progress` | 98% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, capability-scoped builder guardrails, explicit gateway defaults, provider-aware gateway routing decisions, provider receipt validation, and structured denial payloads now exist across build/review/tool/web/social/finance-facing blocked flows. | Build execution and broader runtime action flow still sit outside one unified policy enforcement boundary. |
-| T6 Cost, Usage, And Observability | `in_progress` | 98% | UsageSummary, a durable per-job cost ledger, persisted job duration/retry/failure telemetry, runtime hard/soft/stop-loss budget posture, budget-aware escalation controls, durable plan/trace/delivery/gateway telemetry, shared runtime job/artifact/workspace queries, richer operator reporting, approval backlog plus retention posture summaries, review-eval smoke coverage, golden review cases, and runtime quality telemetry with release labels, duration, and previous-baseline trend deltas now exist. | No live operator UI or broader longitudinal dashboards yet. |
-| T7 External Capability Gateway | `in_progress` | 90% | Runtime model and policy layer now expose explicit gateway defaults, a planning-safe contract, a concrete `obolos.tech` provider catalog, readiness-aware capability routes, env/vault-backed auth resolution, provider-specific request payload shaping, parsed provider receipts, and fallback-capable delivery sends with gateway traces and cost entries. | Only one provider exists so far, and broader downstream provider workflow still remains future scope. |
+| T3 Builder Product | `complete_for_phase` | 99% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery across Python/Node/Make/CI signals, source-aware execution policy traces and blocking, deterministic patch/diff, richer verification/acceptance delivery evidence, a bounded local implementation engine with copy/move-aware capability guardrails, implementation-backed acceptance criteria, release-readiness gating, and an explicit gateway send path for approved build bundles. | No general code generation yet and no semantic requirement engine. |
+| T4 Operator Product | `in_progress` | 96% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report/CLI surfaces, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware delivery reporting, and release-readiness traces now exist. | No live backend/UI and no richer active provider-specific operator workflow yet. |
+| T5 Security, Governance, And Policy | `in_progress` | 99% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, capability-scoped builder guardrails, explicit gateway defaults, provider-aware gateway routing decisions, provider receipt validation, provider-outcome classification, deterministic release-readiness thresholds, and structured denial payloads now exist across build/review/tool/web/social/finance-facing blocked flows. | Build execution and broader runtime action flow still sit outside one unified policy enforcement boundary. |
+| T6 Cost, Usage, And Observability | `in_progress` | 99% | UsageSummary, a durable per-job cost ledger, persisted job duration/retry/failure telemetry, runtime hard/soft/stop-loss budget posture, budget-aware escalation controls, durable plan/trace/delivery/gateway/release telemetry, shared runtime job/artifact/workspace queries, richer operator reporting, approval backlog plus retention posture summaries, review-eval smoke coverage, golden review cases, runtime quality telemetry with release labels, duration, and previous-baseline trend deltas, plus a CLI/CI release-readiness gate now exist. | No live operator UI or broader longitudinal dashboards yet. |
+| T7 External Capability Gateway | `in_progress` | 92% | Runtime model and policy layer now expose explicit gateway defaults, a planning-safe contract, a concrete `obolos.tech` provider catalog, readiness-aware capability routes, env/vault-backed auth resolution, provider-specific request payload shaping, parsed provider receipts, provider-outcome classification, and fallback-capable delivery sends with gateway traces and cost entries. | Only one provider exists so far, and broader downstream provider workflow still remains future scope. |
 | T8 Enterprise Hardening | `in_progress` | 97% | Shared control-plane layer, explicit runtime coexistence rules, direct review/build primitive reuse, persisted product-job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, deterministic review/build execution policy boundaries, explicit gateway runtime boundaries, provider configuration posture, and data-handling rules. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack. |
 
 ## Theme T1: Platform Foundation
@@ -158,16 +158,16 @@ Stories:
 
 ## Theme T3: Builder Product
 
-- status: `in_progress`
-- approx_progress: 95%
+- status: `complete_for_phase`
+- approx_progress: 99%
 
 Goal: make implementation work first-class, controlled, and acceptance-driven.
 
 ### Epic T3-E1: Capability-Based Build Execution
 
 - status: `in_progress`
-- approx_progress: 91%
-- remaining_gap: Build flow now has runtime entrypoints, declared capabilities, resumable checkpoints, a bounded local implementation engine, and delivery-package preview artifacts, but it still lacks general code generation and broader execution planning.
+- approx_progress: 99%
+- remaining_gap: Build flow now has runtime entrypoints, declared capabilities, resumable checkpoints, a bounded local implementation engine, release-readiness gating, and delivery-package preview artifacts; general code generation and broader execution planning now sit beyond the current Phase 2 scope.
 
 Stories:
 - T3-E1-S1: Define implementation capability catalog for backend, frontend,
@@ -188,8 +188,8 @@ Stories:
   - current_state: BuildJob now records checkpoints, resume lineage, and can resume through `BuildService.resume_build()` and `python -m agent --build-resume ...`, reusing successful phases and rerunning failed ones.
   - missing: No planner-driven or distributed-worker resume policy yet.
 - T3-E1-S5: Replace placeholder build step with a bounded local implementation engine.
-  - status: `mostly_complete`
-  - current_state: BuildService now executes structured workspace mutations (`write_file`, `append_text`, `replace_text`, `insert_before_text`, `insert_after_text`, `delete_text`, `delete_file`, `json_set`) through a bounded local engine, enforces deterministic operation-count plus target-scope guardrails, persists per-operation results, and exposes implementation mode plus execution summaries through job metadata, delivery bundles, CLI, and planning surfaces.
+  - status: `complete_for_phase`
+  - current_state: BuildService now executes structured workspace mutations (`write_file`, `append_text`, `replace_text`, `insert_before_text`, `insert_after_text`, `delete_text`, `delete_file`, `copy_file`, `move_file`, `json_set`) through a bounded local engine, enforces deterministic operation-count plus source/target-scope guardrails, persists per-operation results, and exposes implementation mode plus execution summaries through job metadata, delivery bundles, CLI, and planning surfaces.
   - missing: Execution still depends on an explicit structured plan; there is no freeform or LLM-backed code generation yet.
 
 ### Epic T3-E2: Build Verification Loop
@@ -217,8 +217,8 @@ Stories:
 
 ### Epic T3-E3: Acceptance Criteria Engine
 
-- status: `in_progress`
-- approx_progress: 93%
+- status: `complete_for_phase`
+- approx_progress: 96%
 
 Stories:
 - T3-E3-S1: Define acceptance criteria object model.
@@ -226,8 +226,8 @@ Stories:
   - current_state: AcceptanceCriterion now has explicit kind, required-vs-optional semantics, evaluator hints, typed status transitions, and lightweight parsing from operator/CLI strings into a more structured builder-facing object model.
   - missing: The object model is stronger, but semantic requirement matching is still outside the current deterministic evaluator set.
 - T3-E3-S2: Attach acceptance criteria to jobs.
-  - status: `mostly_complete`
-  - current_state: BuildIntake carries structured `AcceptanceCriterion` objects, BuildJob inherits them, CLI can now load acceptance criteria from JSON, unified operator intake accepts both lightweight strings and richer criterion objects, and `JobPlan` now exposes acceptance summaries with required/optional/structured/evaluator breakdown before execution.
+  - status: `complete_for_phase`
+  - current_state: BuildIntake carries structured `AcceptanceCriterion` objects, BuildJob inherits them, CLI can now load acceptance criteria from JSON, unified operator intake accepts both lightweight strings and richer criterion objects, `JobPlan` now exposes acceptance summaries with required/optional/structured/evaluator breakdown before execution, and delivery-ready reports now include implementation-backed acceptance summaries over changed operations, changed paths, operation types, and implementation mode.
   - missing: Acceptance criteria are now first-class in intake/planning, but semantic requirement matching is still missing.
 - T3-E3-S3: Validate criteria at completion time.
   - status: `complete_for_phase`
@@ -313,14 +313,14 @@ Stories:
   - current_state: Review and build delivery both request approval with explicit job, artifact, workspace, and bundle linkage while refreshing lifecycle status after approval changes.
   - missing: Richer approval chains and real external send remain future scope.
 - T4-E3-S4: Record delivery status and handoff audit events.
-  - status: `mostly_complete`
-  - current_state: Build and review delivery now persist lifecycle state (`prepared`, `awaiting_approval`, `approved`, `rejected`, `handed_off`) plus explicit audit events for gateway request, success, and failure surfaced through the orchestrator, CLI, workspace joins, and operator report.
-  - missing: Provider-specific delivery outcomes and broader operator workflow remain future scope.
+  - status: `complete_for_phase`
+  - current_state: Build and review delivery now persist lifecycle state (`prepared`, `awaiting_approval`, `approved`, `rejected`, `handed_off`) plus explicit audit events for gateway request, success, and failure, and provider-specific outcomes now flow into delivery summaries, operator report summaries, inbox attention, and recent provider-delivery views.
+  - missing: Broader active operator workflow and live UI remain future scope.
 
 ## Theme T5: Security, Governance, And Policy
 
 - status: `in_progress`
-- approx_progress: 92%
+- approx_progress: 99%
 
 Goal: ensure all valuable workflows remain controlled and auditable.
 
@@ -348,11 +348,12 @@ Stories:
     failures, tool-execution failures, and social/API request errors.
   - missing: One unified runtime enforcement engine is still separate scope.
 - T5-E1-S4: Ensure policy is deterministic and separately testable.
-  - status: `mostly_complete`
+  - status: `complete_for_phase`
   - current_state: Gateway provider catalogs, route selection, config
-    readiness, provider receipt validation, builder capability guardrails, and
-    fallback behavior now sit on deterministic policy + catalog surfaces with
-    targeted tests instead of living only in ad-hoc runtime branches.
+    readiness, provider receipt validation, provider-outcome classification,
+    builder capability guardrails, release-readiness thresholds, and fallback
+    behavior now sit on deterministic policy + catalog surfaces with targeted
+    tests instead of living only in ad-hoc runtime branches.
   - missing: Build/review/tool/runtime action flow is still not governed by
     one shared enforcement engine.
 - T5-E1-S5: Bring repository and diff analysis under the shared execution and
@@ -476,12 +477,13 @@ Stories:
     runs that suite explicitly.
   - missing: No version-over-version quality or latency telemetry yet.
 - T6-E3-S4: Track latency and quality regression across versions.
-  - status: `mostly_complete`
+  - status: `complete_for_phase`
   - current_state: Review quality evaluation now records release labels,
     runtime duration, quality deltas versus the previous baseline, and
-    regression posture into the control plane and operator report.
+    regression posture into the control plane and operator report, and the same
+    telemetry now drives a deterministic CLI/CI release-readiness gate.
   - missing: Trend telemetry exists, but it is not yet promoted into broader
-    release gating or longitudinal dashboards.
+    longitudinal dashboards.
 
 ## Theme T7: External Capability Gateway
 
@@ -600,6 +602,13 @@ Stories:
   - missing: Broader deployment/storage documentation and stricter runtime
     enforcement still remain open.
 - T8-E2-S4: Add deployment documentation for controlled environments.
+  - status: `complete_for_phase`
+  - current_state: Deployment documentation now covers controlled local-owner,
+    operator-controlled, and enterprise-hardened postures, release-readiness
+    checks, gateway env/vault configuration, and runtime execution boundaries
+    for practical Phase 2 deployment and handoff.
+  - missing: The docs are explicit, but deployment enforcement is still not an
+    extraction-grade runtime contract across the whole stack.
 
 ### Epic T8-E3: Compliance-Friendly Foundations
 

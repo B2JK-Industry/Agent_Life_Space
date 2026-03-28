@@ -22,6 +22,7 @@ Tento súbor je len rozcestník. Detailná dokumentácia je na wiki stránkach:
 | [Learning Model](./LEARNING_MODEL.md) | Definícia learning systému, 4 typy, safety rules |
 | [Operator Handbook](./OPERATOR_HANDBOOK.md) | Praktický sprievodca pre vlastníka |
 | [Product Identity](./PRODUCT_IDENTITY.md) | Rozhodnutie: personal sovereign operator |
+| [Controlled Environments](./CONTROLLED_ENVIRONMENTS.md) | Runtime profily, gateway config, Phase 2 deployment posture |
 | [Release Checklist](./RELEASE_CHECKLIST.md) | Checklist pre každý release |
 | [Strategy Docs](./strategy/README.md) | Source of truth pre dlhodobú produktovú a architektonickú stratégiu |
 | [Backlog Progress](./strategy/BACKLOG_PROGRESS.md) | Snapshot progresu proti stratégii a backlogu |
@@ -38,7 +39,8 @@ python -m agent --report     # Operator report / inbox
 python -m agent --runtime-model   # Explicitný runtime model
 python -m agent --gateway-catalog
 python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capability review_handoff_v1 --gateway-export-mode client_safe
-python -m agent --review-quality-eval --review-quality-release-label v1.14.0
+python -m agent --review-quality-eval --review-quality-release-label v1.15.0
+python -m agent --release-readiness --release-readiness-release-label v1.15.0
 python -m agent --export-evidence-job <job_id>
 python -m agent --export-evidence-job <job_id> --export-evidence-mode client_safe
 python -m agent --list-artifacts  # Shared artifact query surface
@@ -56,15 +58,18 @@ python -m pytest tests/ -q   # Testy
 
 ## Verzia
 
-Aktuálna: **v1.14.0** — phase 2 builder engine v2 and provider receipt release.
+Aktuálna: **v1.15.0** — phase 2 closure and release-readiness release.
 
-Nové v `v1.14.0`:
-- builder vie bezpečne robiť aj `insert_before_text`, `insert_after_text`,
-  `delete_text` a `delete_file`, nie len pôvodné základné mutácie
-- builder capability guardrails teraz validujú operation count, typy operácií
-  aj scope voči deklarovaným `target_files` ešte pred mutable execution
-- gateway pre `obolos.tech` už vracia parsed provider receipt a fallbackuje aj
-  pri nekompletnej downstream odpovedi, nie len pri 5xx/unavailable route
-- delivery a cost/traces tým pádom nesú aj provider receipt metadata pre audit
+Nové v `v1.15.0`:
+- builder bounded engine teraz podporuje aj `copy_file` a `move_file`, a
+  capability guardrails validujú aj source/target scope
+- acceptance reports a delivery handoff teraz nesú implementation-backed
+  summary nad changed operations, changed paths, operation types a mode
+- runtime má deterministic release-readiness gate cez
+  `python -m agent --release-readiness` aj CI
+- gateway delivery a operator report teraz nesú provider outcomes, nielen raw
+  receipt metadata
+- pribudla samostatná deployment dokumentácia pre controlled environments a
+  Phase 2 handoff/posture
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.
