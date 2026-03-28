@@ -57,6 +57,9 @@ jobs:
       - name: Review eval smoke
         run: pytest tests/test_review_eval_smoke.py -q --tb=short
 
+      - name: Review eval golden
+        run: pytest tests/test_review_eval_golden.py -q --tb=short
+
       - name: Performance budget
         timeout-minutes: 3
         run: |

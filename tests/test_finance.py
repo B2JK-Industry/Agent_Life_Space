@@ -129,6 +129,7 @@ class TestBudgetLimits:
     async def test_exceeds_daily_budget(self, tracker: FinanceTracker) -> None:
         check = tracker.check_budget(150.0)
         assert check["within_budget"] is False
+        assert check["denial"]["code"] == "finance_budget_blocked"
 
     @pytest.mark.asyncio
     async def test_budget_decreases_after_spend(

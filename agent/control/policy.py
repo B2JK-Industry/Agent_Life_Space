@@ -112,6 +112,35 @@ class ExternalGatewayPolicy:
 
 
 @dataclass(frozen=True)
+class ExternalGatewayContract:
+    """Planning-safe contract for future external capability gateways."""
+
+    id: str
+    label: str
+    description: str
+    request_fields: tuple[str, ...]
+    response_fields: tuple[str, ...]
+    default_policy_id: str = "disabled_by_default"
+    approval_required: bool = True
+    record_cost: bool = True
+    allow_network: bool = False
+
+
+@dataclass(frozen=True)
+class DataHandlingRule:
+    """Explicit retention/redaction/handoff rule for evidence-bearing outputs."""
+
+    id: str
+    label: str
+    description: str
+    export_modes: tuple[str, ...]
+    redaction_required: bool
+    allowed_handoff_targets: tuple[str, ...]
+    retention_policy_ids: tuple[str, ...]
+    recoverable: bool = True
+
+
+@dataclass(frozen=True)
 class EnvironmentProfile:
     """Deterministic execution environment profile."""
 
@@ -294,6 +323,79 @@ _EXTERNAL_GATEWAY_POLICIES: dict[str, ExternalGatewayPolicy] = {
         require_approval=True,
         record_cost=True,
         allow_network=False,
+    ),
+}
+
+_EXTERNAL_GATEWAY_CONTRACTS: dict[str, ExternalGatewayContract] = {
+    "external_capability_gateway_v1": ExternalGatewayContract(
+        id="external_capability_gateway_v1",
+        label="External capability gateway v1",
+        description=(
+            "Approval-gated boundary for future provider-backed capabilities. "
+            "Requests must be job-linked, cost-recorded, and artifact-traceable "
+            "before any live network path is enabled."
+        ),
+        request_fields=(
+            "request_id",
+            "job_id",
+            "capability_kind",
+            "objective",
+            "constraints",
+            "approval_context",
+            "budget_context",
+            "input_artifact_ids",
+        ),
+        response_fields=(
+            "gateway_run_id",
+            "status",
+            "output_artifact_ids",
+            "usage",
+            "approval_events",
+            "denial",
+        ),
+        default_policy_id="disabled_by_default",
+        approval_required=True,
+        record_cost=True,
+        allow_network=False,
+    ),
+}
+
+_DATA_HANDLING_RULES: dict[str, DataHandlingRule] = {
+    "internal_operator_evidence_v1": DataHandlingRule(
+        id="internal_operator_evidence_v1",
+        label="Internal operator evidence",
+        description=(
+            "Internal evidence packages may include richer traces and linkage, "
+            "but still stay retention-aware and approval-linked."
+        ),
+        export_modes=("internal",),
+        redaction_required=False,
+        allowed_handoff_targets=("operator_local", "internal_audit"),
+        retention_policy_ids=("artifact_recovery_180d", "delivery_evidence_365d"),
+    ),
+    "client_safe_review_handoff_v1": DataHandlingRule(
+        id="client_safe_review_handoff_v1",
+        label="Client-safe review handoff",
+        description=(
+            "Client-facing review bundles require redaction of paths, hostnames, "
+            "requester/source context, and secrets before handoff."
+        ),
+        export_modes=("client_safe",),
+        redaction_required=True,
+        allowed_handoff_targets=("operator_copy_paste", "client_handoff"),
+        retention_policy_ids=("delivery_evidence_365d",),
+    ),
+    "retained_operational_trace_v1": DataHandlingRule(
+        id="retained_operational_trace_v1",
+        label="Retained operational traces",
+        description=(
+            "Operational traces remain internal-only, recoverable for a short "
+            "window, and should never be treated as client-safe artifacts."
+        ),
+        export_modes=("internal",),
+        redaction_required=False,
+        allowed_handoff_targets=("internal_audit",),
+        retention_policy_ids=("operational_trace_30d",),
     ),
 }
 
@@ -624,6 +726,36 @@ def get_external_gateway_policy(
 def list_external_gateway_policies() -> list[ExternalGatewayPolicy]:
     """Return known external gateway policy profiles."""
     return list(_EXTERNAL_GATEWAY_POLICIES.values())
+
+
+def get_external_gateway_contract(
+    contract_id: str = "external_capability_gateway_v1",
+) -> ExternalGatewayContract:
+    """Resolve a configured external gateway contract."""
+    return _EXTERNAL_GATEWAY_CONTRACTS.get(
+        contract_id,
+        _EXTERNAL_GATEWAY_CONTRACTS["external_capability_gateway_v1"],
+    )
+
+
+def list_external_gateway_contracts() -> list[ExternalGatewayContract]:
+    """Return planning-safe external gateway contracts."""
+    return list(_EXTERNAL_GATEWAY_CONTRACTS.values())
+
+
+def get_data_handling_rule(
+    rule_id: str = "internal_operator_evidence_v1",
+) -> DataHandlingRule:
+    """Resolve a configured evidence/data-handling rule."""
+    return _DATA_HANDLING_RULES.get(
+        rule_id,
+        _DATA_HANDLING_RULES["internal_operator_evidence_v1"],
+    )
+
+
+def list_data_handling_rules() -> list[DataHandlingRule]:
+    """Return explicit data-handling and handoff rules."""
+    return list(_DATA_HANDLING_RULES.values())
 
 
 def get_environment_profile(

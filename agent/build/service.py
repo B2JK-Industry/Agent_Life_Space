@@ -24,9 +24,11 @@ from __future__ import annotations
 
 import difflib
 import json
+import re
 import shlex
 import shutil
 import subprocess
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -991,59 +993,25 @@ class BuildService:
             if capability is not None
             else [VerificationKind.TEST, VerificationKind.LINT]
         )
+        test_details = self._test_surface_details(wp)
+        lint_details = self._lint_surface_details(wp)
+        typecheck_details = self._typecheck_surface_details(wp)
         step_details: dict[str, list[str]] = {
-            VerificationKind.TEST.value: [],
-            VerificationKind.LINT.value: [],
-            VerificationKind.TYPECHECK.value: [],
+            VerificationKind.TEST.value: list(test_details),
+            VerificationKind.LINT.value: list(lint_details),
+            VerificationKind.TYPECHECK.value: list(typecheck_details),
         }
-
-        tests_markers = [
-            "tests/",
-            "pytest.ini",
-            "tox.ini",
-            "noxfile.py",
-        ]
-        lint_markers = [
-            "pyproject.toml",
-            "ruff.toml",
-            ".ruff.toml",
-            ".flake8",
-            "eslint.config.js",
-            ".eslintrc",
-        ]
-        typecheck_markers = [
-            "mypy.ini",
-            ".mypy.ini",
-            "pyrightconfig.json",
-            "tsconfig.json",
-            "setup.cfg",
-        ]
 
         steps: list[VerificationKind] = []
 
-        if VerificationKind.TEST in default_steps and self._has_test_surface(wp):
+        if VerificationKind.TEST in default_steps and test_details:
             steps.append(VerificationKind.TEST)
-            step_details[VerificationKind.TEST.value] = [
-                marker
-                for marker in tests_markers
-                if self._workspace_has_marker(wp, marker)
-            ] or ["test-like files present"]
 
-        if VerificationKind.LINT in default_steps and self._has_lint_surface(wp):
+        if VerificationKind.LINT in default_steps and lint_details:
             steps.append(VerificationKind.LINT)
-            step_details[VerificationKind.LINT.value] = [
-                marker
-                for marker in lint_markers
-                if self._workspace_has_marker(wp, marker)
-            ] or ["source files present"]
 
-        if self._has_typecheck_surface(wp):
+        if typecheck_details:
             steps.append(VerificationKind.TYPECHECK)
-            step_details[VerificationKind.TYPECHECK.value] = [
-                marker
-                for marker in typecheck_markers
-                if self._workspace_has_marker(wp, marker)
-            ] or ["typed source files present"]
 
         deduped: list[VerificationKind] = []
         for step in steps:
@@ -1097,34 +1065,144 @@ class BuildService:
             workspace_root / "venv" / "bin",
         ]
         tool_root = next((root for root in tool_roots if root.is_dir()), None)
-        if tool_root is None:
-            return custom
+        node_tool_roots = [
+            repo_root / "node_modules" / ".bin",
+            workspace_root / "node_modules" / ".bin",
+        ]
+        node_tool_root = next((root for root in node_tool_roots if root.is_dir()), None)
+        package_scripts = self._package_scripts(workspace_root)
+        package_manager = self._detect_package_manager(workspace_root, repo_root)
 
         for step in steps:
             if step == VerificationKind.TEST:
-                custom[step] = self._tool_command(
-                    tool_root=tool_root,
-                    binary_name="pytest",
-                    module_name="pytest",
-                    fallback=DEFAULT_COMMANDS[step],
-                    args=["tests/", "-q", "--tb=short"],
+                if self._python_test_markers(workspace_root) and tool_root is not None:
+                    custom[step] = self._tool_command(
+                        tool_root=tool_root,
+                        binary_name="pytest",
+                        module_name="pytest",
+                        fallback=DEFAULT_COMMANDS[step],
+                        args=["tests/", "-q", "--tb=short"],
+                    )
+                    continue
+                package_script = self._select_package_script(
+                    VerificationKind.TEST,
+                    package_scripts,
                 )
+                if package_script:
+                    custom[step] = self._package_manager_command(
+                        package_manager,
+                        package_script,
+                    )
+                    continue
+                make_target = self._select_make_target(
+                    workspace_root,
+                    ("test", "check", "ci-test"),
+                )
+                if make_target:
+                    custom[step] = ["make", make_target]
+                    continue
+                if tool_root is not None:
+                    custom[step] = self._tool_command(
+                        tool_root=tool_root,
+                        binary_name="pytest",
+                        module_name="pytest",
+                        fallback=DEFAULT_COMMANDS[step],
+                        args=["tests/", "-q", "--tb=short"],
+                    )
             elif step == VerificationKind.LINT:
-                custom[step] = self._tool_command(
-                    tool_root=tool_root,
-                    binary_name="ruff",
-                    module_name="ruff",
-                    fallback=DEFAULT_COMMANDS[step],
-                    args=["check", "."],
+                if self._python_lint_markers(workspace_root) and tool_root is not None:
+                    custom[step] = self._tool_command(
+                        tool_root=tool_root,
+                        binary_name="ruff",
+                        module_name="ruff",
+                        fallback=DEFAULT_COMMANDS[step],
+                        args=["check", "."],
+                    )
+                    continue
+                package_script = self._select_package_script(
+                    VerificationKind.LINT,
+                    package_scripts,
                 )
+                if package_script:
+                    custom[step] = self._package_manager_command(
+                        package_manager,
+                        package_script,
+                    )
+                    continue
+                eslint = (
+                    node_tool_root / "eslint"
+                    if node_tool_root is not None
+                    else None
+                )
+                if eslint is not None and eslint.exists():
+                    custom[step] = [str(eslint), "."]
+                    continue
+                make_target = self._select_make_target(
+                    workspace_root,
+                    ("lint", "check-lint"),
+                )
+                if make_target:
+                    custom[step] = ["make", make_target]
+                    continue
+                if tool_root is not None:
+                    custom[step] = self._tool_command(
+                        tool_root=tool_root,
+                        binary_name="ruff",
+                        module_name="ruff",
+                        fallback=DEFAULT_COMMANDS[step],
+                        args=["check", "."],
+                    )
             elif step == VerificationKind.TYPECHECK:
-                custom[step] = self._tool_command(
-                    tool_root=tool_root,
-                    binary_name="mypy",
-                    module_name="mypy",
-                    fallback=DEFAULT_COMMANDS[step],
-                    args=[".", "--ignore-missing-imports"],
+                if self._python_typecheck_markers(workspace_root) and tool_root is not None:
+                    custom[step] = self._tool_command(
+                        tool_root=tool_root,
+                        binary_name="mypy",
+                        module_name="mypy",
+                        fallback=DEFAULT_COMMANDS[step],
+                        args=[".", "--ignore-missing-imports"],
+                    )
+                    continue
+                package_script = self._select_package_script(
+                    VerificationKind.TYPECHECK,
+                    package_scripts,
                 )
+                if package_script:
+                    custom[step] = self._package_manager_command(
+                        package_manager,
+                        package_script,
+                    )
+                    continue
+                pyright = (
+                    node_tool_root / "pyright"
+                    if node_tool_root is not None
+                    else None
+                )
+                if pyright is not None and pyright.exists():
+                    custom[step] = [str(pyright)]
+                    continue
+                tsc = (
+                    node_tool_root / "tsc"
+                    if node_tool_root is not None
+                    else None
+                )
+                if tsc is not None and tsc.exists() and (workspace_root / "tsconfig.json").exists():
+                    custom[step] = [str(tsc), "--noEmit"]
+                    continue
+                make_target = self._select_make_target(
+                    workspace_root,
+                    ("typecheck", "check-types", "mypy", "pyright"),
+                )
+                if make_target:
+                    custom[step] = ["make", make_target]
+                    continue
+                if tool_root is not None:
+                    custom[step] = self._tool_command(
+                        tool_root=tool_root,
+                        binary_name="mypy",
+                        module_name="mypy",
+                        fallback=DEFAULT_COMMANDS[step],
+                        args=[".", "--ignore-missing-imports"],
+                    )
         return custom
 
     def _tool_command(
@@ -1143,6 +1221,294 @@ class BuildService:
         if python.exists():
             return [str(python), "-m", module_name, *args]
         return list(fallback)
+
+    def _package_manager_command(
+        self,
+        package_manager: str,
+        script_name: str,
+    ) -> list[str]:
+        if package_manager == "yarn":
+            return ["yarn", script_name]
+        return [package_manager, "run", script_name]
+
+    def _detect_package_manager(
+        self,
+        workspace_root: Path,
+        repo_root: Path,
+    ) -> str:
+        package_data = self._load_package_json(workspace_root)
+        package_manager = str(package_data.get("packageManager", "")).strip().lower()
+        if package_manager.startswith("pnpm@"):
+            return "pnpm"
+        if package_manager.startswith("yarn@"):
+            return "yarn"
+        if package_manager.startswith("npm@"):
+            return "npm"
+
+        lockfile_checks = (
+            ("pnpm-lock.yaml", "pnpm"),
+            ("yarn.lock", "yarn"),
+            ("package-lock.json", "npm"),
+            ("npm-shrinkwrap.json", "npm"),
+        )
+        for marker, manager in lockfile_checks:
+            if (workspace_root / marker).exists() or (repo_root / marker).exists():
+                return manager
+        return "npm"
+
+    def _package_scripts(self, workspace_root: Path) -> dict[str, str]:
+        data = self._load_package_json(workspace_root)
+        raw_scripts = data.get("scripts", {})
+        if not isinstance(raw_scripts, dict):
+            return {}
+        return {
+            str(name): str(command)
+            for name, command in raw_scripts.items()
+            if str(name).strip() and str(command).strip()
+        }
+
+    def _package_dependencies(self, workspace_root: Path) -> set[str]:
+        data = self._load_package_json(workspace_root)
+        dependency_keys = (
+            "dependencies",
+            "devDependencies",
+            "peerDependencies",
+            "optionalDependencies",
+        )
+        names: set[str] = set()
+        for key in dependency_keys:
+            block = data.get(key, {})
+            if isinstance(block, dict):
+                names.update(str(name) for name in block if str(name).strip())
+        return names
+
+    def _load_package_json(self, workspace_root: Path) -> dict[str, Any]:
+        package_path = workspace_root / "package.json"
+        if not package_path.exists() or not package_path.is_file():
+            return {}
+        try:
+            raw = json.loads(package_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    def _select_package_script(
+        self,
+        step: VerificationKind,
+        scripts: dict[str, str],
+    ) -> str:
+        candidates: tuple[str, ...]
+        if step == VerificationKind.TEST:
+            candidates = ("test", "test:ci", "ci:test", "test:unit")
+        elif step == VerificationKind.LINT:
+            candidates = ("lint", "lint:ci", "check:lint")
+        elif step == VerificationKind.TYPECHECK:
+            candidates = ("typecheck", "check-types", "pyright", "mypy")
+        else:
+            return ""
+        for candidate in candidates:
+            if candidate in scripts:
+                return candidate
+        return ""
+
+    def _make_targets(self, workspace_root: Path) -> set[str]:
+        for file_name in ("Makefile", "makefile"):
+            candidate = workspace_root / file_name
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            try:
+                content = candidate.read_text(encoding="utf-8")
+            except Exception:
+                return set()
+            return {
+                match.group(1)
+                for match in re.finditer(
+                    r"^([A-Za-z0-9_.-]+)\s*:",
+                    content,
+                    flags=re.MULTILINE,
+                )
+                if not match.group(1).startswith(".")
+            }
+        return set()
+
+    def _select_make_target(
+        self,
+        workspace_root: Path,
+        candidates: tuple[str, ...],
+    ) -> str:
+        targets = self._make_targets(workspace_root)
+        for candidate in candidates:
+            if candidate in targets:
+                return candidate
+        return ""
+
+    def _workflow_signal(
+        self,
+        workspace_root: Path,
+        tokens: tuple[str, ...],
+    ) -> str:
+        candidates: list[Path] = []
+        workflow_root = workspace_root / ".github" / "workflows"
+        if workflow_root.is_dir():
+            candidates.extend(sorted(workflow_root.glob("*.yml")))
+            candidates.extend(sorted(workflow_root.glob("*.yaml")))
+        gitlab_ci = workspace_root / ".gitlab-ci.yml"
+        if gitlab_ci.exists():
+            candidates.append(gitlab_ci)
+
+        for candidate in candidates:
+            try:
+                content = candidate.read_text(encoding="utf-8").casefold()
+            except Exception as exc:
+                logger.debug("build_workflow_signal_read_failed", path=str(candidate), error=str(exc))
+                continue
+            for token in tokens:
+                if token.casefold() in content:
+                    relative = candidate.relative_to(workspace_root)
+                    return f"{relative}:{token}"
+        return ""
+
+    def _load_toml(self, path: Path) -> dict[str, Any]:
+        if not path.exists() or not path.is_file():
+            return {}
+        try:
+            content = tomllib.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return content if isinstance(content, dict) else {}
+
+    def _test_surface_details(self, workspace_path: Path) -> list[str]:
+        details = list(self._python_test_markers(workspace_path))
+        scripts = self._package_scripts(workspace_path)
+        package_script = self._select_package_script(VerificationKind.TEST, scripts)
+        if package_script:
+            details.append(f"package.json:scripts.{package_script}")
+        make_target = self._select_make_target(workspace_path, ("test", "check", "ci-test"))
+        if make_target:
+            details.append(f"Makefile:{make_target}")
+        workflow_signal = self._workflow_signal(
+            workspace_path,
+            ("pytest", "npm test", "pnpm test", "yarn test", "vitest", "jest"),
+        )
+        if workflow_signal:
+            details.append(workflow_signal)
+        if not details and self._workspace_has_glob(
+            workspace_path,
+            ("test_*.py", "*_test.py", "*.spec.ts", "*.test.ts", "*.test.js"),
+        ):
+            details.append("test-like files present")
+        return self._dedupe_details(details)
+
+    def _lint_surface_details(self, workspace_path: Path) -> list[str]:
+        details = list(self._python_lint_markers(workspace_path))
+        scripts = self._package_scripts(workspace_path)
+        package_script = self._select_package_script(VerificationKind.LINT, scripts)
+        if package_script:
+            details.append(f"package.json:scripts.{package_script}")
+        make_target = self._select_make_target(workspace_path, ("lint", "check-lint"))
+        if make_target:
+            details.append(f"Makefile:{make_target}")
+        workflow_signal = self._workflow_signal(
+            workspace_path,
+            ("ruff", "flake8", "eslint", "npm run lint", "pnpm run lint", "yarn lint"),
+        )
+        if workflow_signal:
+            details.append(workflow_signal)
+        if not details and self._workspace_has_glob(
+            workspace_path,
+            ("*.py", "*.ts", "*.tsx", "*.js", "*.jsx"),
+        ):
+            details.append("source files present")
+        return self._dedupe_details(details)
+
+    def _typecheck_surface_details(self, workspace_path: Path) -> list[str]:
+        details = list(self._python_typecheck_markers(workspace_path))
+        scripts = self._package_scripts(workspace_path)
+        package_script = self._select_package_script(VerificationKind.TYPECHECK, scripts)
+        if package_script:
+            details.append(f"package.json:scripts.{package_script}")
+        package_dependencies = self._package_dependencies(workspace_path)
+        if "typescript" in package_dependencies:
+            details.append("package.json:dependencies.typescript")
+        if "pyright" in package_dependencies:
+            details.append("package.json:dependencies.pyright")
+        make_target = self._select_make_target(
+            workspace_path,
+            ("typecheck", "check-types", "mypy", "pyright"),
+        )
+        if make_target:
+            details.append(f"Makefile:{make_target}")
+        workflow_signal = self._workflow_signal(
+            workspace_path,
+            (
+                "mypy",
+                "pyright",
+                "tsc --noemit",
+                "npm run typecheck",
+                "pnpm run typecheck",
+                "yarn typecheck",
+            ),
+        )
+        if workflow_signal:
+            details.append(workflow_signal)
+        return self._dedupe_details(details)
+
+    def _python_test_markers(self, workspace_path: Path) -> list[str]:
+        details = [
+            marker
+            for marker in ("tests/", "pytest.ini", "tox.ini", "noxfile.py")
+            if self._workspace_has_marker(workspace_path, marker)
+        ]
+        pyproject = self._load_toml(workspace_path / "pyproject.toml")
+        if "tool" in pyproject and "pytest" in pyproject.get("tool", {}):
+            details.append("pyproject.toml:tool.pytest")
+        if self._workspace_has_glob(workspace_path, ("test_*.py", "*_test.py")):
+            details.append("python test files present")
+        return self._dedupe_details(details)
+
+    def _python_lint_markers(self, workspace_path: Path) -> list[str]:
+        details = [
+            marker
+            for marker in (
+                "pyproject.toml",
+                "ruff.toml",
+                ".ruff.toml",
+                ".flake8",
+                "eslint.config.js",
+                ".eslintrc",
+            )
+            if self._workspace_has_marker(workspace_path, marker)
+        ]
+        pyproject = self._load_toml(workspace_path / "pyproject.toml")
+        tool_section = pyproject.get("tool", {})
+        if "ruff" in tool_section:
+            details.append("pyproject.toml:tool.ruff")
+        if self._file_contains(workspace_path / "setup.cfg", ("[flake8]", "ruff")):
+            details.append("setup.cfg:lint")
+        return self._dedupe_details(details)
+
+    def _python_typecheck_markers(self, workspace_path: Path) -> list[str]:
+        details = [
+            marker
+            for marker in ("mypy.ini", ".mypy.ini", "pyrightconfig.json", "tsconfig.json")
+            if self._workspace_has_marker(workspace_path, marker)
+        ]
+        pyproject = self._load_toml(workspace_path / "pyproject.toml")
+        tool_section = pyproject.get("tool", {})
+        if "mypy" in tool_section:
+            details.append("pyproject.toml:tool.mypy")
+        if "pyright" in tool_section:
+            details.append("pyproject.toml:tool.pyright")
+        if self._file_contains(workspace_path / "setup.cfg", ("[mypy]", "mypy", "pyright")):
+            details.append("setup.cfg:typecheck")
+        return self._dedupe_details(details)
+
+    def _dedupe_details(self, details: list[str]) -> list[str]:
+        deduped: list[str] = []
+        for detail in details:
+            if detail and detail not in deduped:
+                deduped.append(detail)
+        return deduped
 
     def _capture_verification_artifacts(
         self,
@@ -1285,47 +1651,13 @@ class BuildService:
         }
 
     def _has_test_surface(self, workspace_path: Path) -> bool:
-        if self._workspace_has_marker(workspace_path, "tests/"):
-            return True
-        return self._workspace_has_glob(
-            workspace_path,
-            ("test_*.py", "*_test.py", "*.spec.ts", "*.test.ts", "*.test.js"),
-        )
+        return bool(self._test_surface_details(workspace_path))
 
     def _has_lint_surface(self, workspace_path: Path) -> bool:
-        markers = (
-            "pyproject.toml",
-            "ruff.toml",
-            ".ruff.toml",
-            ".flake8",
-            "eslint.config.js",
-            ".eslintrc",
-        )
-        if any(self._workspace_has_marker(workspace_path, marker) for marker in markers):
-            return True
-        return self._workspace_has_glob(
-            workspace_path,
-            ("*.py", "*.ts", "*.tsx", "*.js", "*.jsx"),
-        )
+        return bool(self._lint_surface_details(workspace_path))
 
     def _has_typecheck_surface(self, workspace_path: Path) -> bool:
-        markers = (
-            "mypy.ini",
-            ".mypy.ini",
-            "pyrightconfig.json",
-            "tsconfig.json",
-        )
-        if any(self._workspace_has_marker(workspace_path, marker) for marker in markers):
-            return True
-        if self._file_contains(
-            workspace_path / "pyproject.toml",
-            ("[tool.mypy]", "mypy", "pyright"),
-        ):
-            return True
-        return self._file_contains(
-            workspace_path / "setup.cfg",
-            ("[mypy]", "mypy", "pyright"),
-        )
+        return bool(self._typecheck_surface_details(workspace_path))
 
     def _workspace_has_glob(
         self,

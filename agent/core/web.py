@@ -25,12 +25,37 @@ from typing import Any
 import aiohttp
 import structlog
 
+from agent.control.denials import make_denial
+
 logger = structlog.get_logger(__name__)
 
 # Rate limiting
 _request_times: list[float] = []
 _MAX_REQUESTS_PER_MINUTE = 10
 _REQUEST_TIMEOUT = 15
+
+
+def _error_result(
+    *,
+    code: str,
+    summary: str,
+    detail: str,
+    scope: str,
+    suggested_action: str,
+    **payload: Any,
+) -> dict[str, Any]:
+    denial = make_denial(
+        code=code,
+        summary=summary,
+        detail=detail,
+        scope=scope,
+        suggested_action=suggested_action,
+    )
+    return {
+        "error": detail or summary,
+        "denial": denial.to_dict(),
+        **payload,
+    }
 
 
 class _TextExtractor(HTMLParser):
@@ -95,7 +120,14 @@ class WebAccess:
     async def fetch_url(self, url: str) -> dict[str, Any]:
         """GET a URL, return raw text content."""
         if not _check_rate_limit():
-            return {"error": "Rate limit exceeded (10/min)", "url": url}
+            return _error_result(
+                code="web_rate_limited",
+                summary="Web access rate limited",
+                detail="Rate limit exceeded (10/min)",
+                scope=url,
+                suggested_action="Retry later or reduce web request frequency.",
+                url=url,
+            )
 
         logger.info("web_fetch", url=url)
         try:
@@ -111,14 +143,28 @@ class WebAccess:
                 }
         except Exception as e:
             logger.error("web_fetch_error", url=url, error=str(e))
-            return {"error": str(e), "url": url}
+            return _error_result(
+                code="web_fetch_failed",
+                summary="Web fetch failed",
+                detail=str(e),
+                scope=url,
+                suggested_action="Check the URL or network access and retry.",
+                url=url,
+            )
 
     async def fetch_json(
         self, url: str, method: str = "GET", json_data: dict | None = None,
     ) -> dict[str, Any]:
         """Fetch JSON from API endpoint."""
         if not _check_rate_limit():
-            return {"error": "Rate limit exceeded (10/min)", "url": url}
+            return _error_result(
+                code="web_rate_limited",
+                summary="Web access rate limited",
+                detail="Rate limit exceeded (10/min)",
+                scope=url,
+                suggested_action="Retry later or reduce web request frequency.",
+                url=url,
+            )
 
         logger.info("web_fetch_json", url=url, method=method)
         try:
@@ -133,7 +179,14 @@ class WebAccess:
                     return {"url": url, "status": resp.status, "data": data}
         except Exception as e:
             logger.error("web_fetch_json_error", url=url, error=str(e))
-            return {"error": str(e), "url": url}
+            return _error_result(
+                code="web_json_fetch_failed",
+                summary="JSON fetch failed",
+                detail=str(e),
+                scope=url,
+                suggested_action="Check the endpoint response and retry with a valid JSON API.",
+                url=url,
+            )
 
     async def scrape_text(self, url: str, max_chars: int = 5000) -> dict[str, Any]:
         """Fetch URL and extract clean text (no HTML tags)."""
@@ -162,7 +215,14 @@ class WebAccess:
         Returns list of results with title, url, snippet.
         """
         if not _check_rate_limit():
-            return {"error": "Rate limit exceeded (10/min)", "query": query}
+            return _error_result(
+                code="web_rate_limited",
+                summary="Web access rate limited",
+                detail="Rate limit exceeded (10/min)",
+                scope=query,
+                suggested_action="Retry later or reduce web request frequency.",
+                query=query,
+            )
 
         logger.info("web_search", query=query)
         search_url = f"https://html.duckduckgo.com/html/?q={query}"
@@ -207,16 +267,39 @@ class WebAccess:
 
         except Exception as e:
             logger.error("web_search_error", query=query, error=str(e))
-            return {"error": str(e), "query": query}
+            return _error_result(
+                code="web_search_failed",
+                summary="Web search failed",
+                detail=str(e),
+                scope=query,
+                suggested_action="Retry the search or simplify the query.",
+                query=query,
+            )
 
     async def check_url(self, url: str) -> dict[str, Any]:
         """Quick check — is URL alive? Returns status code."""
         if not _check_rate_limit():
-            return {"error": "Rate limit exceeded", "url": url}
+            return _error_result(
+                code="web_rate_limited",
+                summary="Web access rate limited",
+                detail="Rate limit exceeded",
+                scope=url,
+                suggested_action="Retry later or reduce web request frequency.",
+                url=url,
+            )
 
         try:
             session = await self._get_session()
             async with session.head(url, allow_redirects=True) as resp:
                 return {"url": url, "status": resp.status, "alive": resp.status < 400}
         except Exception as e:
-            return {"url": url, "status": 0, "alive": False, "error": str(e)}
+            return _error_result(
+                code="web_head_check_failed",
+                summary="URL check failed",
+                detail=str(e),
+                scope=url,
+                suggested_action="Check the URL or network access and retry.",
+                url=url,
+                status=0,
+                alive=False,
+            )

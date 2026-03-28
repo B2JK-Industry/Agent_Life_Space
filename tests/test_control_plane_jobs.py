@@ -1300,6 +1300,19 @@ class TestRuntimeModel:
         }
         build_policies = {item["id"] for item in model["build_execution_policies"]}
         assert "workspace_local_mutation" in build_policies
+        gateway_policies = {item["id"] for item in model["external_gateway_policies"]}
+        assert gateway_policies == {
+            "disabled_by_default",
+            "approval_before_gateway",
+        }
+        gateway_contracts = {item["id"] for item in model["external_gateway_contracts"]}
+        assert "external_capability_gateway_v1" in gateway_contracts
+        data_rules = {item["id"] for item in model["data_handling_rules"]}
+        assert {
+            "internal_operator_evidence_v1",
+            "client_safe_review_handoff_v1",
+            "retained_operational_trace_v1",
+        } <= data_rules
 
 
 class _DictRecord:

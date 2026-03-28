@@ -28,6 +28,8 @@ from typing import Any
 import structlog
 from aiohttp import web
 
+from agent.control.denials import make_denial
+
 logger = structlog.get_logger(__name__)
 
 _DEFAULT_PORT = 8420
@@ -177,6 +179,33 @@ class AgentAPI:
         times.append(now)
         return True
 
+    def _json_error_response(
+        self,
+        *,
+        status: int,
+        code: str,
+        summary: str,
+        detail: str,
+        scope: str,
+        suggested_action: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> web.Response:
+        denial = make_denial(
+            code=code,
+            summary=summary,
+            detail=detail,
+            scope=scope,
+            suggested_action=suggested_action,
+            metadata=metadata or {},
+        )
+        return web.json_response(
+            {
+                "error": detail or summary,
+                "denial": denial.to_dict(),
+            },
+            status=status,
+        )
+
     async def _handle_message(self, request: web.Request) -> web.Response:
         """POST /api/message — prijmi správu od agenta. Vyžaduje API key."""
         start = time.monotonic()
@@ -188,14 +217,28 @@ class AgentAPI:
             self._audit.record(ApiAuditEntry(
                 ip=ip, status_code=401, error=auth_error,
             ))
-            return web.json_response({"error": auth_error}, status=401)
+            return self._json_error_response(
+                status=401,
+                code="agent_api_auth_failed",
+                summary="Agent API authentication failed",
+                detail=auth_error,
+                scope="api.message",
+                suggested_action="Provide a valid Authorization bearer token.",
+                metadata={"endpoint": "/api/message"},
+            )
 
         if not self._check_rate_limit(ip):
             self._audit.record(ApiAuditEntry(
                 ip=ip, status_code=429, error="rate_limited",
             ))
-            return web.json_response(
-                {"error": "Rate limit exceeded (10/min)"}, status=429
+            return self._json_error_response(
+                status=429,
+                code="agent_api_rate_limited",
+                summary="Agent API rate limit exceeded",
+                detail="Rate limit exceeded (10/min)",
+                scope="api.message",
+                suggested_action="Retry later or reduce request frequency.",
+                metadata={"endpoint": "/api/message", "ip": ip},
             )
 
         try:
@@ -204,8 +247,14 @@ class AgentAPI:
             self._audit.record(ApiAuditEntry(
                 ip=ip, status_code=400, error="invalid_json",
             ))
-            return web.json_response(
-                {"error": "Invalid JSON"}, status=400
+            return self._json_error_response(
+                status=400,
+                code="agent_api_invalid_json",
+                summary="Agent API request invalid",
+                detail="Invalid JSON",
+                scope="api.message",
+                suggested_action="Send a valid JSON body.",
+                metadata={"endpoint": "/api/message"},
             )
 
         # Štruktúrované správy — podporuj aj jednoduché aj rozšírené
@@ -222,18 +271,44 @@ class AgentAPI:
                 sender=sender, ip=ip, intent=intent,
                 status_code=409, error=replay_error,
             ))
-            return web.json_response(
-                {"error": replay_error}, status=409
+            return self._json_error_response(
+                status=409,
+                code="agent_api_replay_blocked",
+                summary="Agent API replay blocked",
+                detail=replay_error,
+                scope="api.message",
+                suggested_action="Send a fresh nonce and current timestamp.",
+                metadata={"endpoint": "/api/message", "sender": sender},
             )
 
         if not text:
-            return web.json_response(
-                {"error": "Empty message"}, status=400
+            self._audit.record(ApiAuditEntry(
+                sender=sender, ip=ip, intent=intent,
+                status_code=400, error="empty_message",
+            ))
+            return self._json_error_response(
+                status=400,
+                code="agent_api_empty_message",
+                summary="Agent API message rejected",
+                detail="Empty message",
+                scope="api.message",
+                suggested_action="Provide a non-empty message payload.",
+                metadata={"endpoint": "/api/message", "sender": sender},
             )
 
         if len(text) > _MAX_MESSAGE_LENGTH:
-            return web.json_response(
-                {"error": f"Message too long (max {_MAX_MESSAGE_LENGTH})"}, status=400
+            self._audit.record(ApiAuditEntry(
+                sender=sender, ip=ip, intent=intent,
+                status_code=400, error="message_too_long",
+            ))
+            return self._json_error_response(
+                status=400,
+                code="agent_api_message_too_long",
+                summary="Agent API message rejected",
+                detail=f"Message too long (max {_MAX_MESSAGE_LENGTH})",
+                scope="api.message",
+                suggested_action="Shorten the message and retry.",
+                metadata={"endpoint": "/api/message", "sender": sender, "length": len(text)},
             )
 
         logger.info("agent_api_message", sender=sender, intent=intent,
@@ -281,8 +356,14 @@ class AgentAPI:
                 self._audit.record(ApiAuditEntry(
                     ip=ip, status_code=503, error="no_handler",
                 ))
-                return web.json_response(
-                    {"error": "No handler configured"}, status=503
+                return self._json_error_response(
+                    status=503,
+                    code="agent_api_no_handler",
+                    summary="Agent API handler unavailable",
+                    detail="No handler configured",
+                    scope="api.message",
+                    suggested_action="Configure the agent message handler before retrying.",
+                    metadata={"endpoint": "/api/message"},
                 )
         except Exception as e:
             duration = int((time.monotonic() - start) * 1000)
@@ -291,8 +372,14 @@ class AgentAPI:
                 status_code=500, duration_ms=duration, error="internal",
             ))
             logger.error("agent_api_error", error=str(e))
-            return web.json_response(
-                {"error": "Internal processing error"}, status=500
+            return self._json_error_response(
+                status=500,
+                code="agent_api_internal_error",
+                summary="Agent API processing failed",
+                detail="Internal processing error",
+                scope="api.message",
+                suggested_action="Inspect the server logs and retry when the handler is healthy.",
+                metadata={"endpoint": "/api/message", "sender": sender},
             )
 
     async def _handle_review(self, request: web.Request) -> web.Response:
@@ -305,14 +392,28 @@ class AgentAPI:
             self._audit.record(ApiAuditEntry(
                 ip=ip, intent="review", status_code=401, error=auth_error,
             ))
-            return web.json_response({"error": auth_error}, status=401)
+            return self._json_error_response(
+                status=401,
+                code="agent_api_auth_failed",
+                summary="Agent API authentication failed",
+                detail=auth_error,
+                scope="api.review",
+                suggested_action="Provide a valid Authorization bearer token.",
+                metadata={"endpoint": "/api/review"},
+            )
 
         if not self._check_rate_limit(ip):
             self._audit.record(ApiAuditEntry(
                 ip=ip, intent="review", status_code=429, error="rate_limited",
             ))
-            return web.json_response(
-                {"error": "Rate limit exceeded (10/min)"}, status=429
+            return self._json_error_response(
+                status=429,
+                code="agent_api_rate_limited",
+                summary="Agent API rate limit exceeded",
+                detail="Rate limit exceeded (10/min)",
+                scope="api.review",
+                suggested_action="Retry later or reduce request frequency.",
+                metadata={"endpoint": "/api/review", "ip": ip},
             )
 
         try:
@@ -321,7 +422,15 @@ class AgentAPI:
             self._audit.record(ApiAuditEntry(
                 ip=ip, intent="review", status_code=400, error="invalid_json",
             ))
-            return web.json_response({"error": "Invalid JSON"}, status=400)
+            return self._json_error_response(
+                status=400,
+                code="agent_api_invalid_json",
+                summary="Agent API request invalid",
+                detail="Invalid JSON",
+                scope="api.review",
+                suggested_action="Send a valid JSON body.",
+                metadata={"endpoint": "/api/review"},
+            )
 
         sender = str(data.get("sender", "api_review_client")).strip() or "api_review_client"
         nonce = data.get("nonce", "")
@@ -335,7 +444,15 @@ class AgentAPI:
                 status_code=409,
                 error=replay_error,
             ))
-            return web.json_response({"error": replay_error}, status=409)
+            return self._json_error_response(
+                status=409,
+                code="agent_api_replay_blocked",
+                summary="Agent API replay blocked",
+                detail=replay_error,
+                scope="api.review",
+                suggested_action="Send a fresh nonce and current timestamp.",
+                metadata={"endpoint": "/api/review", "sender": sender},
+            )
 
         if self._agent is None:
             self._audit.record(ApiAuditEntry(
@@ -345,8 +462,14 @@ class AgentAPI:
                 status_code=503,
                 error="no_agent",
             ))
-            return web.json_response(
-                {"error": "No agent configured"}, status=503
+            return self._json_error_response(
+                status=503,
+                code="agent_api_no_agent",
+                summary="Agent API review unavailable",
+                detail="No agent configured",
+                scope="api.review",
+                suggested_action="Configure the orchestrator before calling /api/review.",
+                metadata={"endpoint": "/api/review"},
             )
 
         from agent.review.models import ReviewIntake, ReviewJobType
@@ -366,9 +489,14 @@ class AgentAPI:
                 status_code=400,
                 error="invalid_review_type",
             ))
-            return web.json_response(
-                {"error": f"Invalid review_type '{review_type_raw}'"},
+            return self._json_error_response(
                 status=400,
+                code="agent_api_invalid_review_type",
+                summary="Agent API review request invalid",
+                detail=f"Invalid review_type '{review_type_raw}'",
+                scope="api.review",
+                suggested_action="Use one of the supported review_type values.",
+                metadata={"endpoint": "/api/review", "sender": sender},
             )
 
         intake = ReviewIntake(
@@ -405,9 +533,14 @@ class AgentAPI:
                 status_code=400,
                 error="validation_failed",
             ))
-            return web.json_response(
-                {"error": "; ".join(errors)},
+            return self._json_error_response(
                 status=400,
+                code="agent_api_review_validation_failed",
+                summary="Agent API review request invalid",
+                detail="; ".join(errors),
+                scope="api.review",
+                suggested_action="Fix the review request payload and retry.",
+                metadata={"endpoint": "/api/review", "sender": sender},
             )
 
         try:
@@ -434,6 +567,7 @@ class AgentAPI:
                     "execution_mode": job.execution_mode.value,
                     "source": job.source,
                     "error": job.error,
+                    "denial": job.denial,
                 },
                 status=status_code,
             )
@@ -448,9 +582,14 @@ class AgentAPI:
                 error="internal",
             ))
             logger.error("agent_api_review_error", error=str(e))
-            return web.json_response(
-                {"error": "Internal processing error"},
+            return self._json_error_response(
                 status=500,
+                code="agent_api_internal_error",
+                summary="Agent API processing failed",
+                detail="Internal processing error",
+                scope="api.review",
+                suggested_action="Inspect the server logs and retry when the review runtime is healthy.",
+                metadata={"endpoint": "/api/review", "sender": sender},
             )
 
     async def _handle_status(self, request: web.Request) -> web.Response:

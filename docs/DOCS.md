@@ -48,17 +48,17 @@ python -m agent --build-repo . --build-description "Apply bounded builder plan" 
 python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-plan-file plan.json --intake-acceptance-file acceptance.json --intake-preview
 python -m agent --list-plans
 python -m agent --list-deliveries
-python -m pytest tests/ -q   # Testy (1303+ testov)
+python -m pytest tests/ -q   # Testy (1318+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.11.0** — phase 2 structured acceptance release.
+Aktuálna: **v1.12.0** — phase 2 verification hardening release.
 
-Nové v `v1.11.0`:
-- builder acceptance criteria teraz vedia niesť structured metadata cez JSON alebo priamo cez unified intake
-- CLI aj unified intake vedia načítať richer acceptance shape cez `--build-acceptance-file` a `--intake-acceptance-file`
-- planner už ukazuje acceptance summary s required/optional/structured breakdownom ešte pred execution
-- deterministic acceptance evaluators teraz pokrývajú workspace text/JSON checks, required changed paths, minimum changed file counts a explicit review thresholds
+Nové v `v1.12.0`:
+- builder verification discovery teraz číta Python config, `package.json` scripts, Makefile targets, CI workflow hints a repo-local toolchain signály skôr než vyberie test/lint/typecheck príkazy
+- runtime už vracia structured denial payloady aj na zvyšných social/API, web, tool-execution a finance-budget hranách
+- reviewer quality už nie je chránená len smoke testami, ale aj golden verdict case-mi pre clean, secret a unsafe-pattern repozitáre
+- runtime model teraz explicitne ukazuje prvý external gateway contract a data-handling rules pre internal, client-safe a retained-trace packaging
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.
