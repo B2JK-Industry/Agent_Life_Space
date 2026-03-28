@@ -261,6 +261,34 @@ class TestExternalGatewayService:
         assert backup["configured"] is False
         assert "AGENT_OBOLOS_REVIEW_WEBHOOK_URL_BACKUP" in backup["missing"]
 
+    def test_gateway_catalog_includes_documented_obolos_api_routes(self, control_plane):
+        service = ExternalGatewayService(control_plane_state=control_plane, environment={})
+
+        catalog = service.describe_capability_catalog(provider_id="obolos.tech")
+
+        route_ids = {route["route_id"] for route in catalog["routes"]}
+        assert {
+            "obolos_marketplace_catalog_primary",
+            "obolos_wallet_balance_primary",
+            "obolos_marketplace_api_primary",
+        } <= route_ids
+        marketplace = next(
+            route
+            for route in catalog["routes"]
+            if route["route_id"] == "obolos_marketplace_catalog_primary"
+        )
+        assert marketplace["configured"] is True
+        assert marketplace["target_source"] == "default"
+        assert marketplace["request_mode"] == "obolos_marketplace_catalog_v1"
+        assert marketplace["response_mode"] == "obolos_marketplace_catalog_v1"
+        wallet = next(
+            route
+            for route in catalog["routes"]
+            if route["route_id"] == "obolos_wallet_balance_primary"
+        )
+        assert wallet["configured"] is False
+        assert "AGENT_OBOLOS_WALLET_ADDRESS" in wallet["missing"]
+
     @pytest.mark.asyncio
     async def test_gateway_provider_send_uses_configured_route_without_raw_target(
         self,
@@ -451,3 +479,114 @@ class TestExternalGatewayService:
         assert result["ok"] is False
         assert result["denial"]["code"] == "gateway_provider_not_configured"
         assert all(item["status"] == "unavailable" for item in result["attempted_routes"])
+
+    @pytest.mark.asyncio
+    async def test_gateway_provider_api_catalog_call_uses_documented_obolos_route(
+        self,
+        control_plane,
+    ):
+        async def executor(**kwargs: object) -> dict[str, object]:
+            assert kwargs["method"] == "GET"
+            assert kwargs["target_url"] == "https://obolos.tech/api/marketplace/apis"
+            return {
+                "status_code": 200,
+                "response_json": {
+                    "apis": [
+                        {"slug": "ocr-text-extraction"},
+                        {"slug": "pdf-parser"},
+                    ]
+                },
+                "response_text": "ok",
+            }
+
+        service = ExternalGatewayService(
+            control_plane_state=control_plane,
+            request_executor=executor,
+            environment={},
+        )
+
+        result = await service.call_api_via_capability(
+            provider_id="obolos.tech",
+            capability_id="marketplace_catalog_v1",
+            requester="cli",
+        )
+
+        assert result["ok"] is True
+        assert result["provider_id"] == "obolos.tech"
+        assert result["route_id"] == "obolos_marketplace_catalog_primary"
+        assert result["normalized_response"]["kind"] == "marketplace_catalog"
+        assert result["normalized_response"]["api_count"] == 2
+        entries = control_plane.list_cost_entries(job_id=result["job_id"], limit=10)
+        assert len(entries) == 1
+        assert entries[0].source_type == "external_api_call"
+        retained = control_plane.list_retained_artifacts(job_id=result["job_id"], limit=10)
+        assert {record.artifact_kind.value for record in retained} == {
+            "external_api_request",
+            "external_api_catalog",
+        }
+
+    @pytest.mark.asyncio
+    async def test_gateway_provider_api_slug_call_uses_wallet_bearer_auth(
+        self,
+        control_plane,
+    ):
+        async def executor(**kwargs: object) -> dict[str, object]:
+            assert kwargs["method"] == "POST"
+            assert kwargs["target_url"] == "https://obolos.tech/api/ocr-text-extraction"
+            assert kwargs["json_payload"] == {"mode": "fast"}
+            assert kwargs["auth_token"] == "0xabc123"
+            return {
+                "status_code": 200,
+                "response_json": {"text": "hello"},
+                "response_text": "{\"text\":\"hello\"}",
+            }
+
+        service = ExternalGatewayService(
+            control_plane_state=control_plane,
+            request_executor=executor,
+            environment={"AGENT_OBOLOS_WALLET_ADDRESS": "0xabc123"},
+        )
+
+        result = await service.call_api_via_capability(
+            provider_id="obolos.tech",
+            capability_id="marketplace_api_call_v1",
+            resource="ocr-text-extraction",
+            method="POST",
+            json_payload={"mode": "fast"},
+            requester="cli",
+        )
+
+        assert result["ok"] is True
+        assert result["route_id"] == "obolos_marketplace_api_primary"
+        assert result["normalized_response"]["kind"] == "marketplace_api_call"
+        assert result["response_json"]["text"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_gateway_provider_api_payment_required_returns_structured_denial(
+        self,
+        control_plane,
+    ):
+        async def executor(**kwargs: object) -> dict[str, object]:
+            return {
+                "status_code": 402,
+                "response_json": {"error": "Payment required"},
+                "response_text": "payment required",
+                "response_headers": {"PAYMENT-REQUIRED": "base64-payload"},
+            }
+
+        service = ExternalGatewayService(
+            control_plane_state=control_plane,
+            request_executor=executor,
+            environment={"AGENT_OBOLOS_WALLET_ADDRESS": "0xabc123"},
+        )
+
+        result = await service.call_api_via_capability(
+            provider_id="obolos.tech",
+            capability_id="marketplace_api_call_v1",
+            resource="pdf-parser",
+            requester="cli",
+        )
+
+        assert result["ok"] is False
+        assert result["denial"]["code"] == "external_api_payment_required"
+        assert result["status_code"] == 402

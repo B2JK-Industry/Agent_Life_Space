@@ -344,6 +344,56 @@ async def show_gateway_catalog(
     await agent.stop()
 
 
+def _parse_key_value_pairs(items: list[str]) -> dict[str, str]:
+    """Parse repeated key=value CLI items into a dict."""
+    parsed: dict[str, str] = {}
+    for item in items:
+        key, separator, value = str(item).partition("=")
+        if not separator or not key.strip():
+            raise ValueError(f"Expected key=value item, got: {item}")
+        parsed[key.strip()] = value
+    return parsed
+
+
+async def call_provider_api_command(
+    *,
+    data_dir: str = "agent",
+    provider_id: str,
+    capability_id: str,
+    resource: str = "",
+    method: str = "",
+    query_items: list[str] | None = None,
+    json_payload: dict[str, object] | None = None,
+    route_id: str = "",
+    auth_token: str = "",
+    gateway_policy_id: str = "",
+    requester: str = "cli",
+    job_id: str = "",
+    title: str = "",
+) -> None:
+    """Call one external provider API capability through the gateway."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    result = await agent.call_external_api(
+        provider_id=provider_id,
+        capability_id=capability_id,
+        resource=resource,
+        method=method,
+        query_params=_parse_key_value_pairs(list(query_items or [])),
+        json_payload=dict(json_payload or {}),
+        route_id=route_id,
+        auth_token=auth_token,
+        gateway_policy_id=gateway_policy_id,
+        job_id=job_id,
+        requester=requester,
+        title=title,
+    )
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
 async def list_artifacts_command(
     *,
     data_dir: str = "agent",
@@ -1234,6 +1284,62 @@ def main() -> None:
         help="Show configured external gateway providers/routes and exit",
     )
     parser.add_argument(
+        "--call-provider-api",
+        action="store_true",
+        help="Call one configured external provider API capability and exit",
+    )
+    parser.add_argument(
+        "--provider-api-provider",
+        default="",
+        help="Provider id for --call-provider-api, e.g. obolos.tech",
+    )
+    parser.add_argument(
+        "--provider-api-capability",
+        default="",
+        help="Capability id for --call-provider-api, e.g. marketplace_catalog_v1",
+    )
+    parser.add_argument(
+        "--provider-api-resource",
+        default="",
+        help="Optional resource or slug for --call-provider-api",
+    )
+    parser.add_argument(
+        "--provider-api-method",
+        default="",
+        help="Optional HTTP method override for --call-provider-api",
+    )
+    parser.add_argument(
+        "--provider-api-query",
+        action="append",
+        default=[],
+        help="Repeatable key=value query parameter for --call-provider-api",
+    )
+    parser.add_argument(
+        "--provider-api-json",
+        default="",
+        help="Inline JSON object payload for --call-provider-api",
+    )
+    parser.add_argument(
+        "--provider-api-json-file",
+        default="",
+        help="Path to a JSON object payload file for --call-provider-api",
+    )
+    parser.add_argument(
+        "--provider-api-requester",
+        default="cli",
+        help="Requester label for --call-provider-api",
+    )
+    parser.add_argument(
+        "--provider-api-job-id",
+        default="",
+        help="Optional fixed job id for --call-provider-api",
+    )
+    parser.add_argument(
+        "--provider-api-title",
+        default="",
+        help="Optional title override for --call-provider-api",
+    )
+    parser.add_argument(
         "--review-quality-eval",
         action="store_true",
         help="Run deterministic golden review cases and exit",
@@ -1597,6 +1703,52 @@ def main() -> None:
                 capability_id=args.gateway_capability,
                 kind="",
                 export_mode=args.gateway_export_mode,
+            )
+        )
+    elif args.call_provider_api:
+        if not args.provider_api_provider:
+            parser.error("--provider-api-provider is required with --call-provider-api")
+        if not args.provider_api_capability:
+            parser.error("--provider-api-capability is required with --call-provider-api")
+        provider_api_json: dict[str, object] = {}
+        if args.provider_api_json and args.provider_api_json_file:
+            parser.error("Use only one of --provider-api-json or --provider-api-json-file")
+        if args.provider_api_json:
+            try:
+                provider_api_json = json.loads(args.provider_api_json)
+            except json.JSONDecodeError as e:
+                parser.error(f"--provider-api-json is not valid JSON: {e}")
+            if not isinstance(provider_api_json, dict):
+                parser.error("--provider-api-json must decode to a JSON object")
+        elif args.provider_api_json_file:
+            try:
+                with open(args.provider_api_json_file, encoding="utf-8") as f:
+                    provider_api_json = json.load(f)
+            except OSError as e:
+                parser.error(f"Could not read --provider-api-json-file: {e}")
+            except json.JSONDecodeError as e:
+                parser.error(f"--provider-api-json-file is not valid JSON: {e}")
+            if not isinstance(provider_api_json, dict):
+                parser.error("--provider-api-json-file must contain a JSON object")
+        try:
+            _parse_key_value_pairs(args.provider_api_query)
+        except ValueError as e:
+            parser.error(str(e))
+        asyncio.run(
+            call_provider_api_command(
+                data_dir=args.data_dir,
+                provider_id=args.provider_api_provider,
+                capability_id=args.provider_api_capability,
+                resource=args.provider_api_resource,
+                method=args.provider_api_method,
+                query_items=args.provider_api_query,
+                json_payload=provider_api_json,
+                route_id=args.gateway_route_id,
+                auth_token=args.gateway_auth_token,
+                gateway_policy_id=args.gateway_policy_id,
+                requester=args.provider_api_requester,
+                job_id=args.provider_api_job_id,
+                title=args.provider_api_title,
             )
         )
     elif args.runtime_model:

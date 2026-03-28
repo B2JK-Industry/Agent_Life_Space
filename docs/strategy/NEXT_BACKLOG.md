@@ -6,7 +6,7 @@ This file is the near-term execution backlog derived from the current state of
 Assessment basis:
 - branch: `main`
 - interpretation date: `2026-03-28`
-- baseline: after Phase 2 closure and release-readiness slice
+- baseline: after the documented buyer-side Obolos API-call slice
 
 ## Ready Now
 
@@ -23,30 +23,50 @@ Assessment basis:
 
 ### P1
 
-3. `T5-E1-S1` Push policy toward one broader runtime action boundary.
+3. `T7-E2-S5` Add documented seller-side Obolos publishing and wallet-topup flow.
+   Why now: buyer-side catalog, wallet balance, and slug-based API calls now
+   exist, so the next honest provider gap is completing more of the documented
+   Obolos surface before we generalize to more marketplaces.
+
+4. `T5-E1-S1` Push policy toward one broader runtime action boundary.
    Why now: builder guardrails, review execution policy, and gateway policy are
    all deterministic now, so the next architectural move is unifying them more
    deeply instead of adding another isolated policy branch.
 
-4. `T6-E2-S1` Deepen persisted runtime telemetry beyond current product-job summaries.
+5. `T6-E2-S1` Deepen persisted runtime telemetry beyond current product-job summaries.
    Why now: release readiness, provider outcomes, and product-job telemetry now
    exist, so operatorization needs richer ongoing runtime history.
 
-5. `T6-E1-S1` Improve real cost estimation and operator cost feedback.
+6. `T6-E1-S1` Improve real cost estimation and operator cost feedback.
    Why now: runtime cost ledger is durable enough that the next useful step is
    improving quality of estimates, not just recording more of the same.
 
 ### P2
 
-6. `T7-E1-S1` Expand the gateway contract beyond one-provider Phase 2 semantics.
-   Why now: `obolos.tech` is now a concrete provider with route semantics and
-   receipts, so Phase 3 can start generalizing the gateway boundary.
+7. `T7-E1-S1` Expand the gateway contract beyond one-provider Phase 2 semantics.
+   Why now: `obolos.tech` now spans both handoff and documented API-call
+   semantics, so Phase 3 can start generalizing the gateway boundary.
 
-7. `T8-E1-S3` Add stronger architecture invariants for cross-domain boundaries.
+8. `T7-E2-S6` Add file-upload-safe and x402 payment-aware marketplace calls.
+   Why now: the new buyer-side API path covers JSON and query routes, but many
+   useful marketplace APIs still need multipart uploads and richer payment flow.
+
+9. `T8-E1-S3` Add stronger architecture invariants for cross-domain boundaries.
    Why now: the runtime shape is now concrete enough that enforcement-level
    invariants matter more than additional descriptive docs alone.
 
 ## What Closed In This Cycle
+
+- `T7-E1-S1` Gateway contracts now distinguish handoff-style delivery from
+  direct API invocation via `external_capability_gateway_v1` and
+  `external_api_call_v1` instead of forcing both through one webhook-shaped
+  envelope.
+- `T7-E2-S2` `obolos.tech` now exposes documented buyer-side capability routes
+  for marketplace catalog listing, wallet balance, and slug-based API calls in
+  addition to the older handoff compatibility routes.
+- `T7-E2-S3` Buyer-side API calls now persist traces, cost records, retained
+  request/response artifacts, and structured `payment required` denials instead
+  of surfacing only raw HTTP failure detail.
 
 - `T3-E1-S5` The bounded local builder engine now supports deterministic
   `copy_file` and `move_file` mutations in addition to the earlier

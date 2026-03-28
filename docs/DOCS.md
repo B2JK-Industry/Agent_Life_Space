@@ -39,8 +39,11 @@ python -m agent --report     # Operator report / inbox
 python -m agent --runtime-model   # Explicitný runtime model
 python -m agent --gateway-catalog
 python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capability review_handoff_v1 --gateway-export-mode client_safe
-python -m agent --review-quality-eval --review-quality-release-label v1.15.0
-python -m agent --release-readiness --release-readiness-release-label v1.15.0
+python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_catalog_v1
+python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability wallet_balance_v1
+python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_api_call_v1 --provider-api-resource ocr-text-extraction --provider-api-method POST --provider-api-json '{"mode":"fast"}'
+python -m agent --review-quality-eval --review-quality-release-label v1.16.0
+python -m agent --release-readiness --release-readiness-release-label v1.16.0
 python -m agent --export-evidence-job <job_id>
 python -m agent --export-evidence-job <job_id> --export-evidence-mode client_safe
 python -m agent --list-artifacts  # Shared artifact query surface
@@ -58,18 +61,16 @@ python -m pytest tests/ -q   # Testy
 
 ## Verzia
 
-Aktuálna: **v1.15.0** — phase 2 closure and release-readiness release.
+Aktuálna: **v1.16.0** — documented buyer-side Obolos gateway release.
 
-Nové v `v1.15.0`:
-- builder bounded engine teraz podporuje aj `copy_file` a `move_file`, a
-  capability guardrails validujú aj source/target scope
-- acceptance reports a delivery handoff teraz nesú implementation-backed
-  summary nad changed operations, changed paths, operation types a mode
-- runtime má deterministic release-readiness gate cez
-  `python -m agent --release-readiness` aj CI
-- gateway delivery a operator report teraz nesú provider outcomes, nielen raw
-  receipt metadata
-- pribudla samostatná deployment dokumentácia pre controlled environments a
-  Phase 2 handoff/posture
+Nové v `v1.16.0`:
+- gateway už poctivo rozlišuje delivery handoff a documented external API call
+  cez samostatný `external_api_call_v1` kontrakt
+- `obolos.tech` buyer-side flow teraz pokrýva marketplace catalog, wallet
+  balance a slug-based API calls za shared gateway boundary
+- buyer-side API calls ukladajú request/response artifacts, gateway traces a
+  structured `payment required` denial payloady
+- pribudol generický CLI entrypoint `python -m agent --call-provider-api ...`
+  pre provider-backed API capability calls
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

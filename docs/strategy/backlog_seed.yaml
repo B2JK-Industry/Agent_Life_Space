@@ -5,7 +5,7 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Phase 2 closure and release-readiness slice."
+  assessed_state_note: "Snapshot after the documented buyer-side Obolos API-call slice."
   interpretation_date: "2026-03-28"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
@@ -14,7 +14,7 @@ progress_snapshot:
     T4: { status: in_progress, approx_progress: 96 }
     T5: { status: in_progress, approx_progress: 99 }
     T6: { status: in_progress, approx_progress: 99 }
-    T7: { status: in_progress, approx_progress: 92 }
+    T7: { status: in_progress, approx_progress: 95 }
     T8: { status: in_progress, approx_progress: 98 }
 next_execution_backlog:
   - priority: P0
@@ -25,6 +25,10 @@ next_execution_backlog:
     story_id: T4-E3-S4
     title: "Finish provider-specific operator delivery workflow"
     why_now: "Provider receipts, provider outcomes, and release readiness now exist, but the operator flow still stops at report or CLI detail instead of a richer active workflow."
+  - priority: P1
+    story_id: T7-E2-S5
+    title: "Add documented seller-side Obolos publishing and wallet-topup flow"
+    why_now: "Buyer-side catalog, wallet balance, and slug calls now exist, so the next honest gap is completing the documented Obolos surface before generalizing to more providers."
   - priority: P1
     story_id: T5-E1-S1
     title: "Push policy toward one broader runtime action boundary"
@@ -40,7 +44,7 @@ next_execution_backlog:
   - priority: P2
     story_id: T7-E1-S1
     title: "Expand the gateway contract beyond one-provider Phase 2 semantics"
-    why_now: "obolos.tech is now a concrete provider with route semantics and receipts, so Phase 3 can start generalizing the gateway boundary."
+    why_now: "obolos.tech now spans both handoff and documented API-call semantics, so Phase 3 can start generalizing the gateway boundary."
   - priority: P2
     story_id: T8-E1-S3
     title: "Add stronger architecture invariants for cross-domain boundaries"
@@ -578,20 +582,20 @@ themes:
     name: External Capability Gateway
     goal: Integrate external capability providers cleanly and safely.
     status: in_progress
-    approx_progress: 92
-    current_state: Runtime model and policy layer now expose explicit gateway defaults plus a planning-safe external gateway contract, and the runtime now enforces approval-aware auth/timeout/retry/rate-limit delivery sends with gateway traces, cost entries, a concrete obolos.tech provider catalog, readiness-aware routes, provider-specific request payload shaping, parsed provider receipts, provider outcome classification, provider-backed delivery fallback, and operator-facing provider outcome summaries.
-    main_gap: Only one provider exists so far, and broader downstream provider workflow still remains future scope.
+    approx_progress: 95
+    current_state: Runtime model and policy layer now expose explicit gateway defaults plus separate handoff and API-call contracts, and the runtime now enforces approval-aware delivery sends plus owner-operated API calls with gateway traces, cost entries, a concrete obolos.tech provider catalog, readiness-aware routes, retained request or response snapshots, provider-specific request payload shaping, parsed provider receipts, provider outcome classification, provider-backed delivery fallback, and documented buyer-side marketplace access.
+    main_gap: Only one provider exists so far, and seller publishing, x402 payment flow, file-upload calls, and broader downstream provider workflow still remain future scope.
     epics:
       - id: T7-E1
         name: Gateway Foundation
         status: mostly_complete
-        approx_progress: 90
+        approx_progress: 95
         stories:
           - id: T7-E1-S1
             name: Define gateway contract for external capabilities
             status: mostly_complete
-            current_state: Runtime model and policy now expose a first explicit external_capability_gateway_v1 contract with request/response, denial, approval, and cost-record expectations layered on top of gateway policy defaults, and provider routes can now project richer provider-specific payload and receipt modes on top of that contract.
-            missing: The contract is stronger, but it is not yet multi-provider or tied to richer operator workflow.
+            current_state: Runtime model and policy now expose both an external_capability_gateway_v1 handoff contract and an external_api_call_v1 invocation contract with request or response, denial, approval, and cost-record expectations, and provider routes can now project richer provider-specific payload and receipt modes on top of those contracts.
+            missing: The contracts are stronger, but they are not yet multi-provider or tied to richer operator workflow.
           - id: T7-E1-S2
             name: Add auth, timeout, retry, and rate-limit policy
             status: complete_for_phase
@@ -614,23 +618,28 @@ themes:
           - id: T7-E2-S1
             name: Represent obolos.tech capabilities through the gateway model
             status: complete_for_phase
-            current_state: obolos.tech now exists as an explicit provider inside the gateway model with separate review and build delivery capabilities instead of living only as a future placeholder.
-            missing: Only one provider is modeled so far.
+            current_state: obolos.tech now exists as an explicit provider inside the gateway model with both legacy delivery-handoff compatibility routes and the first documented buyer-side marketplace capabilities instead of living only as a placeholder.
+            missing: Only one provider is modeled so far, and seller-side publishing remains future scope.
           - id: T7-E2-S2
             name: Add capability catalog and routing logic
             status: complete_for_phase
-            current_state: The gateway now exposes a provider/capability/route catalog, surfaces route readiness through runtime, reporting, and CLI, resolves ordered candidate routes by provider, capability, job kind, and export mode, and now carries provider-specific request and receipt modes.
+            current_state: The gateway now exposes a provider/capability/route catalog, surfaces route readiness through runtime, reporting, and CLI, resolves ordered candidate routes by provider, capability, job kind, and export mode, and now carries provider-specific request and receipt modes for both delivery handoff and documented API calls.
             missing: Additional providers and broader operator workflow remain future scope.
           - id: T7-E2-S3
             name: Add fallback and failure handling
-            status: complete_for_phase
-            current_state: Provider-backed sends now fall back across configured routes when one route is unavailable, returns retryable downstream failures, or returns an incomplete provider receipt, and those attempts remain traceable through provider-aware gateway metadata.
-            missing: Additional providers and richer downstream workflow still remain future scope.
+            status: mostly_complete
+            current_state: Provider-backed sends now fall back across configured routes when one route is unavailable, returns retryable downstream failures, or returns an incomplete provider receipt, and buyer-side API calls now surface structured payment-required denials in addition to route-aware failure metadata.
+            missing: Additional providers, seller-side workflow, file uploads, and richer downstream workflow still remain future scope.
           - id: T7-E2-S4
             name: Add tests for gateway policy and error modes
             status: complete_for_phase
-            current_state: Targeted gateway tests now cover provider route readiness, provider send success, fallback to backup routes, and missing-config failures instead of stopping at the earlier generic boundary tests.
+            current_state: Targeted gateway tests now cover provider route readiness, provider send success, fallback to backup routes, missing-config failures, documented Obolos catalog and wallet-backed API calls, and structured payment-required failures instead of stopping at the earlier generic boundary tests.
             missing: Additional providers and richer downstream error semantics remain future scope.
+          - id: T7-E2-S5
+            name: Add documented seller-side Obolos publishing and wallet-topup flow
+            status: not_started
+            current_state: Buyer-side catalog, wallet balance, and slug-based API calls now exist behind the gateway boundary, but seller registration, API publishing, and wallet top-up are not yet modeled.
+            missing: The documented seller flow and top-up helper remain future scope.
 
   - id: T8
     name: Enterprise Hardening
