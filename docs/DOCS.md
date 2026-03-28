@@ -36,6 +36,9 @@ python -m agent --status     # Stav
 python -m agent --health     # Zdravie
 python -m agent --report     # Operator report / inbox
 python -m agent --runtime-model   # Explicitný runtime model
+python -m agent --gateway-catalog
+python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capability review_handoff_v1 --gateway-export-mode client_safe
+python -m agent --review-quality-eval --review-quality-release-label v1.13.0
 python -m agent --export-evidence-job <job_id>
 python -m agent --export-evidence-job <job_id> --export-evidence-mode client_safe
 python -m agent --list-artifacts  # Shared artifact query surface
@@ -48,17 +51,19 @@ python -m agent --build-repo . --build-description "Apply bounded builder plan" 
 python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-plan-file plan.json --intake-acceptance-file acceptance.json --intake-preview
 python -m agent --list-plans
 python -m agent --list-deliveries
-python -m pytest tests/ -q   # Testy (1318+ testov)
+python -m pytest tests/ -q   # Testy
 ```
 
 ## Verzia
 
-Aktuálna: **v1.12.0** — phase 2 verification hardening release.
+Aktuálna: **v1.13.0** — phase 2 provider gateway release.
 
-Nové v `v1.12.0`:
-- builder verification discovery teraz číta Python config, `package.json` scripts, Makefile targets, CI workflow hints a repo-local toolchain signály skôr než vyberie test/lint/typecheck príkazy
-- runtime už vracia structured denial payloady aj na zvyšných social/API, web, tool-execution a finance-budget hranách
-- reviewer quality už nie je chránená len smoke testami, ale aj golden verdict case-mi pre clean, secret a unsafe-pattern repozitáre
-- runtime model teraz explicitne ukazuje prvý external gateway contract a data-handling rules pre internal, client-safe a retained-trace packaging
+Nové v `v1.13.0`:
+- gateway teraz pozná konkrétneho providera `obolos.tech`, capability routes,
+  readiness cez env/vault a fallback medzi primárnou a záložnou route
+- CLI a operator report už vedia ukázať gateway catalog a configuration posture
+- review quality teraz nesleduje len snapshot, ale aj release label, runtime
+  duration a trend/regression voči predchádzajúcemu baseline
+- project root fallback je bezpečnejší a lepšie sedí na reálne checkoutnutý repo
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

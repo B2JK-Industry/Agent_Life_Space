@@ -317,6 +317,33 @@ async def show_runtime_model(data_dir: str = "agent") -> None:
     await agent.stop()
 
 
+async def show_gateway_catalog(
+    *,
+    data_dir: str = "agent",
+    provider_id: str = "",
+    capability_id: str = "",
+    kind: str = "",
+    export_mode: str = "",
+) -> None:
+    """Show configured external gateway providers, routes, and readiness."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    print(
+        orjson.dumps(
+            agent.get_gateway_catalog(
+                provider_id=provider_id,
+                capability_id=capability_id,
+                kind=kind or None,
+                export_mode=export_mode,
+            ),
+            option=orjson.OPT_INDENT_2,
+        ).decode()
+    )
+    await agent.stop()
+
+
 async def list_artifacts_command(
     *,
     data_dir: str = "agent",
@@ -614,6 +641,79 @@ async def handoff_build_delivery_command(
     await agent.stop()
 
 
+async def send_build_delivery_command(
+    *,
+    data_dir: str = "agent",
+    job_id: str,
+    target_url: str = "",
+    auth_token: str = "",
+    gateway_policy_id: str = "approval_before_gateway",
+    provider_id: str = "",
+    capability_id: str = "",
+    route_id: str = "",
+) -> None:
+    """Send an approved build delivery package through the external gateway."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    result = await agent.send_build_delivery_via_gateway(
+        job_id,
+        target_url=target_url,
+        auth_token=auth_token,
+        gateway_policy_id=gateway_policy_id,
+        provider_id=provider_id,
+        capability_id=capability_id,
+        route_id=route_id,
+    )
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def send_review_delivery_command(
+    *,
+    data_dir: str = "agent",
+    job_id: str,
+    target_url: str = "",
+    auth_token: str = "",
+    gateway_policy_id: str = "approval_before_gateway",
+    provider_id: str = "",
+    capability_id: str = "",
+    route_id: str = "",
+) -> None:
+    """Send an approved client-safe review package through the external gateway."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    result = await agent.send_review_delivery_via_gateway(
+        job_id,
+        target_url=target_url,
+        auth_token=auth_token,
+        gateway_policy_id=gateway_policy_id,
+        provider_id=provider_id,
+        capability_id=capability_id,
+        route_id=route_id,
+    )
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def evaluate_review_quality_command(
+    *,
+    data_dir: str = "agent",
+    release_label: str = "",
+) -> None:
+    """Run deterministic golden review cases and print quality telemetry."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    result = await agent.evaluate_review_quality(release_label=release_label)
+    print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
 async def show_artifact_command(
     *,
     data_dir: str = "agent",
@@ -855,6 +955,8 @@ def main() -> None:
             "review_policy",
             "verification_discovery",
             "execution",
+            "gateway",
+            "quality",
         ],
         help="Optional kind filter for --list-traces",
     )
@@ -1053,9 +1155,70 @@ def main() -> None:
         help="Mark the build delivery for this job id as handed off and exit",
     )
     parser.add_argument(
+        "--send-build-delivery",
+        default="",
+        help="Send the approved build delivery bundle for this job id through the external gateway and exit",
+    )
+    parser.add_argument(
+        "--send-review-delivery",
+        default="",
+        help="Send the approved client-safe review delivery bundle for this job id through the external gateway and exit",
+    )
+    parser.add_argument(
         "--handoff-note",
         default="",
         help="Optional note for --handoff-build-delivery",
+    )
+    parser.add_argument(
+        "--gateway-target",
+        default="",
+        help="Absolute target URL for gateway delivery commands",
+    )
+    parser.add_argument(
+        "--gateway-auth-token",
+        default="",
+        help="Auth token for gateway delivery commands",
+    )
+    parser.add_argument(
+        "--gateway-policy-id",
+        default="approval_before_gateway",
+        help="Gateway policy id for gateway delivery commands",
+    )
+    parser.add_argument(
+        "--gateway-provider",
+        default="",
+        help="Provider id for gateway delivery commands, e.g. obolos.tech",
+    )
+    parser.add_argument(
+        "--gateway-capability",
+        default="",
+        help="Provider capability id for gateway delivery commands",
+    )
+    parser.add_argument(
+        "--gateway-route-id",
+        default="",
+        help="Optional explicit provider route id for gateway delivery commands",
+    )
+    parser.add_argument(
+        "--gateway-export-mode",
+        default="internal",
+        choices=["internal", "client_safe"],
+        help="Export mode when filtering --gateway-catalog",
+    )
+    parser.add_argument(
+        "--gateway-catalog",
+        action="store_true",
+        help="Show configured external gateway providers/routes and exit",
+    )
+    parser.add_argument(
+        "--review-quality-eval",
+        action="store_true",
+        help="Run deterministic golden review cases and exit",
+    )
+    parser.add_argument(
+        "--review-quality-release-label",
+        default="",
+        help="Optional release label to attach to --review-quality-eval",
     )
     parser.add_argument(
         "--runtime-model",
@@ -1345,6 +1508,49 @@ def main() -> None:
                 data_dir=args.data_dir,
                 job_id=args.handoff_build_delivery,
                 note=args.handoff_note,
+            )
+        )
+    elif args.send_build_delivery:
+        asyncio.run(
+            send_build_delivery_command(
+                data_dir=args.data_dir,
+                job_id=args.send_build_delivery,
+                target_url=args.gateway_target,
+                auth_token=args.gateway_auth_token,
+                gateway_policy_id=args.gateway_policy_id,
+                provider_id=args.gateway_provider,
+                capability_id=args.gateway_capability,
+                route_id=args.gateway_route_id,
+            )
+        )
+    elif args.send_review_delivery:
+        asyncio.run(
+            send_review_delivery_command(
+                data_dir=args.data_dir,
+                job_id=args.send_review_delivery,
+                target_url=args.gateway_target,
+                auth_token=args.gateway_auth_token,
+                gateway_policy_id=args.gateway_policy_id,
+                provider_id=args.gateway_provider,
+                capability_id=args.gateway_capability,
+                route_id=args.gateway_route_id,
+            )
+        )
+    elif args.review_quality_eval:
+        asyncio.run(
+            evaluate_review_quality_command(
+                data_dir=args.data_dir,
+                release_label=args.review_quality_release_label,
+            )
+        )
+    elif args.gateway_catalog:
+        asyncio.run(
+            show_gateway_catalog(
+                data_dir=args.data_dir,
+                provider_id=args.gateway_provider,
+                capability_id=args.gateway_capability,
+                kind="",
+                export_mode=args.gateway_export_mode,
             )
         )
     elif args.runtime_model:

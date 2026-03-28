@@ -281,13 +281,17 @@ class ControlPlaneStateService:
         record = self.get_delivery(bundle_id)
         if record is None or not record.approval_request_id or approval_lookup is None:
             return record
+        if record.status == DeliveryLifecycleStatus.HANDED_OFF:
+            return record
         request = approval_lookup(record.approval_request_id)
         if not request:
             return record
 
         mapped_status = record.status
         approval_status = str(request.get("status", ""))
-        if approval_status in {"approved", "executed"}:
+        if approval_status == "executed":
+            mapped_status = DeliveryLifecycleStatus.HANDED_OFF
+        elif approval_status == "approved":
             mapped_status = DeliveryLifecycleStatus.APPROVED
         elif approval_status in {"denied", "expired"}:
             mapped_status = DeliveryLifecycleStatus.REJECTED
@@ -323,6 +327,36 @@ class ControlPlaneStateService:
             event_type="handed_off",
             detail=detail or "Delivery package handed off",
             metadata={},
+        )
+        self._storage.save_delivery_record(record)
+        return record
+
+    def record_delivery_event(
+        self,
+        bundle_id: str,
+        *,
+        event_type: str,
+        detail: str,
+        metadata: dict[str, Any] | None = None,
+        status: DeliveryLifecycleStatus | str | None = None,
+    ) -> DeliveryRecord | None:
+        """Append an auditable delivery event without rebuilding the full bundle."""
+        self.initialize()
+        record = self.get_delivery(bundle_id)
+        if record is None:
+            return None
+        if status is not None:
+            record.status = (
+                status
+                if isinstance(status, DeliveryLifecycleStatus)
+                else DeliveryLifecycleStatus(str(status))
+            )
+        record.updated_at = datetime.now(UTC).isoformat()
+        self._append_delivery_event(
+            record,
+            event_type=event_type,
+            detail=detail,
+            metadata=metadata or {},
         )
         self._storage.save_delivery_record(record)
         return record
@@ -609,17 +643,20 @@ class ControlPlaneStateService:
         title: str = "",
         workspace_id: str = "",
         usage: UsageSummary | dict[str, Any] | None = None,
+        entry_id: str = "",
+        source_type: str = "job_usage_snapshot",
         metadata: dict[str, Any] | None = None,
     ) -> CostLedgerEntry:
         self.initialize()
         entry = CostLedgerEntry(
-            entry_id=f"usage-{job_id}",
+            entry_id=entry_id or f"usage-{job_id}",
             job_id=job_id,
             job_kind=job_kind,
             title=title,
             workspace_id=workspace_id,
             recorded_at=datetime.now(UTC).isoformat(),
             usage=self._coerce_usage(usage),
+            source_type=source_type,
             metadata=dict(metadata or {}),
         )
         self._storage.save_cost_ledger_entry(entry)

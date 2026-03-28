@@ -15,5 +15,13 @@ _DEFAULT_PROJECT_DIR = "agent-life-space"
 
 
 def get_project_root() -> str:
-    """Return project root path from AGENT_PROJECT_ROOT env var or home directory default."""
-    return os.environ.get("AGENT_PROJECT_ROOT", str(Path.home() / _DEFAULT_PROJECT_DIR))
+    """Return project root from env or infer the checked-out repository root."""
+    configured = os.environ.get("AGENT_PROJECT_ROOT", "")
+    if configured:
+        return configured
+    inferred_root = Path(__file__).resolve().parents[2]
+    if (inferred_root / "pyproject.toml").exists():
+        resolved = str(inferred_root)
+        os.environ.setdefault("AGENT_PROJECT_ROOT", resolved)
+        return resolved
+    return str(Path.home() / _DEFAULT_PROJECT_DIR)

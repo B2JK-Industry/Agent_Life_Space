@@ -27,6 +27,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,7 @@ from agent.control.acquisition import RepoAcquisitionService
 from agent.control.artifact_queries import ArtifactQueryService
 from agent.control.denials import make_denial
 from agent.control.evidence_export import EvidenceExportService
+from agent.control.gateway import ExternalGatewayService
 from agent.control.intake import OperatorIntake, OperatorIntakeService, OperatorWorkType
 from agent.control.job_queries import JobQueryService
 from agent.control.models import JobKind, PlanRecordStatus, TraceRecordKind
@@ -56,6 +58,7 @@ from agent.core.watchdog import Watchdog
 from agent.finance.tracker import FinanceTracker
 from agent.memory.store import MemoryEntry, MemoryStore, MemoryType
 from agent.projects.manager import ProjectManager
+from agent.review.quality import ReviewQualityService
 from agent.tasks.manager import TaskManager
 from agent.work.workspace import WorkspaceManager
 
@@ -115,6 +118,8 @@ class AgentOrchestrator:
         )
         self.workspaces = WorkspaceManager()
         self.agent_loop: Any = None
+        self._secrets_manager: Any = None
+        self._secrets_lookup_disabled = False
         self.control_plane = ControlPlaneStateService(
             storage=ControlPlaneStorage(
                 db_path=str(self._data_dir / "control" / "control.db")
@@ -171,6 +176,12 @@ class AgentOrchestrator:
             approval_queue=self.approval_queue,
             control_plane_state=self.control_plane,
         )
+        self.gateway = ExternalGatewayService(
+            control_plane_state=self.control_plane,
+            approval_queue=self.approval_queue,
+            environment=os.environ,
+            secret_lookup=self._lookup_secret,
+        )
         self.reporting = OperatorReportService(
             job_queries=self.jobs,
             artifact_queries=self.artifacts,
@@ -179,6 +190,10 @@ class AgentOrchestrator:
             status_provider=self.get_status,
             control_plane_state=self.control_plane,
             workspace_queries=self.workspace_queries,
+            gateway_service=self.gateway,
+        )
+        self.review_quality = ReviewQualityService(
+            control_plane_state=self.control_plane,
         )
         self.evidence_exports = EvidenceExportService(
             job_queries=self.jobs,
@@ -1046,6 +1061,138 @@ class AgentOrchestrator:
         """Return the client-safe review delivery bundle."""
         return self.review.get_client_safe_bundle(job_id)
 
+    async def send_review_delivery_via_gateway(
+        self,
+        job_id: str,
+        *,
+        target_url: str = "",
+        auth_token: str = "",
+        gateway_policy_id: str = "approval_before_gateway",
+        provider_id: str = "",
+        capability_id: str = "",
+        route_id: str = "",
+    ) -> dict[str, Any]:
+        """Send an approved review package through the explicit gateway boundary."""
+        bundle = self.get_review_client_safe_bundle(job_id)
+        record = self.get_review_delivery_record(job_id)
+        if bundle is None or record is None:
+            denial = make_denial(
+                code="review_gateway_bundle_missing",
+                summary="Review gateway delivery blocked",
+                detail=f"Delivery bundle or record not found for review job '{job_id}'",
+                scope=job_id,
+                suggested_action="Assemble the review delivery bundle and approval record before gateway delivery.",
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
+        if record["status"] not in {"approved", "handed_off"}:
+            denial = make_denial(
+                code="review_gateway_not_approved",
+                summary="Review gateway delivery blocked",
+                detail=(
+                    f"Delivery record '{record['bundle_id']}' is {record['status']}, "
+                    "not approved for gateway send"
+                ),
+                scope=record["bundle_id"],
+                suggested_action="Approve the review delivery request before sending it through the gateway.",
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
+        if not target_url and not (provider_id and capability_id):
+            denial = make_denial(
+                code="review_gateway_target_missing",
+                summary="Review gateway delivery blocked",
+                detail=(
+                    "Provide either a direct gateway target URL or a configured "
+                    "provider + capability route."
+                ),
+                scope=record["bundle_id"],
+                suggested_action=(
+                    "Use --gateway-target or --gateway-provider plus "
+                    "--gateway-capability."
+                ),
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
+
+        request_detail = (
+            f"Gateway delivery requested for {target_url}"
+            if target_url
+            else (
+                "Gateway delivery requested for provider "
+                f"{provider_id} capability {capability_id}"
+            )
+        )
+        self.control_plane.record_delivery_event(
+            record["bundle_id"],
+            event_type="gateway_requested",
+            detail=request_detail,
+            metadata={
+                "gateway_policy_id": gateway_policy_id,
+                "target_url": target_url,
+                "provider_id": provider_id,
+                "capability_id": capability_id,
+                "route_id": route_id,
+            },
+        )
+        if provider_id and capability_id:
+            result = await self.gateway.send_delivery_via_capability(
+                bundle=bundle,
+                job_kind=JobKind.REVIEW,
+                provider_id=provider_id,
+                capability_id=capability_id,
+                route_id=route_id,
+                target_url=target_url,
+                auth_token=auth_token,
+                approval_request_id=record.get("approval_request_id", ""),
+                delivery_policy_id="approval_required",
+                export_mode="client_safe",
+            )
+        else:
+            result = await self.gateway.send_delivery(
+                bundle=bundle,
+                job_kind=JobKind.REVIEW,
+                target_url=target_url,
+                approval_request_id=record.get("approval_request_id", ""),
+                gateway_policy_id=gateway_policy_id,
+                auth_token=auth_token,
+                delivery_policy_id="approval_required",
+                export_mode="client_safe",
+            )
+        if result.get("ok"):
+            sent_target = result.get("target_url", target_url)
+            self.control_plane.record_delivery_event(
+                record["bundle_id"],
+                event_type="gateway_succeeded",
+                detail=(
+                    f"Gateway delivery sent to {sent_target}"
+                    if sent_target
+                    else (
+                        "Gateway delivery sent through provider "
+                        f"{result.get('provider_id', provider_id)} "
+                        f"capability {result.get('capability_id', capability_id)}"
+                    )
+                ),
+                metadata=result,
+            )
+            result["delivery_record"] = self.mark_review_delivery_handed_off(
+                job_id,
+                note=(
+                    f"Gateway delivery sent to {sent_target}"
+                    if sent_target
+                    else (
+                        "Gateway delivery sent through provider "
+                        f"{result.get('provider_id', provider_id)} "
+                        f"capability {result.get('capability_id', capability_id)}"
+                    )
+                ),
+            )
+            return result
+        self.control_plane.record_delivery_event(
+            record["bundle_id"],
+            event_type="gateway_failed",
+            detail=result.get("error", "Gateway delivery failed"),
+            metadata=result,
+        )
+        return result
+
     def list_approval_requests(
         self,
         *,
@@ -1089,6 +1236,139 @@ class AgentOrchestrator:
         """Mark a build delivery package as handed off after approval."""
         return self.build.mark_delivery_handed_off(job_id, note=note)
 
+    async def send_build_delivery_via_gateway(
+        self,
+        job_id: str,
+        *,
+        target_url: str = "",
+        auth_token: str = "",
+        gateway_policy_id: str = "approval_before_gateway",
+        provider_id: str = "",
+        capability_id: str = "",
+        route_id: str = "",
+    ) -> dict[str, Any]:
+        """Send an approved build package through the explicit gateway boundary."""
+        bundle = self.get_build_delivery_bundle(job_id)
+        record = self.get_build_delivery_record(job_id)
+        job = self.build.load_job(job_id)
+        if bundle is None or record is None or job is None:
+            denial = make_denial(
+                code="build_gateway_bundle_missing",
+                summary="Build gateway delivery blocked",
+                detail=f"Delivery bundle or record not found for build job '{job_id}'",
+                scope=job_id,
+                suggested_action="Assemble the build delivery bundle and approval record before gateway delivery.",
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
+        if record["status"] not in {"approved", "handed_off"}:
+            denial = make_denial(
+                code="build_gateway_not_approved",
+                summary="Build gateway delivery blocked",
+                detail=(
+                    f"Delivery record '{record['bundle_id']}' is {record['status']}, "
+                    "not approved for gateway send"
+                ),
+                scope=record["bundle_id"],
+                suggested_action="Approve the build delivery request before sending it through the gateway.",
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
+        if not target_url and not (provider_id and capability_id):
+            denial = make_denial(
+                code="build_gateway_target_missing",
+                summary="Build gateway delivery blocked",
+                detail=(
+                    "Provide either a direct gateway target URL or a configured "
+                    "provider + capability route."
+                ),
+                scope=record["bundle_id"],
+                suggested_action=(
+                    "Use --gateway-target or --gateway-provider plus "
+                    "--gateway-capability."
+                ),
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
+
+        request_detail = (
+            f"Gateway delivery requested for {target_url}"
+            if target_url
+            else (
+                "Gateway delivery requested for provider "
+                f"{provider_id} capability {capability_id}"
+            )
+        )
+        self.control_plane.record_delivery_event(
+            record["bundle_id"],
+            event_type="gateway_requested",
+            detail=request_detail,
+            metadata={
+                "gateway_policy_id": gateway_policy_id,
+                "target_url": target_url,
+                "provider_id": provider_id,
+                "capability_id": capability_id,
+                "route_id": route_id,
+            },
+        )
+        if provider_id and capability_id:
+            result = await self.gateway.send_delivery_via_capability(
+                bundle=bundle,
+                job_kind=JobKind.BUILD,
+                provider_id=provider_id,
+                capability_id=capability_id,
+                route_id=route_id,
+                target_url=target_url,
+                auth_token=auth_token,
+                approval_request_id=record.get("approval_request_id", ""),
+                delivery_policy_id=job.intake.delivery_policy_id,
+                export_mode="internal",
+            )
+        else:
+            result = await self.gateway.send_delivery(
+                bundle=bundle,
+                job_kind=JobKind.BUILD,
+                target_url=target_url,
+                approval_request_id=record.get("approval_request_id", ""),
+                gateway_policy_id=gateway_policy_id,
+                auth_token=auth_token,
+                delivery_policy_id=job.intake.delivery_policy_id,
+                export_mode="internal",
+            )
+        if result.get("ok"):
+            sent_target = result.get("target_url", target_url)
+            self.control_plane.record_delivery_event(
+                record["bundle_id"],
+                event_type="gateway_succeeded",
+                detail=(
+                    f"Gateway delivery sent to {sent_target}"
+                    if sent_target
+                    else (
+                        "Gateway delivery sent through provider "
+                        f"{result.get('provider_id', provider_id)} "
+                        f"capability {result.get('capability_id', capability_id)}"
+                    )
+                ),
+                metadata=result,
+            )
+            result["delivery_record"] = self.mark_build_delivery_handed_off(
+                job_id,
+                note=(
+                    f"Gateway delivery sent to {sent_target}"
+                    if sent_target
+                    else (
+                        "Gateway delivery sent through provider "
+                        f"{result.get('provider_id', provider_id)} "
+                        f"capability {result.get('capability_id', capability_id)}"
+                    )
+                ),
+            )
+            return result
+        self.control_plane.record_delivery_event(
+            record["bundle_id"],
+            event_type="gateway_failed",
+            detail=result.get("error", "Gateway delivery failed"),
+            metadata=result,
+        )
+        return result
+
     def list_product_jobs(
         self,
         kind: JobKind | str | None = None,
@@ -1101,6 +1381,30 @@ class AgentOrchestrator:
             for job in self.jobs.list_jobs(kind=kind, status=status, limit=limit)
         ]
 
+    async def evaluate_review_quality(
+        self,
+        *,
+        release_label: str = "",
+    ) -> dict[str, Any]:
+        """Run deterministic golden reviewer cases and return quality telemetry."""
+        return await self.review_quality.evaluate_goldens(release_label=release_label)
+
+    def get_gateway_catalog(
+        self,
+        *,
+        provider_id: str = "",
+        capability_id: str = "",
+        kind: JobKind | str | None = None,
+        export_mode: str = "",
+    ) -> dict[str, Any]:
+        """Describe provider-ready external gateway catalog and readiness."""
+        return self.gateway.describe_capability_catalog(
+            provider_id=provider_id,
+            capability_id=capability_id,
+            job_kind=kind,
+            export_mode=export_mode,
+        )
+
     def get_product_job(
         self,
         job_id: str,
@@ -1111,6 +1415,26 @@ class AgentOrchestrator:
         if job is None:
             return None
         return job.to_dict()
+
+    def _lookup_secret(self, name: str) -> str:
+        """Resolve a secret lazily from the local encrypted vault when available."""
+        if not name or self._secrets_lookup_disabled:
+            return ""
+        if self._secrets_manager is None:
+            secrets_file = self._data_dir / "vault" / "secrets.enc"
+            if not os.environ.get("AGENT_VAULT_KEY") and not secrets_file.exists():
+                self._secrets_lookup_disabled = True
+                return ""
+            try:
+                from agent.vault.secrets import SecretsManager
+
+                self._secrets_manager = SecretsManager(
+                    vault_dir=str(self._data_dir / "vault"),
+                )
+            except Exception:
+                self._secrets_lookup_disabled = True
+                return ""
+        return str(self._secrets_manager.get_secret(name) or "")
 
     def list_product_artifacts(
         self,

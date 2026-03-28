@@ -109,6 +109,16 @@ class ExternalGatewayPolicy:
     require_approval: bool = True
     record_cost: bool = True
     allow_network: bool = False
+    auth_required: bool = True
+    auth_header_name: str = "Authorization"
+    timeout_seconds: int = 10
+    max_retries: int = 1
+    retry_backoff_seconds: float = 0.5
+    rate_limit_calls: int = 3
+    rate_limit_window_seconds: int = 60
+    allowed_target_kinds: tuple[str, ...] = ("webhook_json",)
+    allowed_url_schemes: tuple[str, ...] = ("http", "https")
+    environment_profile_id: str = "delivery_export_only"
 
 
 @dataclass(frozen=True)
@@ -124,6 +134,42 @@ class ExternalGatewayContract:
     approval_required: bool = True
     record_cost: bool = True
     allow_network: bool = False
+    supported_target_kinds: tuple[str, ...] = ("webhook_json",)
+
+
+@dataclass(frozen=True)
+class ExternalCapabilityProvider:
+    """Named external provider behind the gateway boundary."""
+
+    id: str
+    label: str
+    description: str
+    contract_id: str = "external_capability_gateway_v1"
+    gateway_policy_id: str = "approval_before_gateway"
+    capability_ids: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ExternalCapabilityRoute:
+    """Provider-specific route for one external capability."""
+
+    route_id: str
+    provider_id: str
+    capability_id: str
+    label: str
+    description: str
+    target_kind: str = "webhook_json"
+    target_env_var: str = ""
+    auth_token_env_var: str = ""
+    auth_token_secret_name: str = ""
+    allowed_job_kinds: tuple[JobKind, ...] = (JobKind.BUILD, JobKind.REVIEW)
+    allowed_export_modes: tuple[str, ...] = ("internal", "client_safe")
+    gateway_contract_id: str = "external_capability_gateway_v1"
+    gateway_policy_id: str = "approval_before_gateway"
+    estimated_cost_usd: float = 0.0
+    priority: int = 100
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -315,6 +361,8 @@ _EXTERNAL_GATEWAY_POLICIES: dict[str, ExternalGatewayPolicy] = {
         require_approval=True,
         record_cost=True,
         allow_network=False,
+        auth_required=True,
+        environment_profile_id="delivery_export_only",
     ),
     "approval_before_gateway": ExternalGatewayPolicy(
         id="approval_before_gateway",
@@ -322,7 +370,16 @@ _EXTERNAL_GATEWAY_POLICIES: dict[str, ExternalGatewayPolicy] = {
         enabled=True,
         require_approval=True,
         record_cost=True,
-        allow_network=False,
+        allow_network=True,
+        auth_required=True,
+        timeout_seconds=12,
+        max_retries=2,
+        retry_backoff_seconds=0.5,
+        rate_limit_calls=5,
+        rate_limit_window_seconds=60,
+        allowed_target_kinds=("webhook_json",),
+        allowed_url_schemes=("http", "https"),
+        environment_profile_id="external_gateway_send",
     ),
 }
 
@@ -338,12 +395,16 @@ _EXTERNAL_GATEWAY_CONTRACTS: dict[str, ExternalGatewayContract] = {
         request_fields=(
             "request_id",
             "job_id",
+            "bundle_id",
             "capability_kind",
             "objective",
             "constraints",
             "approval_context",
             "budget_context",
             "input_artifact_ids",
+            "provider_context",
+            "target",
+            "delivery_bundle",
         ),
         response_fields=(
             "gateway_run_id",
@@ -356,7 +417,85 @@ _EXTERNAL_GATEWAY_CONTRACTS: dict[str, ExternalGatewayContract] = {
         default_policy_id="disabled_by_default",
         approval_required=True,
         record_cost=True,
-        allow_network=False,
+        allow_network=True,
+        supported_target_kinds=("webhook_json",),
+    ),
+}
+
+_EXTERNAL_CAPABILITY_PROVIDERS: dict[str, ExternalCapabilityProvider] = {
+    "obolos.tech": ExternalCapabilityProvider(
+        id="obolos.tech",
+        label="obolos.tech",
+        description=(
+            "External capability fabric for controlled delivery handoff and "
+            "future provider-backed execution modes."
+        ),
+        capability_ids=("review_handoff_v1", "build_delivery_v1"),
+        notes=(
+            "Provider routes must resolve target URL and auth from runtime "
+            "configuration or vault before execution.",
+            "Gateway remains approval-gated and audit-recorded even when the "
+            "provider route is configured.",
+        ),
+    ),
+}
+
+_EXTERNAL_CAPABILITY_ROUTES: dict[str, ExternalCapabilityRoute] = {
+    "obolos_review_handoff_primary": ExternalCapabilityRoute(
+        route_id="obolos_review_handoff_primary",
+        provider_id="obolos.tech",
+        capability_id="review_handoff_v1",
+        label="obolos.tech review handoff primary",
+        description="Primary client-safe review handoff route for obolos.tech.",
+        target_env_var="AGENT_OBOLOS_REVIEW_WEBHOOK_URL",
+        auth_token_env_var="AGENT_OBOLOS_AUTH_TOKEN",  # noqa: S106
+        auth_token_secret_name="obolos.tech.auth_token",  # noqa: S106
+        allowed_job_kinds=(JobKind.REVIEW,),
+        allowed_export_modes=("client_safe",),
+        estimated_cost_usd=0.02,
+        priority=10,
+    ),
+    "obolos_review_handoff_backup": ExternalCapabilityRoute(
+        route_id="obolos_review_handoff_backup",
+        provider_id="obolos.tech",
+        capability_id="review_handoff_v1",
+        label="obolos.tech review handoff backup",
+        description="Backup client-safe review handoff route for obolos.tech.",
+        target_env_var="AGENT_OBOLOS_REVIEW_WEBHOOK_URL_BACKUP",
+        auth_token_env_var="AGENT_OBOLOS_AUTH_TOKEN",  # noqa: S106
+        auth_token_secret_name="obolos.tech.auth_token",  # noqa: S106
+        allowed_job_kinds=(JobKind.REVIEW,),
+        allowed_export_modes=("client_safe",),
+        estimated_cost_usd=0.025,
+        priority=20,
+    ),
+    "obolos_build_delivery_primary": ExternalCapabilityRoute(
+        route_id="obolos_build_delivery_primary",
+        provider_id="obolos.tech",
+        capability_id="build_delivery_v1",
+        label="obolos.tech build delivery primary",
+        description="Primary internal build-delivery route for obolos.tech.",
+        target_env_var="AGENT_OBOLOS_BUILD_WEBHOOK_URL",
+        auth_token_env_var="AGENT_OBOLOS_AUTH_TOKEN",  # noqa: S106
+        auth_token_secret_name="obolos.tech.auth_token",  # noqa: S106
+        allowed_job_kinds=(JobKind.BUILD,),
+        allowed_export_modes=("internal",),
+        estimated_cost_usd=0.05,
+        priority=10,
+    ),
+    "obolos_build_delivery_backup": ExternalCapabilityRoute(
+        route_id="obolos_build_delivery_backup",
+        provider_id="obolos.tech",
+        capability_id="build_delivery_v1",
+        label="obolos.tech build delivery backup",
+        description="Backup internal build-delivery route for obolos.tech.",
+        target_env_var="AGENT_OBOLOS_BUILD_WEBHOOK_URL_BACKUP",
+        auth_token_env_var="AGENT_OBOLOS_AUTH_TOKEN",  # noqa: S106
+        auth_token_secret_name="obolos.tech.auth_token",  # noqa: S106
+        allowed_job_kinds=(JobKind.BUILD,),
+        allowed_export_modes=("internal",),
+        estimated_cost_usd=0.055,
+        priority=20,
     ),
 }
 
@@ -440,6 +579,16 @@ _ENVIRONMENT_PROFILES: dict[str, EnvironmentProfile] = {
         allow_network=False,
         acquisition_allowed=False,
     ),
+    "external_gateway_send": EnvironmentProfile(
+        id="external_gateway_send",
+        label="External gateway send",
+        description="Approval-gated network handoff through the explicit external gateway boundary.",
+        execution_mode="read_only_host",
+        workspace_required=False,
+        host_read_only=True,
+        allow_network=True,
+        acquisition_allowed=False,
+    ),
 }
 
 _OPERATING_ENVIRONMENT_PROFILES: dict[str, OperatingEnvironmentProfile] = {
@@ -455,6 +604,7 @@ _OPERATING_ENVIRONMENT_PROFILES: dict[str, OperatingEnvironmentProfile] = {
             "review_host_read_only",
             "build_workspace_local",
             "delivery_export_only",
+            "external_gateway_send",
         ),
         default_build_execution_policy_id="workspace_local_mutation",
         default_delivery_policy_id="approval_required",
@@ -477,6 +627,7 @@ _OPERATING_ENVIRONMENT_PROFILES: dict[str, OperatingEnvironmentProfile] = {
             "build_workspace_local",
             "repo_import_mirror",
             "delivery_export_only",
+            "external_gateway_send",
         ),
         default_build_execution_policy_id="workspace_local_mutation",
         default_delivery_policy_id="approval_required",
@@ -499,6 +650,7 @@ _OPERATING_ENVIRONMENT_PROFILES: dict[str, OperatingEnvironmentProfile] = {
             "build_workspace_local",
             "repo_import_mirror",
             "delivery_export_only",
+            "external_gateway_send",
         ),
         default_build_execution_policy_id="workspace_local_mutation",
         default_delivery_policy_id="gateway_only",
@@ -728,6 +880,44 @@ def list_external_gateway_policies() -> list[ExternalGatewayPolicy]:
     return list(_EXTERNAL_GATEWAY_POLICIES.values())
 
 
+def evaluate_external_gateway_access(
+    *,
+    policy_id: str = "disabled_by_default",
+    target_kind: str = "webhook_json",
+    target_url: str = "",
+    approval_status: str = "",
+    auth_token_provided: bool = False,
+) -> tuple[bool, str, ExternalGatewayPolicy]:
+    """Return whether a gateway request is allowed under the deterministic policy."""
+    from urllib.parse import urlparse
+
+    policy = get_external_gateway_policy(policy_id)
+    if not policy.enabled:
+        return False, "External gateway policy is disabled.", policy
+    if not policy.allow_network:
+        return False, "External gateway policy does not allow network delivery.", policy
+    if target_kind not in policy.allowed_target_kinds:
+        return (
+            False,
+            f"Target kind '{target_kind}' is not allowed under gateway policy '{policy.id}'.",
+            policy,
+        )
+    parsed = urlparse(target_url)
+    if not parsed.scheme or not parsed.netloc:
+        return False, "Gateway target URL must be an absolute URL.", policy
+    if parsed.scheme not in policy.allowed_url_schemes:
+        return (
+            False,
+            f"Gateway target scheme '{parsed.scheme}' is not allowed under policy '{policy.id}'.",
+            policy,
+        )
+    if policy.require_approval and approval_status not in {"approved", "executed"}:
+        return False, "Gateway delivery requires an approved external delivery request.", policy
+    if policy.auth_required and not auth_token_provided:
+        return False, "Gateway delivery requires an authentication token.", policy
+    return True, "", policy
+
+
 def get_external_gateway_contract(
     contract_id: str = "external_capability_gateway_v1",
 ) -> ExternalGatewayContract:
@@ -741,6 +931,75 @@ def get_external_gateway_contract(
 def list_external_gateway_contracts() -> list[ExternalGatewayContract]:
     """Return planning-safe external gateway contracts."""
     return list(_EXTERNAL_GATEWAY_CONTRACTS.values())
+
+
+def get_external_capability_provider(
+    provider_id: str = "obolos.tech",
+) -> ExternalCapabilityProvider:
+    """Resolve a configured external capability provider."""
+    return _EXTERNAL_CAPABILITY_PROVIDERS.get(
+        provider_id,
+        _EXTERNAL_CAPABILITY_PROVIDERS["obolos.tech"],
+    )
+
+
+def list_external_capability_providers() -> list[ExternalCapabilityProvider]:
+    """Return configured external capability providers."""
+    return list(_EXTERNAL_CAPABILITY_PROVIDERS.values())
+
+
+def get_external_capability_route(
+    route_id: str,
+) -> ExternalCapabilityRoute | None:
+    """Resolve one configured external capability route."""
+    return _EXTERNAL_CAPABILITY_ROUTES.get(route_id)
+
+
+def list_external_capability_routes(
+    *,
+    provider_id: str = "",
+    capability_id: str = "",
+    job_kind: JobKind | str | None = None,
+    export_mode: str = "",
+) -> list[ExternalCapabilityRoute]:
+    """Return configured external capability routes with optional filters."""
+    normalized_kind = None
+    if job_kind:
+        normalized_kind = (
+            job_kind
+            if isinstance(job_kind, JobKind)
+            else JobKind(str(job_kind))
+        )
+
+    routes = list(_EXTERNAL_CAPABILITY_ROUTES.values())
+    filtered: list[ExternalCapabilityRoute] = []
+    for route in routes:
+        if provider_id and route.provider_id != provider_id:
+            continue
+        if capability_id and route.capability_id != capability_id:
+            continue
+        if normalized_kind and normalized_kind not in route.allowed_job_kinds:
+            continue
+        if export_mode and export_mode not in route.allowed_export_modes:
+            continue
+        filtered.append(route)
+    return sorted(filtered, key=lambda route: (route.priority, route.route_id))
+
+
+def resolve_external_capability_routes(
+    *,
+    provider_id: str,
+    capability_id: str,
+    job_kind: JobKind | str,
+    export_mode: str,
+) -> list[ExternalCapabilityRoute]:
+    """Resolve ordered candidate routes for one provider-backed capability."""
+    return list_external_capability_routes(
+        provider_id=provider_id,
+        capability_id=capability_id,
+        job_kind=job_kind,
+        export_mode=export_mode,
+    )
 
 
 def get_data_handling_rule(

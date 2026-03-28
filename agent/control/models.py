@@ -388,6 +388,8 @@ class TraceRecordKind(str, Enum):
     REVIEW_POLICY = "review_policy"
     VERIFICATION_DISCOVERY = "verification_discovery"
     EXECUTION = "execution"
+    GATEWAY = "gateway"
+    QUALITY = "quality"
 
 
 @dataclass

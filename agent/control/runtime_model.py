@@ -12,6 +12,8 @@ from agent.control.policy import (
     list_build_execution_policies,
     list_data_handling_rules,
     list_environment_profiles,
+    list_external_capability_providers,
+    list_external_capability_routes,
     list_external_gateway_contracts,
     list_external_gateway_policies,
     list_operating_environment_profiles,
@@ -165,6 +167,16 @@ class RuntimeModelService:
                     "require_approval": policy.require_approval,
                     "record_cost": policy.record_cost,
                     "allow_network": policy.allow_network,
+                    "auth_required": policy.auth_required,
+                    "auth_header_name": policy.auth_header_name,
+                    "timeout_seconds": policy.timeout_seconds,
+                    "max_retries": policy.max_retries,
+                    "retry_backoff_seconds": policy.retry_backoff_seconds,
+                    "rate_limit_calls": policy.rate_limit_calls,
+                    "rate_limit_window_seconds": policy.rate_limit_window_seconds,
+                    "allowed_target_kinds": list(policy.allowed_target_kinds),
+                    "allowed_url_schemes": list(policy.allowed_url_schemes),
+                    "environment_profile_id": policy.environment_profile_id,
                 }
                 for policy in list_external_gateway_policies()
             ],
@@ -179,8 +191,42 @@ class RuntimeModelService:
                     "approval_required": contract.approval_required,
                     "record_cost": contract.record_cost,
                     "allow_network": contract.allow_network,
+                    "supported_target_kinds": list(contract.supported_target_kinds),
                 }
                 for contract in list_external_gateway_contracts()
+            ],
+            "external_capability_providers": [
+                {
+                    "id": provider.id,
+                    "label": provider.label,
+                    "description": provider.description,
+                    "contract_id": provider.contract_id,
+                    "gateway_policy_id": provider.gateway_policy_id,
+                    "capability_ids": list(provider.capability_ids),
+                    "notes": list(provider.notes),
+                }
+                for provider in list_external_capability_providers()
+            ],
+            "external_capability_routes": [
+                {
+                    "route_id": route.route_id,
+                    "provider_id": route.provider_id,
+                    "capability_id": route.capability_id,
+                    "label": route.label,
+                    "description": route.description,
+                    "target_kind": route.target_kind,
+                    "target_env_var": route.target_env_var,
+                    "auth_token_env_var": route.auth_token_env_var,
+                    "auth_token_secret_name": route.auth_token_secret_name,
+                    "allowed_job_kinds": [item.value for item in route.allowed_job_kinds],
+                    "allowed_export_modes": list(route.allowed_export_modes),
+                    "gateway_contract_id": route.gateway_contract_id,
+                    "gateway_policy_id": route.gateway_policy_id,
+                    "estimated_cost_usd": route.estimated_cost_usd,
+                    "priority": route.priority,
+                    "notes": list(route.notes),
+                }
+                for route in list_external_capability_routes()
             ],
             "data_handling_rules": [
                 {
@@ -203,7 +249,7 @@ class RuntimeModelService:
                 "AgentLoop remains an ephemeral queue and must hand off durable work to Task or product jobs.",
                 "Environment profiles define the safe execution boundary for review, build, acquisition, and export flows.",
                 "Operating environment profiles define the higher-level local/operator/enterprise posture over those flow-level execution boundaries.",
-                "External capability use must stay behind an approval-gated gateway contract with explicit cost and denial recording.",
+                "External capability use must stay behind an approval-gated gateway contract with explicit auth, timeout, retry, rate-limit, cost, and denial recording.",
                 "Evidence export modes must follow explicit retention, redaction, and handoff rules before broader enterprise rollout.",
             ],
             "convergence_plan": [
