@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
 import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -14,11 +16,14 @@ from agent.build.models import (
     BuildJob,
 )
 from agent.control.artifact_queries import ArtifactQueryService
+from agent.control.evidence_export import EvidenceExportService
 from agent.control.intake import OperatorIntake, OperatorIntakeService
 from agent.control.job_queries import JobQueryService
-from agent.control.models import ArtifactKind, JobKind, JobStatus
+from agent.control.models import ArtifactKind, JobKind, JobStatus, TraceRecordKind
 from agent.control.reporting import OperatorReportService
 from agent.control.runtime_model import RuntimeModelService
+from agent.control.state import ControlPlaneStateService
+from agent.control.storage import ControlPlaneStorage
 from agent.core.job_runner import JobRecord
 from agent.core.job_runner import JobStatus as RunnerJobStatus
 from agent.review.models import (
@@ -835,25 +840,39 @@ class TestUnifiedOperatorIntake:
         assert result["plan"]["capability_assignments"]
 
     @pytest.mark.asyncio
-    async def test_orchestrator_submit_operator_intake_rejects_git_only(
+    async def test_orchestrator_submit_operator_intake_supports_file_git_url(
         self, monkeypatch
     ):
         from agent.core.agent import AgentOrchestrator
 
-        agent = AgentOrchestrator(data_dir="agent-test", watchdog_interval=60.0)
-        agent._initialized = True
-        agent.initialize = AsyncMock()
-
-        result = await agent.submit_operator_intake(
-            OperatorIntake(
-                git_url="https://github.com/example/repo.git",
-                work_type="auto",
+        with tempfile.TemporaryDirectory() as repo_dir:
+            subprocess.run(  # noqa: S603 - fixed git argv for local test repository
+                ["git", "init", repo_dir],
+                check=True,
+                capture_output=True,
+                text=True,
             )
-        )
+            agent = AgentOrchestrator(data_dir="agent-test", watchdog_interval=60.0)
+            agent._initialized = True
+            agent.initialize = AsyncMock()
+            review_job = ReviewJob(id="review-321")
+            review_job.status = ReviewJobStatus.COMPLETED
+            agent.run_review_job = AsyncMock(return_value=review_job)
+            agent.get_product_job = MagicMock(
+                return_value={"job_id": "review-321", "job_kind": "review"}
+            )
+            result = await agent.submit_operator_intake(
+                OperatorIntake(
+                    git_url=Path(repo_dir).resolve().as_uri(),
+                    work_type="auto",
+                )
+            )
 
-        assert result["accepted"] is False
-        assert "git_url intake" in result["error"]
-        assert result["plan"]["blockers"]
+        assert result["accepted"] is True
+        assert result["status"] == "completed"
+        assert result["acquisition"]["acquired"] is True
+        assert result["acquisition"]["repo_path"]
+        agent.run_review_job.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_orchestrator_submit_operator_intake_blocks_on_stop_loss(self):
@@ -934,6 +953,7 @@ class TestUnifiedOperatorIntake:
 
         assert result["status"] == "awaiting_approval"
         assert result["approval_request"]["category"] == "finance"
+        assert result["approval_request"]["required_approvals"] == 2
         agent.run_build_job.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -967,6 +987,7 @@ class TestUnifiedOperatorIntake:
 
         assert result["status"] == "awaiting_approval"
         assert result["approval_request"]["category"] == "tool"
+        assert result["approval_request"]["required_approvals"] == 2
         agent.run_build_job.assert_not_awaited()
 
 
@@ -984,3 +1005,115 @@ class TestRuntimeModel:
             "AgentLoop",
         }
         assert any("BuildJob" in rule or "ReviewJob" in rule for rule in model["convergence_plan"])
+        profiles = {item["id"] for item in model["environment_profiles"]}
+        assert "review_host_read_only" in profiles
+        assert "build_workspace_local" in profiles
+
+
+class _DictRecord:
+    def __init__(self, **payload):
+        self.__dict__.update(payload)
+
+    def to_dict(self):
+        return dict(self.__dict__)
+
+
+class TestEvidenceExport:
+    def test_export_job_links_artifacts_to_retention_approvals_and_workspaces(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            control = ControlPlaneStateService(ControlPlaneStorage(db_path=f.name))
+        control.initialize()
+        control.record_product_job(
+            job_id="build-1",
+            job_kind=JobKind.BUILD,
+            title="Build delivery",
+            status="completed",
+            artifact_ids=["artifact-1"],
+            duration_ms=123.0,
+            retry_count=1,
+            failure_count=0,
+            metadata={"last_error": ""},
+        )
+        control.record_retained_artifact(
+            record_id="artifact-1",
+            artifact_id="artifact-1",
+            job_id="build-1",
+            job_kind=JobKind.BUILD,
+            artifact_kind=ArtifactKind.PATCH,
+            source_type="build_artifact",
+            title="Patch",
+            artifact_format="text",
+            content="diff --git a/app.py b/app.py",
+        )
+        control.record_trace(
+            trace_kind=TraceRecordKind.EXECUTION,
+            title="Build finished",
+            detail="job build-1 completed",
+            job_id="build-1",
+        )
+        control.record_cost_entry(
+            job_id="build-1",
+            job_kind=JobKind.BUILD,
+            title="Build delivery",
+            metadata={"source_status": "completed"},
+        )
+
+        service = EvidenceExportService(
+            job_queries=MagicMock(
+                get_job=MagicMock(
+                    return_value=_DictRecord(
+                        job_id="build-1",
+                        job_kind=JobKind.BUILD,
+                        status="completed",
+                        title="Build delivery",
+                    )
+                )
+            ),
+            artifact_queries=MagicMock(
+                list_artifacts=MagicMock(
+                    return_value=[
+                        _DictRecord(
+                            artifact_id="artifact-1",
+                            artifact_kind="patch",
+                            job_id="build-1",
+                        )
+                    ]
+                )
+            ),
+            control_plane_state=control,
+            workspace_queries=MagicMock(
+                list_workspaces=MagicMock(
+                    return_value=[
+                        _DictRecord(
+                            workspace_id="ws-1",
+                            job_ids=["build-1"],
+                            artifact_ids=["artifact-1"],
+                            approval_ids=["approval-1"],
+                            bundle_ids=["bundle-1"],
+                        )
+                    ]
+                )
+            ),
+            approval_queue=MagicMock(
+                list_requests=MagicMock(
+                    return_value=[
+                        {
+                            "id": "approval-1",
+                            "context": {
+                                "job_id": "build-1",
+                                "artifact_ids": ["artifact-1"],
+                            },
+                        }
+                    ]
+                )
+            ),
+            runtime_model=RuntimeModelService(),
+        )
+
+        package = service.export_job("build-1", kind="build")
+
+        assert package["job_id"] == "build-1"
+        assert package["summary"]["artifact_count"] == 1
+        assert package["artifact_traceability"][0]["retention_record_id"] == "artifact-1"
+        assert package["artifact_traceability"][0]["approval_ids"] == ["approval-1"]
+        assert package["artifact_traceability"][0]["workspace_ids"] == ["ws-1"]

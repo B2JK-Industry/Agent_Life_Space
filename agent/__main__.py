@@ -548,6 +548,30 @@ async def list_cost_ledger_command(
     await agent.stop()
 
 
+async def export_evidence_command(
+    *,
+    data_dir: str = "agent",
+    job_id: str,
+    kind: str = "",
+    export_format: str = "json",
+) -> None:
+    """Export a compliance-friendly evidence package for one job."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    result = agent.export_job_evidence(
+        job_id,
+        kind=kind or None,
+        export_format=export_format,
+    )
+    if export_format == "markdown":
+        print(result)
+    else:
+        print(orjson.dumps(result, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
 async def handoff_build_delivery_command(
     *,
     data_dir: str = "agent",
@@ -915,6 +939,23 @@ def main() -> None:
         help="Limit for --list-cost-ledger (default: 50)",
     )
     parser.add_argument(
+        "--export-evidence-job",
+        default="",
+        help="Export a compliance-friendly evidence package for this job id and exit",
+    )
+    parser.add_argument(
+        "--export-evidence-kind",
+        default="",
+        choices=["", "build", "review"],
+        help="Optional job kind hint for --export-evidence-job",
+    )
+    parser.add_argument(
+        "--export-evidence-format",
+        default="json",
+        choices=["json", "markdown"],
+        help="Output format for --export-evidence-job",
+    )
+    parser.add_argument(
         "--handoff-build-delivery",
         default="",
         help="Mark the build delivery for this job id as handed off and exit",
@@ -1011,7 +1052,7 @@ def main() -> None:
     parser.add_argument(
         "--intake-git-url",
         default="",
-        help="Unified operator intake: git URL (modeled but not yet executable)",
+        help="Unified operator intake: supported git source for managed acquisition/import",
     )
     parser.add_argument(
         "--intake-diff",
@@ -1164,6 +1205,15 @@ def main() -> None:
                 job_id=args.cost_job_id,
                 job_kind=args.cost_job_kind,
                 limit=args.cost_limit,
+            )
+        )
+    elif args.export_evidence_job:
+        asyncio.run(
+            export_evidence_command(
+                data_dir=args.data_dir,
+                job_id=args.export_evidence_job,
+                kind=args.export_evidence_kind,
+                export_format=args.export_evidence_format,
             )
         )
     elif args.handoff_build_delivery:

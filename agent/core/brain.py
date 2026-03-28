@@ -214,12 +214,20 @@ class AgentBrain:
                 }
                 override = override_map.get(adaptation["model_override"])
                 if override:
-                    logger.info("learning_override_model",
-                                original=model.model_id,
-                                override=override.model_id,
-                                reason=adaptation.get("reason", ""))
-                    model = override
-                    learning_escalation = adaptation.get("reason", "")
+                    allowed, blocked_reason = self._budget_allows_escalation()
+                    if allowed:
+                        logger.info("learning_override_model",
+                                    original=model.model_id,
+                                    override=override.model_id,
+                                    reason=adaptation.get("reason", ""))
+                        model = override
+                        learning_escalation = adaptation.get("reason", "")
+                    else:
+                        logger.info("learning_override_budget_blocked",
+                                    original=model.model_id,
+                                    blocked_override=override.model_id,
+                                    reason=blocked_reason)
+                        learning_escalation = blocked_reason
 
         # Build prompt
         is_agent_chat = message.channel_type == "agent_api"
@@ -352,29 +360,36 @@ class AgentBrain:
             if quality.should_escalate and not used_tool_loop:
                 # Only escalate single-shot responses; tool-loop results
                 # already have rich context and re-running would lose it
-                logger.info("post_routing_escalation",
-                            from_model=model.model_id,
-                            score=quality.score,
-                            reason=quality.reason)
-                from agent.core.models import SONNET
-                esc_response = await provider.generate(GenerateRequest(
-                    messages=[{"role": "user", "content": prompt}],
-                    model=SONNET.model_id,
-                    timeout=SONNET.timeout,
-                    max_turns=SONNET.max_turns,
-                    allow_file_access=cli_allow_file_access,
-                    cwd=project_root,
-                ))
-                if esc_response.success and esc_response.text:
-                    reply = esc_response.text
-                    model = SONNET
-                    usage_cost += esc_response.cost_usd
-                    usage_input_tokens += esc_response.input_tokens
-                    usage_output_tokens += esc_response.output_tokens
-                    self._total_cost_usd += esc_response.cost_usd
-                    self._total_input_tokens += esc_response.input_tokens
-                    self._total_output_tokens += esc_response.output_tokens
-                    logger.info("post_routing_escalation_success", model=SONNET.model_id)
+                allowed, blocked_reason = self._budget_allows_escalation()
+                if not allowed:
+                    logger.info("post_routing_escalation_budget_blocked",
+                                from_model=model.model_id,
+                                score=quality.score,
+                                reason=blocked_reason)
+                else:
+                    logger.info("post_routing_escalation",
+                                from_model=model.model_id,
+                                score=quality.score,
+                                reason=quality.reason)
+                    from agent.core.models import SONNET
+                    esc_response = await provider.generate(GenerateRequest(
+                        messages=[{"role": "user", "content": prompt}],
+                        model=SONNET.model_id,
+                        timeout=SONNET.timeout,
+                        max_turns=SONNET.max_turns,
+                        allow_file_access=cli_allow_file_access,
+                        cwd=project_root,
+                    ))
+                    if esc_response.success and esc_response.text:
+                        reply = esc_response.text
+                        model = SONNET
+                        usage_cost += esc_response.cost_usd
+                        usage_input_tokens += esc_response.input_tokens
+                        usage_output_tokens += esc_response.output_tokens
+                        self._total_cost_usd += esc_response.cost_usd
+                        self._total_input_tokens += esc_response.input_tokens
+                        self._total_output_tokens += esc_response.output_tokens
+                        logger.info("post_routing_escalation_success", model=SONNET.model_id)
         except Exception as e:
             logger.error("quality_escalation_error", error=str(e))
 
@@ -586,6 +601,15 @@ class AgentBrain:
         if chat_id not in self._conversations:
             self._conversations[chat_id] = []
         return self._conversations[chat_id]
+
+    def _budget_allows_escalation(self) -> tuple[bool, str]:
+        try:
+            from agent.control.policy import allow_budget_escalation
+
+            budget_status = self._agent.finance.check_budget(1.0)
+            return allow_budget_escalation(budget_status)
+        except Exception:
+            return True, ""
 
     @staticmethod
     def _get_conversation_id(chat_id: str) -> str:

@@ -498,10 +498,14 @@ class ReviewService:
             artifact_ids=[artifact.id for artifact in job.artifacts],
             created_at=job.timing.created_at,
             completed_at=job.timing.completed_at,
+            duration_ms=job.timing.duration_ms,
+            retry_count=0,
+            failure_count=1 if job.status in {ReviewJobStatus.FAILED, ReviewJobStatus.BLOCKED} else 0,
             usage=job.usage,
             metadata={
                 "review_type": job.job_type.value,
                 "phase": job.phase.value,
+                "environment_profile_id": "review_host_read_only",
                 "timing": job.timing.to_dict(),
                 "finding_counts": job.report.finding_counts,
                 "focus_areas": list(job.intake.focus_areas),
@@ -509,6 +513,7 @@ class ReviewService:
                 "exclude_patterns": list(job.intake.exclude_patterns),
                 "review_execution_policy_id": self._review_policy_id(job),
                 "error": job.error,
+                "last_error": job.error,
             },
         )
 
@@ -705,6 +710,7 @@ class ReviewService:
             }
 
         from agent.core.approval import ApprovalCategory
+        required_approvals = self._delivery_required_approvals(job)
         req = self._approval_queue.propose(
             category=ApprovalCategory.EXTERNAL,
             description=f"Deliver review report for job {job_id[:8]} ({job.report.verdict})",
@@ -718,6 +724,7 @@ class ReviewService:
                 "requester": job.requester,
                 "artifact_ids": [artifact.id for artifact in job.artifacts],
             },
+            required_approvals=required_approvals,
         )
         logger.info("review_delivery_approval_requested",
                      job_id=job_id, approval_id=req.id)
@@ -725,8 +732,17 @@ class ReviewService:
             "job_id": job_id,
             "approval_request_id": req.id,
             "approval_status": "pending",
+            "required_approvals": req.required_approvals,
             "delivery_ready": False,
         }
+
+    def _delivery_required_approvals(self, job: ReviewJob) -> int:
+        counts = job.report.finding_counts
+        if counts.get("critical", 0) > 0:
+            return 2
+        if job.report.verdict == "fail":
+            return 2
+        return 1
 
     def get_client_safe_bundle(self, job_id: str) -> dict[str, Any] | None:
         """Export a client-safe delivery bundle with policy-driven redaction.

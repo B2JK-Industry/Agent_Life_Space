@@ -184,6 +184,17 @@ class OperatorReportService:
                         ),
                     }
                 )
+        for job in recent_persisted_jobs[:limit]:
+            if job.get("failure_count", 0) > 0:
+                inbox.append(
+                    {
+                        "kind": "product_job_attention",
+                        "id": job["job_id"],
+                        "status": job["status"],
+                        "title": job["title"],
+                        "detail": job.get("metadata", {}).get("last_error", "") or job.get("blocked_reason", ""),
+                    }
+                )
 
         return {
             "summary": {
@@ -204,6 +215,17 @@ class OperatorReportService:
                 "daily_budget_remaining_usd": finance_budget.get("daily_remaining", 0.0),
                 "monthly_budget_remaining_usd": finance_budget.get("monthly_remaining", 0.0),
                 "budget_within_limit": finance_budget.get("within_budget", True),
+                "failed_product_jobs": sum(
+                    1 for record in recent_persisted_jobs
+                    if record.get("failure_count", 0) > 0
+                ),
+                "retried_product_jobs": sum(
+                    1 for record in recent_persisted_jobs
+                    if record.get("retry_count", 0) > 0
+                ),
+                "max_product_job_duration_ms": max(
+                    (record.get("duration_ms") or 0.0) for record in recent_persisted_jobs
+                ) if recent_persisted_jobs else 0.0,
             },
             "budget_posture": {
                 "daily_spent": finance_budget.get("daily_spent", 0.0),
@@ -217,6 +239,9 @@ class OperatorReportService:
                 "soft_cap_hit": finance_budget.get("soft_cap_hit", False),
                 "stop_loss_hit": finance_budget.get("stop_loss_hit", False),
                 "warnings": list(finance_budget.get("warnings", [])),
+                "single_tx_approval_cap": (
+                    finance_budget.get("forecast", {}).get("single_tx_approval_cap", 0.0)
+                ),
             },
             "inbox": inbox[:limit],
             "recent_jobs": jobs[:limit],

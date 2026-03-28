@@ -1085,6 +1085,7 @@ class TestBuildService:
         assert "verification_passed" in bundle["summary"]
         assert bundle["payload"]["patch"]["metadata"]["files_changed"] >= 1
         assert approval["bundle_id"] == bundle["bundle_id"]
+        assert approval["required_approvals"] == 1
         assert request is not None
         assert request["context"]["workspace_id"] == job.workspace_id
         assert request["context"]["bundle_id"] == bundle["bundle_id"]

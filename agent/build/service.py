@@ -40,6 +40,7 @@ from agent.build.models import (
     BuildCheckpointPhase,
     BuildIntake,
     BuildJob,
+    BuildJobType,
     BuildPhase,
     CriterionKind,
     VerificationKind,
@@ -1024,10 +1025,14 @@ class BuildService:
             artifact_ids=[artifact.id for artifact in job.artifacts],
             created_at=job.timing.created_at,
             completed_at=job.timing.completed_at,
+            duration_ms=job.timing.duration_ms,
+            retry_count=job.resume_count,
+            failure_count=1 if job.status in {JobStatus.FAILED, JobStatus.BLOCKED} else 0,
             usage=job.usage,
             metadata={
                 "build_type": job.build_type.value,
                 "capability_id": job.capability_id,
+                "environment_profile_id": "build_workspace_local",
                 "phase": job.phase.value,
                 "timing": job.timing.to_dict(),
                 "checkpoints": [checkpoint.to_dict() for checkpoint in job.checkpoints],
@@ -1043,6 +1048,7 @@ class BuildService:
                 },
                 "delivery_policy_id": job.intake.delivery_policy_id,
                 "error": job.error,
+                "last_error": job.error,
             },
         )
 
@@ -1748,6 +1754,7 @@ class BuildService:
         from agent.core.approval import ApprovalCategory
 
         delivery_policy = get_delivery_policy(job.intake.delivery_policy_id)
+        required_approvals = self._delivery_required_approvals(job, bundle=bundle)
         req = self._approval_queue.propose(
             category=ApprovalCategory.EXTERNAL,
             description=f"Deliver build package for job {job_id[:8]} ({job.build_type.value})",
@@ -1766,6 +1773,7 @@ class BuildService:
                 "capability_id": job.capability_id,
                 "delivery_policy_id": delivery_policy.id,
             },
+            required_approvals=required_approvals,
         )
         self._sync_delivery_record(
             bundle=DeliveryPackage(
@@ -1802,6 +1810,7 @@ class BuildService:
             "bundle_id": bundle["bundle_id"],
             "approval_request_id": req.id,
             "approval_status": "pending",
+            "required_approvals": req.required_approvals,
             "delivery_ready": False,
         }
 
@@ -1866,6 +1875,25 @@ class BuildService:
             approval_request_id=approval_request_id,
             metadata=metadata or {},
         )
+
+    def _delivery_required_approvals(
+        self,
+        job: BuildJob,
+        *,
+        bundle: dict[str, Any],
+    ) -> int:
+        deliverable_files_changed = int(
+            bundle.get("summary", {}).get("deliverable_files_changed", 0)
+        )
+        critical = int(job.post_build_review_findings.get("critical", 0))
+        high = int(job.post_build_review_findings.get("high", 0))
+        if job.build_type in {BuildJobType.INTEGRATION, BuildJobType.DEVOPS}:
+            return 2
+        if critical > 0 or high > 0:
+            return 2
+        if deliverable_files_changed >= 5:
+            return 2
+        return 1
 
     def _refresh_delivery_record(self, bundle_id: str):
         if self._control_plane_state is None:

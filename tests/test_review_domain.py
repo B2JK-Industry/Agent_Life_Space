@@ -897,12 +897,36 @@ class TestDeliveryApproval:
         result = service.request_delivery_approval(job.id)
         assert result.get("approval_request_id") is not None
         assert result["approval_status"] == "pending"
+        assert result["required_approvals"] == 1
         assert result["delivery_ready"] is False
 
         # Queue should have the request
         pending = queue.get_pending()
         assert len(pending) == 1
         assert pending[0]["context"]["job_id"] == job.id
+
+    async def test_delivery_approval_escalates_to_multi_step_on_high_findings(
+        self, service_with_approval, sample_repo
+    ):
+        service, queue = service_with_approval
+        intake = ReviewIntake(repo_path=sample_repo)
+        job = await service.run_review(intake)
+        job.report.findings.append(
+            ReviewFinding(
+                severity=Severity.CRITICAL,
+                title="Critical issue",
+                file_path="app.py",
+                line_start=1,
+                evidence="bad pattern",
+            )
+        )
+        service._storage.save_job(job)
+
+        result = service.request_delivery_approval(job.id)
+
+        assert result["required_approvals"] == 2
+        pending = queue.get_pending()
+        assert pending[0]["required_approvals"] == 2
 
     async def test_delivery_approval_rejects_incomplete_job(self, service_with_approval, sample_repo):
         service, _ = service_with_approval

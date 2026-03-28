@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agent.core.response_quality import QualityAssessment
 from agent.social.channel import IncomingMessage
 
 
@@ -192,3 +193,53 @@ class TestBrainMultiChannel:
         tool_context = fake_loop.run.call_args.kwargs["tool_context"]
         assert tool_context.is_owner is True
         assert tool_context.safe_mode is False
+
+    @pytest.mark.asyncio
+    async def test_budget_blocks_post_routing_escalation(self, brain, monkeypatch):
+        fake_provider = MagicMock()
+        fake_provider.supports_tools.return_value = False
+        fake_provider.generate = AsyncMock(
+            return_value=MagicMock(
+                success=True,
+                text="Neviem. Nemám informácie.",
+                cost_usd=0.01,
+                input_tokens=10,
+                output_tokens=6,
+            )
+        )
+
+        brain._agent.finance.check_budget = MagicMock(
+            return_value={
+                "within_budget": True,
+                "hard_cap_hit": False,
+                "soft_cap_hit": True,
+                "stop_loss_hit": False,
+                "requires_approval": False,
+                "warnings": ["soft cap"],
+            }
+        )
+
+        monkeypatch.setattr(
+            "agent.core.response_quality.assess_quality",
+            lambda *args, **kwargs: QualityAssessment(
+                score=0.2,
+                should_escalate=True,
+                reason="Needs stronger model",
+                signals=["generic_response"],
+            ),
+        )
+        monkeypatch.setattr("agent.core.llm_provider.get_provider", lambda: fake_provider)
+
+        msg = IncomingMessage(
+            text="analyzuj architekturu tohto projektu detailne",
+            sender_id="1",
+            sender_name="Daniel",
+            channel_type="telegram",
+            chat_id="123",
+            is_owner=True,
+        )
+
+        result = await brain.process(msg)
+
+        assert result is not None
+        assert fake_provider.generate.await_count == 1
