@@ -11,7 +11,7 @@ John si sem zapisuje naučené veci, recepty, fakty, postupy.
     agent/brain/knowledge/
     ├── skills/          — čo viem robiť (automaticky zo skills.json)
     ├── systems/         — ako fungujú veci (GitHub API, Docker, server)
-    ├── people/          — kto je kto (Daniel, kontakty)
+    ├── people/          — kto je kto (owner, kontakty)
     ├── projects/        — aktívne projekty
     └── learned/         — čo som sa naučil (z experimentov, chýb)
 

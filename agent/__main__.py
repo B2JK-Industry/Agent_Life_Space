@@ -127,7 +127,7 @@ async def run_agent(data_dir: str = "agent") -> None:
 
             # Support comma-separated user IDs: "123,456,789"
             allowed_ids = [int(x.strip()) for x in tg_user_id.split(",") if x.strip()] if tg_user_id else []
-            owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
+            owner_name = os.environ.get("AGENT_OWNER_NAME", "owner")
             bot = TelegramBot(token=tg_token, allowed_user_ids=allowed_ids, owner_name=owner_name)
             # Start agent work loop
             from agent.core.agent_loop import AgentLoop

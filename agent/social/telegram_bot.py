@@ -1,7 +1,7 @@
 """
 Agent Life Space — Telegram Bot Interface
 
-Allows Daniel to communicate with the agent via Telegram.
+Allows the owner to communicate with the agent via Telegram.
 
 Features:
     - Send text messages → agent processes them
@@ -185,12 +185,8 @@ class TelegramBot:
         text = message.get("text", "")
         raw_username = message.get("from", {}).get("username", "")
         first_name = message.get("from", {}).get("first_name", "")
-        # Ak user_id je v allowed_users → je to owner
-        # Inak použi Telegram username alebo first_name
-        if self._allowed_users and user_id in self._allowed_users:
-            username = self._owner_name
-        else:
-            username = raw_username or first_name or "unknown"
+        is_owner = bool(self._allowed_users and user_id in self._allowed_users)
+        username = raw_username or first_name or (self._owner_name if is_owner else "unknown")
 
         # In groups, only respond if mentioned or replied to
         if chat_type in ("group", "supergroup"):
@@ -241,6 +237,16 @@ class TelegramBot:
         # Route to callback — include username and chat_type
         if self._message_callback:
             try:
+                response = await self._message_callback(
+                    text, user_id, chat_id,
+                    username=username, chat_type=chat_type,
+                    is_owner=is_owner,
+                )
+                if response:
+                    await self.send_message(chat_id, str(response))
+            except TypeError as e:
+                if "unexpected keyword argument 'is_owner'" not in str(e):
+                    raise
                 response = await self._message_callback(
                     text, user_id, chat_id,
                     username=username, chat_type=chat_type,

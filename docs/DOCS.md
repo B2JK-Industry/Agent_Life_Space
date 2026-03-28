@@ -42,8 +42,8 @@ python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capab
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_catalog_v1
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability wallet_balance_v1
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_api_call_v1 --provider-api-resource ocr-text-extraction --provider-api-method POST --provider-api-json '{"mode":"fast"}'
-python -m agent --review-quality-eval --review-quality-release-label v1.16.0
-python -m agent --release-readiness --release-readiness-release-label v1.16.0
+python -m agent --review-quality-eval --review-quality-release-label v1.16.1
+python -m agent --release-readiness --release-readiness-release-label v1.16.1
 python -m agent --export-evidence-job <job_id>
 python -m agent --export-evidence-job <job_id> --export-evidence-mode client_safe
 python -m agent --list-artifacts  # Shared artifact query surface
@@ -61,16 +61,14 @@ python -m pytest tests/ -q   # Testy
 
 ## Verzia
 
-Aktuálna: **v1.16.0** — documented buyer-side Obolos gateway release.
+Aktuálna: **v1.16.1** — Telegram identity and language default fix release.
 
-Nové v `v1.16.0`:
-- gateway už poctivo rozlišuje delivery handoff a documented external API call
-  cez samostatný `external_api_call_v1` kontrakt
-- `obolos.tech` buyer-side flow teraz pokrýva marketplace catalog, wallet
-  balance a slug-based API calls za shared gateway boundary
-- buyer-side API calls ukladajú request/response artifacts, gateway traces a
-  structured `payment required` denial payloady
-- pribudol generický CLI entrypoint `python -m agent --call-provider-api ...`
-  pre provider-backed API capability calls
+Nové v `v1.16.1`:
+- fresh install už nededí hardcoded `Daniel` owner identitu ani povinnú
+  slovenčinu v promptoch
+- Telegram owner flow zachováva reálne Telegram meno a explicitne odovzdáva
+  owner status callback vrstve
+- owner/language defaults sa nastavujú cez `AGENT_OWNER_NAME`,
+  `AGENT_OWNER_FULL_NAME` a `AGENT_DEFAULT_LANGUAGE`
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

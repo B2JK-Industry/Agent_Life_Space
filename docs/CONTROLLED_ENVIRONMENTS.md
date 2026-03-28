@@ -117,7 +117,7 @@ python -m agent --call-provider-api --provider-api-provider obolos.tech --provid
 Before a release or important external handoff, run:
 
 ```bash
-python -m agent --release-readiness --release-readiness-release-label v1.16.0
+python -m agent --release-readiness --release-readiness-release-label v1.16.1
 ```
 
 What it checks today:
@@ -146,7 +146,7 @@ Typical command set:
 PATH="$PWD/.tools/node-v24.14.0-darwin-arm64/bin:$PATH" npm run typecheck
 python -m agent --runtime-model
 python -m agent --report
-python -m agent --release-readiness --release-readiness-release-label v1.16.0
+python -m agent --release-readiness --release-readiness-release-label v1.16.1
 ```
 
 ## Phase 2 Reality Check

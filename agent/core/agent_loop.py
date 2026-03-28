@@ -206,6 +206,7 @@ class AgentLoop:
 
     async def _execute_item(self, item: WorkItem) -> str:
         """Vykonaj jednu úlohu cez LLM provider (CLI alebo API)."""
+        from agent.core.identity import get_agent_identity, get_response_language_instruction
         from agent.core.llm_provider import GenerateRequest, get_provider
         from agent.core.models import get_model
 
@@ -216,11 +217,12 @@ class AgentLoop:
         project_root = get_project_root()
 
         prompt = (
-            f"Si John, agent na serveri b2jk-agentlifespace. "
+            f"You are {get_agent_identity().agent_name}, an agent running on "
+            f"{get_agent_identity().server_name}. "
             f"Pracuješ v {project_root}.\n\n"
             f"ÚLOHA: {safe_description}\n\n"
-            f"Urob to a na konci VŽDY napíš stručné zhrnutie čo si urobil. "
-            f"Odpovedaj po slovensky."
+            "Urob to a na konci VŽDY napíš stručné zhrnutie čo si urobil. "
+            f"{get_response_language_instruction()}"
         )
 
         provider = get_provider()
