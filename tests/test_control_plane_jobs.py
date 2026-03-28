@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 from pathlib import Path
@@ -417,6 +418,36 @@ class TestJobQueryService:
 
 
 class TestBuilderCliAdapter:
+    def test_load_acceptance_criteria_file_supports_strings_and_objects(self, tmp_path):
+        from agent import __main__ as agent_main
+
+        criteria_file = tmp_path / "criteria.json"
+        criteria_file.write_text(
+            json.dumps(
+                {
+                    "criteria": [
+                        {
+                            "description": "Config version stamped",
+                            "evaluator": "workspace",
+                            "metadata": {
+                                "path": "config.json",
+                                "json_path": "release.version",
+                                "expected_value": "1.11.0",
+                            },
+                        },
+                        "optional: docs updated",
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        criteria = agent_main._load_acceptance_criteria(str(criteria_file))
+
+        assert len(criteria) == 2
+        assert criteria[0].metadata["path"] == "config.json"
+        assert criteria[1].required is False
+
     @pytest.mark.asyncio
     async def test_run_build_command_uses_orchestrator_entrypoint(
         self, monkeypatch, capsys
@@ -855,6 +886,40 @@ class TestUnifiedOperatorIntake:
             if step["phase"] == "build"
         )
 
+    def test_preview_surfaces_structured_acceptance_summary(self):
+        service = OperatorIntakeService()
+        intake = OperatorIntake(
+            repo_path="/tmp/repo",
+            work_type="build",
+            description="Implement bounded local change",
+            acceptance_criteria=[
+                {
+                    "description": "Config version stamped",
+                    "evaluator": "workspace",
+                    "metadata": {
+                        "path": "config.json",
+                        "json_path": "release.version",
+                        "expected_value": "1.11.0",
+                    },
+                },
+                "optional: docs updated",
+            ],
+        )
+
+        preview = service.preview(intake)
+
+        assert preview["plan"]["acceptance_summary"]["total"] == 2
+        assert preview["plan"]["acceptance_summary"]["required"] == 1
+        assert preview["plan"]["acceptance_summary"]["optional"] == 1
+        assert preview["plan"]["acceptance_summary"]["structured"] == 1
+        assert preview["plan"]["acceptance_summary"]["by_evaluator"]["workspace"] == 1
+        assert "structured=1" in preview["plan"]["scope_summary"]
+        assert any(
+            assignment["metadata"].get("acceptance_summary", {}).get("structured") == 1
+            for assignment in preview["plan"]["capability_assignments"]
+            if assignment["phase"] == "build"
+        )
+
     def test_preview_uses_budget_policy_and_provider(self):
         service = OperatorIntakeService(
             budget_status_provider=lambda amount: {
@@ -979,6 +1044,31 @@ class TestUnifiedOperatorIntake:
 
         assert len(build_intake.implementation_plan) == 1
         assert build_intake.implementation_plan[0].operation_type == BuildOperationType.JSON_SET
+
+    def test_to_build_intake_preserves_structured_acceptance_metadata(self):
+        service = OperatorIntakeService()
+        intake = OperatorIntake(
+            repo_path="/tmp/repo",
+            work_type="build",
+            description="Implement endpoint",
+            acceptance_criteria=[
+                {
+                    "description": "Config version stamped",
+                    "evaluator": "workspace",
+                    "metadata": {
+                        "path": "config.json",
+                        "json_path": "release.version",
+                        "expected_value": "1.11.0",
+                    },
+                }
+            ],
+        )
+
+        build_intake = service.to_build_intake(intake)
+
+        assert len(build_intake.acceptance_criteria) == 1
+        assert build_intake.acceptance_criteria[0].evaluator.value == "workspace"
+        assert build_intake.acceptance_criteria[0].metadata["path"] == "config.json"
 
     @pytest.mark.asyncio
     async def test_orchestrator_submit_operator_intake_routes_to_build(

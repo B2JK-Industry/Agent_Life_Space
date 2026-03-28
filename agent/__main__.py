@@ -657,6 +657,31 @@ def _load_build_operation_plan(plan_file: str) -> list[object]:
     return [BuildOperation.from_dict(item) for item in payload]
 
 
+def _load_acceptance_criteria(criteria_file: str) -> list[object]:
+    """Load structured acceptance criteria from JSON."""
+    from agent.build.models import AcceptanceCriterion
+
+    try:
+        with open(criteria_file, encoding="utf-8") as f:
+            payload = json.load(f)
+    except OSError as e:
+        raise ValueError(f"Could not read acceptance criteria file: {e}") from e
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Acceptance criteria file is not valid JSON: {e}") from e
+
+    if isinstance(payload, dict):
+        payload = (
+            payload.get("acceptance_criteria")
+            or payload.get("criteria")
+            or payload.get("acceptance")
+            or payload.get("requirements")
+            or []
+        )
+    if not isinstance(payload, list):
+        raise ValueError("Acceptance criteria file must contain a JSON list")
+    return [AcceptanceCriterion.from_input(item) for item in payload]
+
+
 async def run_build_command(
     *,
     data_dir: str = "agent",
@@ -664,7 +689,7 @@ async def run_build_command(
     description: str,
     target_files: list[str] | None = None,
     implementation_plan: list[object] | None = None,
-    acceptance_criteria: list[str] | None = None,
+    acceptance_criteria: list[object] | None = None,
     requester: str = "cli",
     context: str = "",
     skip_review: bool = False,
@@ -683,7 +708,7 @@ async def run_build_command(
         target_files=target_files or [],
         implementation_plan=implementation_plan or [],
         acceptance_criteria=[
-            AcceptanceCriterion.from_text(item)
+            AcceptanceCriterion.from_input(item)
             for item in (acceptance_criteria or [])
         ],
         run_post_build_review=not skip_review,
@@ -725,7 +750,7 @@ async def run_intake_command(
     focus_areas: list[str] | None = None,
     target_files: list[str] | None = None,
     implementation_plan: list[object] | None = None,
-    acceptance_criteria: list[str] | None = None,
+    acceptance_criteria: list[object] | None = None,
     preview_only: bool = False,
 ) -> None:
     """Qualify and optionally execute unified operator intake."""
@@ -1065,6 +1090,11 @@ def main() -> None:
         help="Acceptance criterion for the build job; repeatable",
     )
     parser.add_argument(
+        "--build-acceptance-file",
+        default="",
+        help="JSON file with structured acceptance criteria for --build-repo",
+    )
+    parser.add_argument(
         "--build-plan-file",
         default="",
         help="JSON file with a structured implementation plan for --build-repo",
@@ -1175,6 +1205,11 @@ def main() -> None:
         action="append",
         default=[],
         help="Unified operator intake: acceptance criterion; repeatable",
+    )
+    parser.add_argument(
+        "--intake-acceptance-file",
+        default="",
+        help="Unified operator intake: JSON file with structured acceptance criteria",
     )
     parser.add_argument(
         "--intake-plan-file",
@@ -1343,6 +1378,11 @@ def main() -> None:
                 if args.build_plan_file
                 else []
             )
+            build_acceptance = (
+                _load_acceptance_criteria(args.build_acceptance_file)
+                if args.build_acceptance_file
+                else []
+            ) + list(args.build_acceptance)
         except ValueError as e:
             parser.error(str(e))
         asyncio.run(
@@ -1352,7 +1392,7 @@ def main() -> None:
                 description=args.build_description,
                 target_files=args.build_target_file,
                 implementation_plan=build_plan,
-                acceptance_criteria=args.build_acceptance,
+                acceptance_criteria=build_acceptance,
                 requester=args.build_requester,
                 context=args.build_context,
                 skip_review=args.build_skip_review,
@@ -1365,6 +1405,11 @@ def main() -> None:
                 if args.intake_plan_file
                 else []
             )
+            intake_acceptance = (
+                _load_acceptance_criteria(args.intake_acceptance_file)
+                if args.intake_acceptance_file
+                else []
+            ) + list(args.intake_acceptance)
         except ValueError as e:
             parser.error(str(e))
         asyncio.run(
@@ -1381,7 +1426,7 @@ def main() -> None:
                 focus_areas=args.intake_focus_area,
                 target_files=args.intake_target_file,
                 implementation_plan=intake_plan,
-                acceptance_criteria=args.intake_acceptance,
+                acceptance_criteria=intake_acceptance,
                 preview_only=args.intake_preview,
             )
         )

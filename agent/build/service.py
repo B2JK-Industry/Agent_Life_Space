@@ -1216,6 +1216,16 @@ class BuildService:
         job: BuildJob,
         verification_passed: bool,
     ) -> dict[str, Any]:
+        by_evaluator: dict[str, int] = {}
+        by_kind: dict[str, int] = {}
+        structured_count = 0
+        for criterion in job.acceptance.criteria:
+            by_evaluator[criterion.evaluator.value] = (
+                by_evaluator.get(criterion.evaluator.value, 0) + 1
+            )
+            by_kind[criterion.kind.value] = by_kind.get(criterion.kind.value, 0) + 1
+            if criterion.metadata:
+                structured_count += 1
         criteria_by_status = {
             "met": [
                 criterion.to_dict()
@@ -1268,6 +1278,9 @@ class BuildService:
                 "optional_total": job.acceptance.optional_total,
                 "optional_met_count": job.acceptance.optional_met_count,
                 "optional_unmet_count": job.acceptance.optional_unmet_count,
+                "structured_count": structured_count,
+                "by_evaluator": by_evaluator,
+                "by_kind": by_kind,
             },
         }
 
@@ -1363,6 +1376,15 @@ class BuildService:
             description = criterion.description.strip()
             normalized = description.lower()
 
+            if self._evaluate_structured_acceptance_criterion(
+                job=job,
+                criterion=criterion,
+                normalized=normalized,
+                workspace_path=workspace_path,
+                change_set=change_set,
+            ):
+                continue
+
             if criterion.evaluator == CriterionEvaluator.VERIFY_COMMAND:
                 self._evaluate_verify_command(
                     job=job,
@@ -1397,7 +1419,13 @@ class BuildService:
                 continue
 
             if criterion.evaluator == CriterionEvaluator.WORKSPACE:
-                criterion.meet(self._workspace_execution_evidence(job))
+                self._evaluate_workspace_backed_criterion(
+                    job=job,
+                    criterion=criterion,
+                    normalized=normalized,
+                    workspace_path=workspace_path,
+                    change_set=change_set,
+                )
                 continue
 
             if normalized.startswith("verify:"):
@@ -1463,7 +1491,13 @@ class BuildService:
                 continue
 
             if "build" in normalized or "workspace" in normalized:
-                criterion.meet(self._workspace_execution_evidence(job))
+                self._evaluate_workspace_backed_criterion(
+                    job=job,
+                    criterion=criterion,
+                    normalized=normalized,
+                    workspace_path=workspace_path,
+                    change_set=change_set,
+                )
                 continue
 
             if criterion.kind == CriterionKind.QUALITY:
@@ -1480,6 +1514,83 @@ class BuildService:
 
             criterion.fail(f"No evaluator available for criterion: {description}")
 
+    def _evaluate_structured_acceptance_criterion(
+        self,
+        *,
+        job: BuildJob,
+        criterion,
+        normalized: str,
+        workspace_path: str,
+        change_set: dict[str, Any],
+    ) -> bool:
+        metadata = criterion.metadata or {}
+        if not metadata:
+            return False
+
+        workspace_keys = {
+            "path",
+            "paths",
+            "must_exist",
+            "must_change",
+            "contains_text",
+            "not_contains_text",
+            "json_path",
+            "expected_value",
+            "value",
+        }
+        change_keys = {
+            "required_paths",
+            "minimum_changed_files",
+            "docs_required",
+            "forbid_internal_changes",
+        }
+        review_keys = {
+            "max_critical",
+            "max_high",
+            "max_total_findings",
+            "review_verdict",
+            "verdict",
+        }
+
+        if criterion.evaluator == CriterionEvaluator.VERIFICATION or "verification_kind" in metadata:
+            self._evaluate_explicit_verification_criterion(
+                job=job,
+                criterion=criterion,
+                normalized=normalized,
+            )
+            return True
+        if criterion.evaluator == CriterionEvaluator.REVIEW or any(
+            key in metadata for key in review_keys
+        ):
+            self._evaluate_review_backed_criterion(
+                job=job,
+                criterion=criterion,
+                normalized=normalized,
+            )
+            return True
+        if criterion.evaluator == CriterionEvaluator.CHANGE_SET or any(
+            key in metadata for key in change_keys
+        ):
+            self._evaluate_change_backed_criterion(
+                job=job,
+                criterion=criterion,
+                normalized=normalized,
+                change_set=change_set,
+            )
+            return True
+        if criterion.evaluator == CriterionEvaluator.WORKSPACE or any(
+            key in metadata for key in workspace_keys
+        ):
+            self._evaluate_workspace_backed_criterion(
+                job=job,
+                criterion=criterion,
+                normalized=normalized,
+                workspace_path=workspace_path,
+                change_set=change_set,
+            )
+            return True
+        return False
+
     def _evaluate_explicit_verification_criterion(
         self,
         *,
@@ -1487,6 +1598,21 @@ class BuildService:
         criterion,
         normalized: str,
     ) -> None:
+        metadata = criterion.metadata or {}
+        verification_kind = metadata.get("verification_kind", "")
+        if verification_kind:
+            try:
+                kind = VerificationKind(str(verification_kind))
+            except ValueError:
+                criterion.fail(f"Unsupported verification_kind: {verification_kind}")
+                return
+            label = kind.value.capitalize()
+            self._evaluate_verification_backed_criterion(
+                criterion=criterion,
+                result=self._find_verification_result(job, kind),
+                label=label,
+            )
+            return
         if "typecheck" in normalized or "type check" in normalized or "mypy" in normalized:
             self._evaluate_verification_backed_criterion(
                 criterion=criterion,
@@ -1744,6 +1870,165 @@ class BuildService:
             metadata=metadata or {},
         )
 
+    def _evaluate_workspace_backed_criterion(
+        self,
+        *,
+        job: BuildJob,
+        criterion,
+        normalized: str,
+        workspace_path: str,
+        change_set: dict[str, Any],
+    ) -> None:
+        metadata = criterion.metadata or {}
+        if not metadata:
+            criterion.meet(self._workspace_execution_evidence(job))
+            return
+
+        workspace_root = Path(workspace_path)
+        changed_lookup = {
+            path.casefold()
+            for path in change_set.get("deliverable_changed_files", [])
+        }
+        paths = self._metadata_paths(metadata)
+        if not paths and job.intake.target_files:
+            paths = list(job.intake.target_files)
+
+        issues: list[str] = []
+        evidence_parts: list[str] = [self._workspace_execution_evidence(job)]
+
+        if metadata.get("must_change"):
+            changed_targets = paths or list(change_set.get("deliverable_changed_files", []))
+            missing_changes = [
+                path for path in changed_targets if path.casefold() not in changed_lookup
+            ]
+            if missing_changes:
+                issues.append(f"required changed path(s) missing: {', '.join(missing_changes)}")
+            else:
+                evidence_parts.append("required workspace path changes captured")
+
+        if metadata.get("must_exist"):
+            missing_paths = []
+            for path in paths:
+                try:
+                    target = self._resolve_workspace_operation_path(workspace_root, path)
+                except ValueError as e:
+                    issues.append(str(e))
+                    continue
+                if not target.exists():
+                    missing_paths.append(path)
+            if missing_paths:
+                issues.append(f"required path(s) missing: {', '.join(missing_paths)}")
+            elif paths:
+                evidence_parts.append("required workspace paths exist")
+
+        contains_text = self._criterion_text_values(metadata.get("contains_text"))
+        not_contains_text = self._criterion_text_values(metadata.get("not_contains_text"))
+        if contains_text or not_contains_text:
+            if not paths:
+                issues.append("contains_text checks require path or paths metadata")
+            else:
+                for path in paths:
+                    try:
+                        target = self._resolve_workspace_operation_path(workspace_root, path)
+                    except ValueError as e:
+                        issues.append(str(e))
+                        continue
+                    if not target.exists():
+                        issues.append(f"path does not exist for text checks: {path}")
+                        continue
+                    content = target.read_text(encoding="utf-8")
+                    lowered = content.casefold()
+                    missing_needles = [
+                        needle for needle in contains_text if needle.casefold() not in lowered
+                    ]
+                    forbidden_needles = [
+                        needle for needle in not_contains_text if needle.casefold() in lowered
+                    ]
+                    if missing_needles:
+                        issues.append(
+                            f"{path} is missing required text: {', '.join(missing_needles)}"
+                        )
+                    if forbidden_needles:
+                        issues.append(
+                            f"{path} still contains forbidden text: {', '.join(forbidden_needles)}"
+                        )
+                if not any("text" in issue for issue in issues):
+                    evidence_parts.append("workspace text checks passed")
+
+        json_path = metadata.get("json_path")
+        if json_path:
+            if len(paths) != 1:
+                issues.append("json_path checks require exactly one path")
+            else:
+                try:
+                    target = self._resolve_workspace_operation_path(workspace_root, paths[0])
+                except ValueError as e:
+                    issues.append(str(e))
+                else:
+                    if not target.exists():
+                        issues.append(f"JSON path target does not exist: {paths[0]}")
+                    else:
+                        try:
+                            payload = json.loads(target.read_text(encoding="utf-8"))
+                        except json.JSONDecodeError as e:
+                            issues.append(f"invalid JSON in {paths[0]}: {e}")
+                        else:
+                            value, found = self._resolve_json_value(
+                                payload,
+                                self._criterion_path_segments(json_path),
+                            )
+                            expected = metadata.get("expected_value", metadata.get("value"))
+                            if not found:
+                                issues.append(
+                                    f"JSON path {'.'.join(self._criterion_path_segments(json_path))} not found"
+                                )
+                            elif value != expected:
+                                issues.append(
+                                    f"JSON path value mismatch for {paths[0]}: expected {expected!r}, got {value!r}"
+                                )
+                            else:
+                                evidence_parts.append("workspace JSON check passed")
+
+        evidence = "; ".join(evidence_parts)
+        if issues:
+            criterion.fail(f"{evidence}; {'; '.join(issues)}")
+        else:
+            criterion.meet(evidence)
+
+    def _metadata_paths(self, metadata: dict[str, Any]) -> list[str]:
+        raw = metadata.get("paths")
+        if raw is None:
+            raw = metadata.get("required_paths")
+        if raw is None:
+            raw = metadata.get("path", [])
+        if isinstance(raw, str):
+            return [raw]
+        if isinstance(raw, list):
+            return [str(item) for item in raw]
+        return []
+
+    def _criterion_text_values(self, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        return []
+
+    def _criterion_path_segments(self, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [segment for segment in value.split(".") if segment]
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        return []
+
+    def _resolve_json_value(self, payload: Any, path: list[str]) -> tuple[Any, bool]:
+        current = payload
+        for segment in path:
+            if not isinstance(current, dict) or segment not in current:
+                return None, False
+            current = current[segment]
+        return current, True
+
     def _evaluate_verification_backed_criterion(
         self,
         criterion,
@@ -1791,6 +2076,32 @@ class BuildService:
         high = counts.get("high", 0)
         total_findings = sum(counts.values())
         verdict = job.post_build_review_verdict
+        metadata = criterion.metadata or {}
+
+        if metadata:
+            max_critical = metadata.get("max_critical")
+            max_high = metadata.get("max_high")
+            max_total = metadata.get("max_total_findings")
+            required_verdict = metadata.get("review_verdict", metadata.get("verdict"))
+            conditions: list[bool] = []
+            evidence = (
+                f"review verdict={verdict}; critical={critical}; "
+                f"high={high}; total_findings={total_findings}"
+            )
+            if max_critical is not None:
+                conditions.append(critical <= int(max_critical))
+            if max_high is not None:
+                conditions.append(high <= int(max_high))
+            if max_total is not None:
+                conditions.append(total_findings <= int(max_total))
+            if required_verdict:
+                conditions.append(verdict == str(required_verdict))
+            if conditions:
+                if all(conditions):
+                    criterion.meet(evidence)
+                else:
+                    criterion.fail(evidence)
+                return
 
         if "no findings" in normalized or "zero findings" in normalized:
             passed = total_findings == 0
@@ -1832,6 +2143,41 @@ class BuildService:
                 f"{prefix}; deliverable_changed={changed_summary}; "
                 f"internal_changed={internal_summary}; files_changed={len(all_changed)}"
             )
+
+        metadata = criterion.metadata or {}
+        if metadata:
+            required_paths = self._metadata_paths(metadata)
+            minimum_changed = metadata.get("minimum_changed_files")
+            docs_required = bool(metadata.get("docs_required", False))
+            forbid_internal_changes = bool(metadata.get("forbid_internal_changes", False))
+            changed_lookup = {path.casefold() for path in deliverable_changed}
+            issues: list[str] = []
+            if required_paths:
+                missing = [
+                    path for path in required_paths if path.casefold() not in changed_lookup
+                ]
+                if missing:
+                    issues.append(f"missing changed path(s): {', '.join(missing)}")
+            if minimum_changed is not None and len(deliverable_changed) < int(minimum_changed):
+                issues.append(
+                    f"expected at least {int(minimum_changed)} deliverable change(s), got {len(deliverable_changed)}"
+                )
+            if docs_required:
+                docs_changed = any(
+                    path.casefold().startswith("docs/") or path.casefold().endswith(".md")
+                    for path in deliverable_changed
+                )
+                if not docs_changed:
+                    issues.append("expected documentation changes")
+            if forbid_internal_changes and internal_changed:
+                issues.append(
+                    f"unexpected internal workspace changes: {', '.join(internal_changed[:3])}"
+                )
+            if issues:
+                criterion.fail(_evidence("; ".join(issues)))
+            else:
+                criterion.meet(_evidence("Structured change-set checks passed"))
+            return
 
         if "target file" in normalized:
             if not job.intake.target_files:
@@ -2290,6 +2636,9 @@ class BuildService:
                 "optional_unmet_count",
                 job.acceptance.optional_unmet_count,
             ),
+            "structured_count": delivery_summary.get("structured_count", 0),
+            "by_evaluator": delivery_summary.get("by_evaluator", {}),
+            "by_kind": delivery_summary.get("by_kind", {}),
             "verification_passed": acceptance_payload.get(
                 "verification_passed",
                 job.verification_passed,
@@ -2449,6 +2798,7 @@ class BuildService:
                 ),
                 "verification_passed": job.verification_passed,
                 "acceptance_accepted": job.acceptance.accepted,
+                "structured_acceptance_criteria": acceptance_summary["structured_count"],
                 "review_requested": job.intake.run_post_build_review,
                 "review_verdict": job.post_build_review_verdict or "not_requested",
                 "verification_artifacts": len(verification_artifacts),

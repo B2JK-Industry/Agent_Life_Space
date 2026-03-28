@@ -239,6 +239,7 @@ class AcceptanceCriterion:
     evaluator: CriterionEvaluator = CriterionEvaluator.AUTO
     status: CriterionStatus = CriterionStatus.PENDING
     evidence: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def meet(self, evidence: str = "") -> None:
         self.status = CriterionStatus.MET
@@ -261,6 +262,7 @@ class AcceptanceCriterion:
             "evaluator": self.evaluator.value,
             "status": self.status.value,
             "evidence": self.evidence,
+            "metadata": dict(self.metadata),
         }
 
     @classmethod
@@ -273,7 +275,20 @@ class AcceptanceCriterion:
             evaluator=CriterionEvaluator(d.get("evaluator", "auto")),
             status=CriterionStatus(d.get("status", "pending")),
             evidence=d.get("evidence", ""),
+            metadata=dict(d.get("metadata", {})),
         )
+
+    @classmethod
+    def from_input(cls, value: AcceptanceCriterion | str | dict[str, Any]) -> AcceptanceCriterion:
+        """Normalize operator/build acceptance input into a criterion object."""
+
+        if isinstance(value, cls):
+            return cls.from_dict(value.to_dict())
+        if isinstance(value, str):
+            return cls.from_text(value)
+        if isinstance(value, dict):
+            return cls.from_dict(value)
+        raise ValueError("acceptance criteria must be strings or JSON objects")
 
     @classmethod
     def from_text(cls, text: str) -> AcceptanceCriterion:

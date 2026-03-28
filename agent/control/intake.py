@@ -74,7 +74,9 @@ class OperatorIntake:
     focus_areas: list[str] = field(default_factory=list)
     target_files: list[str] = field(default_factory=list)
     implementation_plan: list[BuildOperation] = field(default_factory=list)
-    acceptance_criteria: list[str] = field(default_factory=list)
+    acceptance_criteria: list[str | AcceptanceCriterion | dict[str, Any]] = field(
+        default_factory=list
+    )
     run_post_build_review: bool = True
     max_files: int = 100
 
@@ -90,6 +92,11 @@ class OperatorIntake:
             errors.append("description is required for build routing")
         for operation in self.implementation_plan:
             errors.extend(operation.validate())
+        for index, criterion in enumerate(self.acceptance_criteria):
+            try:
+                AcceptanceCriterion.from_input(criterion)
+            except Exception as e:
+                errors.append(f"acceptance_criteria[{index}] is invalid: {e}")
         return errors
 
     @property
@@ -115,10 +122,19 @@ class OperatorIntake:
             "implementation_plan": [
                 operation.to_dict() for operation in self.implementation_plan
             ],
-            "acceptance_criteria": list(self.acceptance_criteria),
+            "acceptance_criteria": [
+                AcceptanceCriterion.from_input(item).to_dict()
+                for item in self.acceptance_criteria
+            ],
             "run_post_build_review": self.run_post_build_review,
             "max_files": self.max_files,
         }
+
+    def normalized_acceptance_criteria(self) -> list[AcceptanceCriterion]:
+        return [
+            AcceptanceCriterion.from_input(item)
+            for item in self.acceptance_criteria
+        ]
 
 
 @dataclass
@@ -246,6 +262,7 @@ class JobPlan:
     title: str = ""
     summary: str = ""
     scope_summary: str = ""
+    acceptance_summary: dict[str, Any] = field(default_factory=dict)
     scope_size: str = "small"
     scope_signals: list[str] = field(default_factory=list)
     risk_level: str = "low"
@@ -267,6 +284,7 @@ class JobPlan:
             "title": self.title,
             "summary": self.summary,
             "scope_summary": self.scope_summary,
+            "acceptance_summary": dict(self.acceptance_summary),
             "scope_size": self.scope_size,
             "scope_signals": list(self.scope_signals),
             "risk_level": self.risk_level,
@@ -428,7 +446,7 @@ class OperatorIntakeService:
                 for operation in intake.implementation_plan
             ],
             acceptance_criteria=[
-                AcceptanceCriterion.from_text(item)
+                AcceptanceCriterion.from_input(item)
                 for item in intake.acceptance_criteria
             ],
             run_post_build_review=intake.run_post_build_review,
@@ -467,6 +485,7 @@ class OperatorIntakeService:
             title=self._build_plan_title(intake, resolved),
             summary=self._build_plan_summary(intake, qualification),
             scope_summary=self._build_scope_summary(intake),
+            acceptance_summary=self._build_acceptance_summary(intake),
             scope_size=qualification.scope_size,
             scope_signals=list(qualification.scope_signals),
             risk_level=qualification.risk_level,
@@ -509,6 +528,7 @@ class OperatorIntakeService:
         resolved: OperatorWorkType,
     ) -> list[str]:
         reasons: list[str] = []
+        acceptance = self._build_acceptance_summary(intake)
         if intake.diff_spec:
             reasons.append("diff_spec present, so review routing is supported.")
         if intake.target_files:
@@ -521,7 +541,9 @@ class OperatorIntakeService:
             )
         if intake.acceptance_criteria:
             reasons.append(
-                f"acceptance_criteria present ({len(intake.acceptance_criteria)}), so build routing is meaningful."
+                "acceptance_criteria present "
+                f"({acceptance['total']} total; {acceptance['required']} required; "
+                f"{acceptance['optional']} optional), so build routing is meaningful."
             )
         if intake.git_url and not intake.repo_path:
             reasons.append("git_url can be acquired into a managed local mirror before runtime execution.")
@@ -556,10 +578,17 @@ class OperatorIntakeService:
 
         if qualification.resolved_work_type == OperatorWorkType.BUILD:
             operation_count = len(intake.implementation_plan)
+            acceptance = self._build_acceptance_summary(intake)
             build_detail = (
                 f"Apply {operation_count} structured workspace operation(s) through the bounded local engine."
                 if operation_count
                 else "Execute the current builder capability in the workspace. Without a structured implementation plan this remains audit-only."
+            )
+            verify_detail = (
+                f"Run verification defaults and evaluate {acceptance['total']} acceptance criterion/criteria "
+                f"({acceptance['required']} required, {acceptance['optional']} optional)."
+                if acceptance["total"]
+                else "Run verification defaults and use the verification outcome as the acceptance proxy."
             )
             steps.extend(
                 [
@@ -583,7 +612,7 @@ class OperatorIntakeService:
                         phase=PlanPhase.VERIFY,
                         title="Verify and evaluate acceptance",
                         status=status,
-                        detail="Run verification defaults and evaluate declared acceptance criteria.",
+                        detail=verify_detail,
                         outputs=["verification_report", "acceptance_report"],
                         capability_ids=capabilities_by_phase.get(PlanPhase.VERIFY, []),
                     ),
@@ -671,6 +700,7 @@ class OperatorIntakeService:
         ]
         if qualification.resolved_work_type == OperatorWorkType.BUILD:
             operation_count = len(intake.implementation_plan)
+            acceptance = self._build_acceptance_summary(intake)
             build_summary = (
                 f"Prepare a managed workspace and apply {operation_count} structured builder operation(s)."
                 if operation_count
@@ -691,7 +721,8 @@ class OperatorIntakeService:
                         title="Verify",
                         status=status,
                         summary=(
-                            "Run verification defaults and evaluate acceptance criteria."
+                            f"Run verification defaults and evaluate {acceptance['total']} acceptance criterion/criteria "
+                            f"({acceptance['required']} required, {acceptance['optional']} optional)."
                         ),
                         outputs=["verification_report", "acceptance_report"],
                         capability_ids=capabilities_by_phase.get(PlanPhase.VERIFY, []),
@@ -787,15 +818,18 @@ class OperatorIntakeService:
             )
         if qualification.resolved_work_type == OperatorWorkType.BUILD:
             operation_count = len(intake.implementation_plan)
+            acceptance = self._build_acceptance_summary(intake)
             if operation_count:
                 return (
                     f"Execute a {intake.build_type.value} build over {subject}, "
                     f"apply {operation_count} structured workspace operation(s), "
-                    "verify it, evaluate acceptance, and capture recovery-safe artifacts."
+                    f"verify it, evaluate {acceptance['total']} acceptance criterion/criteria, "
+                    "and capture recovery-safe artifacts."
                 )
             return (
                 f"Execute a {intake.build_type.value} build over {subject}, "
-                "verify it, evaluate acceptance, and capture recovery-safe artifacts."
+                f"verify it, evaluate {acceptance['total']} acceptance criterion/criteria, "
+                "and capture recovery-safe artifacts."
             )
         if intake.diff_spec:
             return (
@@ -816,12 +850,36 @@ class OperatorIntakeService:
         if intake.implementation_plan:
             parts.append(f"implementation_ops={len(intake.implementation_plan)}")
         if intake.acceptance_criteria:
-            parts.append(f"acceptance={len(intake.acceptance_criteria)}")
+            acceptance = self._build_acceptance_summary(intake)
+            parts.append(
+                "acceptance="
+                f"{acceptance['total']}(required={acceptance['required']},"
+                f"optional={acceptance['optional']},structured={acceptance['structured']})"
+            )
         if intake.focus_areas:
             parts.append(f"focus={len(intake.focus_areas)}")
         if not parts:
             return "no explicit scope signals"
         return "; ".join(parts)
+
+    def _build_acceptance_summary(self, intake: OperatorIntake) -> dict[str, Any]:
+        criteria = intake.normalized_acceptance_criteria()
+        by_evaluator: dict[str, int] = {}
+        by_kind: dict[str, int] = {}
+        for criterion in criteria:
+            by_evaluator[criterion.evaluator.value] = (
+                by_evaluator.get(criterion.evaluator.value, 0) + 1
+            )
+            by_kind[criterion.kind.value] = by_kind.get(criterion.kind.value, 0) + 1
+        return {
+            "total": len(criteria),
+            "required": sum(1 for criterion in criteria if criterion.required),
+            "optional": sum(1 for criterion in criteria if not criterion.required),
+            "structured": sum(1 for criterion in criteria if criterion.metadata),
+            "by_evaluator": by_evaluator,
+            "by_kind": by_kind,
+            "criteria": [criterion.to_dict() for criterion in criteria],
+        }
 
     def _scope_profile(
         self,
@@ -830,6 +888,7 @@ class OperatorIntakeService:
     ) -> dict[str, Any]:
         score = 0
         signals: list[str] = []
+        acceptance = self._build_acceptance_summary(intake)
         if intake.repo_path:
             signals.append("local repository path provided")
         elif intake.git_url:
@@ -848,9 +907,14 @@ class OperatorIntakeService:
             score += min(len(intake.implementation_plan), 4)
         if intake.acceptance_criteria:
             signals.append(
-                f"{len(intake.acceptance_criteria)} acceptance criterion/criteria declared"
+                f"{acceptance['total']} acceptance criterion/criteria declared"
             )
-            score += min(len(intake.acceptance_criteria), 4)
+            score += min(acceptance["total"], 4)
+            if acceptance["structured"]:
+                signals.append(
+                    f"{acceptance['structured']} acceptance criterion/criteria carry structured metadata"
+                )
+                score += min(acceptance["structured"], 2)
         if intake.focus_areas:
             signals.append(f"{len(intake.focus_areas)} focus area(s) supplied")
             score += min(len(intake.focus_areas), 3)
@@ -877,6 +941,7 @@ class OperatorIntakeService:
         scope: dict[str, Any],
     ) -> tuple[str, list[str]]:
         factors: list[str] = []
+        acceptance = self._build_acceptance_summary(intake)
         if resolved == OperatorWorkType.BUILD:
             factors.append("mutable workspace execution is required")
         if resolved == OperatorWorkType.BUILD and intake.build_type in {
@@ -898,8 +963,10 @@ class OperatorIntakeService:
             factors.append("target set spans multiple files")
         if len(intake.implementation_plan) >= 4:
             factors.append("implementation plan spans multiple bounded mutations")
-        if len(intake.acceptance_criteria) >= 4:
+        if acceptance["total"] >= 4:
             factors.append("acceptance surface is broad")
+        if acceptance["structured"] >= 2:
+            factors.append("acceptance uses multiple structured deterministic checks")
 
         if resolved == OperatorWorkType.REVIEW and intake.diff_spec and scope["size"] == "small":
             return "low", factors
@@ -928,13 +995,16 @@ class OperatorIntakeService:
             daily_spent=daily_spent,
             monthly_spent=monthly_spent,
         )
+        acceptance = self._build_acceptance_summary(intake)
         rationale = [
             f"resolved_work_type={qualification.resolved_work_type.value}",
             f"scope_size={qualification.scope_size}",
             f"target_files={len(intake.target_files)}",
             f"implementation_operations={len(intake.implementation_plan)}",
-            f"acceptance_criteria={len(intake.acceptance_criteria)}",
+            f"acceptance_criteria={acceptance['total']}",
         ]
+        if acceptance["structured"]:
+            rationale.append(f"structured_acceptance={acceptance['structured']}")
         if intake.run_post_build_review and qualification.resolved_work_type == OperatorWorkType.BUILD:
             rationale.append("post_build_review=true")
         if intake.git_url and not intake.repo_path:
@@ -976,10 +1046,12 @@ class OperatorIntakeService:
         intake: OperatorIntake,
         qualification: IntakeQualification,
     ) -> float:
+        acceptance = self._build_acceptance_summary(intake)
         amount = 1.5 if qualification.resolved_work_type == OperatorWorkType.REVIEW else 4.0
         amount += min(len(intake.target_files), 6) * 0.8
         amount += min(len(intake.implementation_plan), 8) * 0.7
-        amount += min(len(intake.acceptance_criteria), 6) * 1.1
+        amount += min(acceptance["total"], 6) * 1.1
+        amount += min(acceptance["structured"], 4) * 0.6
         amount += min(len(intake.focus_areas), 4) * 0.4
         if intake.diff_spec:
             amount += 1.0
@@ -1051,6 +1123,7 @@ class OperatorIntakeService:
                         "verification_defaults": build_capability.metadata[
                             "verification_defaults"
                         ],
+                        "acceptance_summary": self._build_acceptance_summary(intake),
                     },
                 )
             )
@@ -1138,6 +1211,7 @@ class OperatorIntakeService:
 
     def _build_phase_capability(self, intake: OperatorIntake) -> JobPlanCapability:
         capability = get_capability(intake.build_type)
+        acceptance = self._build_acceptance_summary(intake)
         return JobPlanCapability(
             phase=PlanPhase.BUILD,
             capability_id=capability.id,
@@ -1154,6 +1228,7 @@ class OperatorIntakeService:
                 "verification_defaults": [
                     item.value for item in capability.verification_defaults
                 ],
+                "acceptance_summary": acceptance,
                 "implementation_mode": (
                     "bounded_local_engine"
                     if intake.implementation_plan
