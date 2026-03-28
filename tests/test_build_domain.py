@@ -10,9 +10,13 @@ from agent.build.models import (
     AcceptanceCriterion,
     AcceptanceVerdict,
     BuildArtifact,
+    BuildImplementationMode,
     BuildIntake,
     BuildJob,
     BuildJobType,
+    BuildOperation,
+    BuildOperationStatus,
+    BuildOperationType,
     CriterionEvaluator,
     CriterionKind,
     CriterionStatus,
@@ -202,6 +206,14 @@ class TestBuildIntake:
             execution_policy_id="workspace_local_mutation",
             description="Add API endpoint",
             target_files=["src/api.py"],
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.REPLACE_TEXT,
+                    path="src/api.py",
+                    match_text="return 1",
+                    replacement_text="return 2",
+                )
+            ],
             acceptance_criteria=[AcceptanceCriterion(description="Tests pass")],
             run_post_build_review=True,
             source="operator",
@@ -212,9 +224,36 @@ class TestBuildIntake:
         assert intake2.repo_path == "/tmp/test"
         assert intake2.build_type == BuildJobType.INTEGRATION
         assert intake2.execution_policy_id == "workspace_local_mutation"
+        assert len(intake2.implementation_plan) == 1
+        assert intake2.implementation_plan[0].operation_type == BuildOperationType.REPLACE_TEXT
         assert len(intake2.acceptance_criteria) == 1
         assert intake2.run_post_build_review is True
         assert intake2.source == "operator"
+
+    def test_implementation_operation_roundtrip(self):
+        operation = BuildOperation(
+            operation_type=BuildOperationType.JSON_SET,
+            path="config.json",
+            json_path=["release", "version"],
+            value="1.10.0",
+            description="Stamp release version",
+        )
+
+        restored = BuildOperation.from_dict(operation.to_dict())
+
+        assert restored.operation_type == BuildOperationType.JSON_SET
+        assert restored.path == "config.json"
+        assert restored.json_path == ["release", "version"]
+        assert restored.value == "1.10.0"
+
+    def test_implementation_operation_validate_blocks_traversal(self):
+        operation = BuildOperation(
+            operation_type=BuildOperationType.WRITE_FILE,
+            path="../escape.txt",
+            content="bad",
+        )
+
+        assert operation.validate()
 
 
 # ─────────────────────────────────────────────
@@ -534,14 +573,100 @@ class TestBuildService:
             ],
         )
         job = await service.run_build(intake)
-        # Repo is materialized into workspace and the placeholder build runs.
+        # Repo is materialized into workspace and the builder stays honest when
+        # no structured implementation plan is supplied.
         assert job.workspace_id == "ws-test-123"
         assert job.execution_mode == ExecutionMode.WORKSPACE_BOUND
+        assert job.implementation_mode == BuildImplementationMode.AUDIT_MARKER_ONLY
         assert len(job.execution_trace) >= 4  # validate, workspace, build, verify...
         assert len(job.artifacts) >= 2  # verification + acceptance + trace
         assert job.acceptance.evaluated_at != ""
         assert (Path(self._workspace_dir) / "app.py").exists()
         assert (Path(self._workspace_dir) / ".build_job").exists()
+
+    async def test_structured_implementation_plan_executes_local_changes(
+        self, service, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                )
+            ],
+        )
+
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Apply structured implementation plan",
+            target_files=["app.py", "docs/notes.md", "config.json"],
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.REPLACE_TEXT,
+                    path="app.py",
+                    match_text="return 1",
+                    replacement_text="return 2",
+                ),
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="docs/notes.md",
+                    content="# Notes\n- Builder update\n",
+                ),
+                BuildOperation(
+                    operation_type=BuildOperationType.JSON_SET,
+                    path="config.json",
+                    json_path=["release", "version"],
+                    value="1.10.0",
+                ),
+            ],
+            acceptance_criteria=[
+                AcceptanceCriterion(description="Target files changed"),
+                AcceptanceCriterion(description="Documentation updated", required=False),
+            ],
+        )
+
+        job = await service.run_build(intake)
+        bundle = service.get_delivery_bundle(job.id)
+
+        assert job.status == JobStatus.COMPLETED
+        assert job.implementation_mode == BuildImplementationMode.BOUNDED_LOCAL_ENGINE
+        assert len(job.implementation_results) == 3
+        assert all(result.status == BuildOperationStatus.APPLIED for result in job.implementation_results)
+        assert (Path(self._workspace_dir) / "app.py").read_text() == "def main():\n    return 2\n"
+        assert (Path(self._workspace_dir) / "docs" / "notes.md").exists()
+        assert '"version": "1.10.0"' in (Path(self._workspace_dir) / "config.json").read_text()
+        assert job.acceptance.criteria[0].status == CriterionStatus.MET
+        assert bundle is not None
+        assert bundle["summary"]["implementation_mode"] == "bounded_local_engine"
+        assert bundle["summary"]["implementation_operations"] == 3
+        assert bundle["payload"]["implementation"]["changed_operations"] == 3
+
+    async def test_structured_implementation_plan_failure_returns_denial(
+        self, service
+    ):
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Fail structured implementation plan",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.REPLACE_TEXT,
+                    path="app.py",
+                    match_text="return 404",
+                    replacement_text="return 2",
+                )
+            ],
+            acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.FAILED
+        assert job.denial["code"] == "build_implementation_failed"
+        assert job.implementation_results[0].status == BuildOperationStatus.FAILED
+        assert "match_text not found" in job.error
 
     async def test_build_creates_artifacts(self, service, monkeypatch):
         monkeypatch.setattr(

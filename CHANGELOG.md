@@ -10,6 +10,40 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.10.0] — 2026-03-28
+
+Phase 2 builder execution release.
+
+### Builder / Execution
+- Builder now supports a bounded local implementation engine for explicit
+  structured workspace mutations, with deterministic `write_file`,
+  `append_text`, `replace_text`, and `json_set` operations
+- Build jobs now persist implementation mode plus per-operation execution
+  results instead of flattening the mutable build step into an audit marker
+  only
+- Build delivery bundles and persisted product-job metadata now expose the same
+  implementation summary for operator handoff and recovery
+
+### Operator / Planning
+- Unified operator intake can now carry structured builder implementation
+  plans, and planner output now surfaces operation-count-aware scope, risk,
+  budget, and build-mode metadata
+- `python -m agent --build-repo ... --build-plan-file plan.json` and
+  `python -m agent --intake-* --intake-plan-file plan.json` now provide a real
+  CLI path into the bounded execution slice
+
+### Strategy / Phase 2
+- Strategy docs now mark this slice as a Phase 2 builder-execution step and
+  introduce an explicit backlog story for replacing the old placeholder build
+  step with a bounded local implementation engine
+- The next backlog is now focused back on builder depth: richer acceptance
+  structure in planning and stronger deterministic acceptance evaluators
+
+### Verification
+- Local release verification passed with `1297 passed, 4 skipped`
+- Targeted builder/control-plane regression coverage passed with `97 passed`
+- `ruff check .` and operator `npm run typecheck` both passed
+
 ## [1.9.1] — 2026-03-28
 
 Phase 2 acceptance clarity release.

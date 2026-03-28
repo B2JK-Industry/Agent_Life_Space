@@ -6,43 +6,45 @@ This file is the near-term execution backlog derived from the current state of
 Assessment basis:
 - branch: `main`
 - interpretation date: `2026-03-28`
-- baseline: after Phase 2 Acceptance Clarity slice
+- baseline: after Phase 2 Builder Execution slice
 
 ## Ready Now
 
 ### P0
 
-1. `T5-E1-S3` Add structured denial reasons everywhere.
-   Why now: core blocker flows already emit stable denial payloads, but some
-   finance, social, and adapter edges still return plain strings and break
-   operator-facing consistency.
+1. `T3-E3-S2` Carry richer acceptance structure through intake and planning.
+   Why now: structured implementation plans now reach runtime and planning, but
+   richer acceptance structure still mostly enters the planner as plain
+   strings.
 
-2. `T6-E3-S1` Build golden review cases.
+2. `T3-E3-S3` Deepen deterministic acceptance evaluators.
+   Why now: the builder now has a real bounded execution path, so the next
+   honest builder gap is stronger deterministic acceptance evaluation over
+   those changes.
+
+### P1
+
+3. `T5-E1-S3` Add structured denial reasons everywhere.
+   Why now: builder denial payloads are now richer, but some finance, social,
+   and adapter edges still return plain strings and break operator-facing
+   consistency.
+
+4. `T6-E3-S1` Build golden review cases.
    Why now: smoke coverage now guards reviewer handoff structure, so the next
    quality step is durable golden cases rather than only structural regression
    tests.
 
-3. `T8-E3-S4` Prepare data-handling rules for future enterprise requirements.
+5. `T8-E3-S4` Prepare data-handling rules for future enterprise requirements.
    Why now: enterprise-facing operating profiles and client-safe evidence
    export now exist, so formalizing retention, redaction, and handoff rules is
    the next honest hardening step.
-
-### P1
-
-4. `T3-E3-S3` Deepen deterministic acceptance evaluators.
-   Why now: the acceptance model now has explicit required/optional semantics
-   and clearer failure payloads, so the next builder step is expanding
-   deterministic evaluator coverage before semantic matching.
-
-5. `T3-E3-S2` Carry richer acceptance structure through intake and planning.
-   Why now: the builder object model is stronger now, but planner/intake
-   surfaces still mostly originate from plain strings and do not yet expose the
-   richer criterion structure explicitly.
 
 6. `T7-E1-S1` Define gateway contract for external capabilities.
    Why now: execution policy, operating profiles, approval, retention, and
    cost foundations are now strong enough that a gateway boundary can be
    defined without premature plumbing.
+
+### P2
 
 7. `T8-E2-S3` Add configuration discipline for project roots, secrets, and storage.
    Why now: the higher-level operating environment matrix now exists, but
@@ -59,6 +61,9 @@ Assessment basis:
 - `T3-E2-S4` Builder verification now persists suite-level plus per-step
   verification artifacts and includes that evidence in the build delivery
   bundle.
+- `T3-E1-S5` Builder now has a bounded local implementation engine for
+  structured workspace mutations, with persisted per-operation results flowing
+  through planning, product-job metadata, and delivery bundles.
 - `T3-E3-S4` Acceptance reports now carry delivery-usable summaries and flow
   into build delivery packaging as first-class operator handoff material.
 - `T3-E2-S3` Acceptance failures now emit structured denial payloads and
@@ -71,9 +76,12 @@ Assessment basis:
 ## Exit Criteria For The Next Backlog Slice
 
 The next slice should be considered successful when:
-- structured denials cover the remaining major finance/social/adapter edges
-- reviewer quality regression moves from smoke checks toward durable golden cases
-- enterprise data-handling rules are explicit enough to guide future client/operator packaging
+- richer acceptance structure is visible earlier in intake/planning, not only
+  inside the build service
 - builder acceptance evaluator coverage grows beyond the current heuristic set
-- richer acceptance structure is visible earlier in intake/planning, not only inside the build service
+- structured denials cover the remaining major finance/social/adapter edges
+- reviewer quality regression moves from smoke checks toward durable golden
+  cases
+- enterprise data-handling rules are explicit enough to guide future
+  client/operator packaging
 - the first external gateway contract is explicit enough to plan against safely

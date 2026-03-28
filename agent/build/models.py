@@ -13,6 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from agent.control.models import (
@@ -61,6 +62,140 @@ class BuildCheckpointPhase(str, Enum):
     REVIEWED = "reviewed"
     ARTIFACTS_CAPTURED = "artifacts_captured"
     COMPLETED = "completed"
+
+
+class BuildImplementationMode(str, Enum):
+    """How the mutable build step executed."""
+
+    AUDIT_MARKER_ONLY = "audit_marker_only"
+    BOUNDED_LOCAL_ENGINE = "bounded_local_engine"
+
+
+class BuildOperationType(str, Enum):
+    """Deterministic local mutation kinds supported by the builder."""
+
+    WRITE_FILE = "write_file"
+    APPEND_TEXT = "append_text"
+    REPLACE_TEXT = "replace_text"
+    JSON_SET = "json_set"
+
+
+class BuildOperationStatus(str, Enum):
+    """Outcome of one deterministic local mutation."""
+
+    APPLIED = "applied"
+    NOOP = "noop"
+    FAILED = "failed"
+
+
+@dataclass
+class BuildOperation:
+    """Single bounded mutation instruction for local deterministic execution."""
+
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    operation_type: BuildOperationType = BuildOperationType.WRITE_FILE
+    path: str = ""
+    description: str = ""
+    content: str = ""
+    match_text: str = ""
+    replacement_text: str = ""
+    json_path: list[str] = field(default_factory=list)
+    value: Any = None
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        if not self.path:
+            errors.append("implementation_plan.path is required")
+        else:
+            candidate = Path(self.path)
+            if candidate.is_absolute():
+                errors.append("implementation_plan.path must be relative")
+            if ".." in candidate.parts:
+                errors.append("implementation_plan.path must not contain '..'")
+
+        if self.operation_type == BuildOperationType.REPLACE_TEXT and not self.match_text:
+            errors.append("replace_text operations require match_text")
+        if self.operation_type == BuildOperationType.JSON_SET and not self.json_path:
+            errors.append("json_set operations require json_path")
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "operation_type": self.operation_type.value,
+            "path": self.path,
+            "description": self.description,
+            "content": self.content,
+            "match_text": self.match_text,
+            "replacement_text": self.replacement_text,
+            "json_path": list(self.json_path),
+            "value": self.value,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> BuildOperation:
+        raw_json_path = d.get("json_path", [])
+        if isinstance(raw_json_path, str):
+            json_path = [part for part in raw_json_path.split(".") if part]
+        else:
+            json_path = [str(part) for part in raw_json_path]
+        operation_value = (
+            d.get("operation_type")
+            or d.get("type")
+            or d.get("op")
+            or BuildOperationType.WRITE_FILE.value
+        )
+        return cls(
+            id=d.get("id") or uuid.uuid4().hex[:8],
+            operation_type=BuildOperationType(operation_value),
+            path=d.get("path", ""),
+            description=d.get("description", ""),
+            content=d.get("content", ""),
+            match_text=d.get("match_text", d.get("match", "")),
+            replacement_text=d.get(
+                "replacement_text",
+                d.get("replacement", ""),
+            ),
+            json_path=json_path,
+            value=d.get("value"),
+        )
+
+
+@dataclass
+class BuildOperationResult:
+    """Persisted outcome for one deterministic build operation."""
+
+    operation_id: str = ""
+    operation_type: BuildOperationType = BuildOperationType.WRITE_FILE
+    path: str = ""
+    status: BuildOperationStatus = BuildOperationStatus.APPLIED
+    changed: bool = False
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "operation_id": self.operation_id,
+            "operation_type": self.operation_type.value,
+            "path": self.path,
+            "status": self.status.value,
+            "changed": self.changed,
+            "detail": self.detail,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> BuildOperationResult:
+        return cls(
+            operation_id=d.get("operation_id", ""),
+            operation_type=BuildOperationType(
+                d.get("operation_type", BuildOperationType.WRITE_FILE.value)
+            ),
+            path=d.get("path", ""),
+            status=BuildOperationStatus(
+                d.get("status", BuildOperationStatus.APPLIED.value)
+            ),
+            changed=d.get("changed", False),
+            detail=d.get("detail", ""),
+        )
 
 
 # ─────────────────────────────────────────────
@@ -396,6 +531,7 @@ class BuildIntake:
     execution_policy_id: str = "workspace_local_mutation"
     description: str = ""
     target_files: list[str] = field(default_factory=list)
+    implementation_plan: list[BuildOperation] = field(default_factory=list)
     acceptance_criteria: list[AcceptanceCriterion] = field(default_factory=list)
     run_post_build_review: bool = False
     block_on_review_failure: bool = True
@@ -414,6 +550,8 @@ class BuildIntake:
             errors.append("repo_path must not contain '..'")
         if not self.description:
             errors.append("description is required for build jobs")
+        for operation in self.implementation_plan:
+            errors.extend(operation.validate())
         return errors
 
     def to_dict(self) -> dict[str, Any]:
@@ -424,6 +562,7 @@ class BuildIntake:
             "execution_policy_id": self.execution_policy_id,
             "description": self.description,
             "target_files": self.target_files,
+            "implementation_plan": [operation.to_dict() for operation in self.implementation_plan],
             "acceptance_criteria": [c.to_dict() for c in self.acceptance_criteria],
             "run_post_build_review": self.run_post_build_review,
             "block_on_review_failure": self.block_on_review_failure,
@@ -443,6 +582,10 @@ class BuildIntake:
             execution_policy_id=d.get("execution_policy_id", "workspace_local_mutation"),
             description=d.get("description", ""),
             target_files=d.get("target_files", []),
+            implementation_plan=[
+                BuildOperation.from_dict(operation)
+                for operation in d.get("implementation_plan", [])
+            ],
             acceptance_criteria=[
                 AcceptanceCriterion.from_dict(c)
                 for c in d.get("acceptance_criteria", [])
@@ -538,6 +681,8 @@ class BuildJob:
     post_build_review_verdict: str = ""
     post_build_review_findings: dict[str, int] = field(default_factory=dict)
     checkpoints: list[BuildCheckpoint] = field(default_factory=list)
+    implementation_mode: BuildImplementationMode = BuildImplementationMode.AUDIT_MARKER_ONLY
+    implementation_results: list[BuildOperationResult] = field(default_factory=list)
 
     # Output
     artifacts: list[BuildArtifact] = field(default_factory=list)
@@ -603,6 +748,10 @@ class BuildJob:
             "post_build_review_verdict": self.post_build_review_verdict,
             "post_build_review_findings": self.post_build_review_findings,
             "checkpoints": [checkpoint.to_dict() for checkpoint in self.checkpoints],
+            "implementation_mode": self.implementation_mode.value,
+            "implementation_results": [
+                result.to_dict() for result in self.implementation_results
+            ],
             "artifacts": [a.to_dict() for a in self.artifacts],
             "execution_trace": [t.to_dict() for t in self.execution_trace],
             "usage": self.usage.to_dict(),
@@ -624,6 +773,10 @@ class BuildJob:
         checkpoints = [
             BuildCheckpoint.from_dict(checkpoint)
             for checkpoint in d.get("checkpoints", [])
+        ]
+        implementation_results = [
+            BuildOperationResult.from_dict(item)
+            for item in d.get("implementation_results", [])
         ]
         verifications = [
             VerificationResult.from_dict(v)
@@ -656,6 +809,10 @@ class BuildJob:
             post_build_review_verdict=d.get("post_build_review_verdict", ""),
             post_build_review_findings=d.get("post_build_review_findings", {}),
             checkpoints=checkpoints,
+            implementation_mode=BuildImplementationMode(
+                d.get("implementation_mode", BuildImplementationMode.AUDIT_MARKER_ONLY.value)
+            ),
+            implementation_results=implementation_results,
             artifacts=artifacts,
             execution_trace=traces,
             usage=usage,
