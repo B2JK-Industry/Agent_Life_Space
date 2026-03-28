@@ -75,6 +75,17 @@ class CriterionKind(str, Enum):
     PERFORMANCE = "performance"
 
 
+class CriterionEvaluator(str, Enum):
+    """Explicit evaluator hint for an acceptance criterion."""
+
+    AUTO = "auto"
+    VERIFY_COMMAND = "verify_command"
+    VERIFICATION = "verification"
+    REVIEW = "review"
+    CHANGE_SET = "change_set"
+    WORKSPACE = "workspace"
+
+
 class CriterionStatus(str, Enum):
     """Result of evaluating a single criterion."""
     PENDING = "pending"
@@ -89,6 +100,8 @@ class AcceptanceCriterion:
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     description: str = ""
     kind: CriterionKind = CriterionKind.FUNCTIONAL
+    required: bool = True
+    evaluator: CriterionEvaluator = CriterionEvaluator.AUTO
     status: CriterionStatus = CriterionStatus.PENDING
     evidence: str = ""
 
@@ -109,6 +122,8 @@ class AcceptanceCriterion:
             "id": self.id,
             "description": self.description,
             "kind": self.kind.value,
+            "required": self.required,
+            "evaluator": self.evaluator.value,
             "status": self.status.value,
             "evidence": self.evidence,
         }
@@ -119,8 +134,75 @@ class AcceptanceCriterion:
             id=d.get("id", ""),
             description=d.get("description", ""),
             kind=CriterionKind(d.get("kind", "functional")),
+            required=d.get("required", True),
+            evaluator=CriterionEvaluator(d.get("evaluator", "auto")),
             status=CriterionStatus(d.get("status", "pending")),
             evidence=d.get("evidence", ""),
+        )
+
+    @classmethod
+    def from_text(cls, text: str) -> AcceptanceCriterion:
+        """Parse a lightweight operator-facing criterion string."""
+
+        raw = text.strip()
+        if not raw:
+            return cls(description="")
+
+        remaining = raw
+        kind = CriterionKind.FUNCTIONAL
+        required = True
+        evaluator = CriterionEvaluator.AUTO
+
+        token_map = {
+            "functional": ("kind", CriterionKind.FUNCTIONAL),
+            "quality": ("kind", CriterionKind.QUALITY),
+            "security": ("kind", CriterionKind.SECURITY),
+            "performance": ("kind", CriterionKind.PERFORMANCE),
+            "required": ("required", True),
+            "optional": ("required", False),
+            "verify": ("evaluator", CriterionEvaluator.VERIFY_COMMAND),
+            "verification": ("evaluator", CriterionEvaluator.VERIFICATION),
+            "review": ("evaluator", CriterionEvaluator.REVIEW),
+            "audit": ("evaluator", CriterionEvaluator.REVIEW),
+            "change": ("evaluator", CriterionEvaluator.CHANGE_SET),
+            "changes": ("evaluator", CriterionEvaluator.CHANGE_SET),
+            "patch": ("evaluator", CriterionEvaluator.CHANGE_SET),
+            "diff": ("evaluator", CriterionEvaluator.CHANGE_SET),
+            "workspace": ("evaluator", CriterionEvaluator.WORKSPACE),
+            "build": ("evaluator", CriterionEvaluator.WORKSPACE),
+        }
+
+        while True:
+            prefix, sep, rest = remaining.partition(":")
+            if not sep:
+                break
+            token = prefix.strip().casefold().replace("-", "_").replace(" ", "_")
+            parsed = token_map.get(token)
+            if parsed is None:
+                break
+            field_name, value = parsed
+            if field_name == "kind":
+                kind = value
+            elif field_name == "required":
+                required = value
+            else:
+                evaluator = value
+            remaining = rest.strip()
+
+        description = remaining or raw
+        if evaluator == CriterionEvaluator.VERIFY_COMMAND and not description.casefold().startswith(
+            "verify:"
+        ):
+            description = f"verify: {description}"
+        if evaluator == CriterionEvaluator.AUTO and raw.casefold().startswith("verify:"):
+            evaluator = CriterionEvaluator.VERIFY_COMMAND
+            description = raw
+
+        return cls(
+            description=description,
+            kind=kind,
+            required=required,
+            evaluator=evaluator,
         )
 
 
@@ -144,18 +226,61 @@ class AcceptanceVerdict:
     def total(self) -> int:
         return len(self.criteria)
 
+    @property
+    def required_total(self) -> int:
+        return sum(1 for c in self.criteria if c.required)
+
+    @property
+    def required_met_count(self) -> int:
+        return sum(
+            1
+            for c in self.criteria
+            if c.required and c.status == CriterionStatus.MET
+        )
+
+    @property
+    def required_unmet_count(self) -> int:
+        return sum(
+            1
+            for c in self.criteria
+            if c.required and c.status == CriterionStatus.UNMET
+        )
+
+    @property
+    def optional_total(self) -> int:
+        return sum(1 for c in self.criteria if not c.required)
+
+    @property
+    def optional_met_count(self) -> int:
+        return sum(
+            1
+            for c in self.criteria
+            if not c.required and c.status == CriterionStatus.MET
+        )
+
+    @property
+    def optional_unmet_count(self) -> int:
+        return sum(
+            1
+            for c in self.criteria
+            if not c.required and c.status == CriterionStatus.UNMET
+        )
+
     def evaluate(self) -> None:
-        """Set accepted=True only if all non-skipped criteria are met."""
+        """Set accepted=True only if all required non-skipped criteria are met."""
         active = [c for c in self.criteria if c.status != CriterionStatus.SKIPPED]
+        required_active = [c for c in active if c.required]
         self.accepted = len(active) > 0 and all(
-            c.status == CriterionStatus.MET for c in active
+            c.status == CriterionStatus.MET for c in required_active
         )
         self.evaluated_at = datetime.now(UTC).isoformat()
         met = self.met_count
         unmet = self.unmet_count
         skipped = sum(1 for c in self.criteria if c.status == CriterionStatus.SKIPPED)
         self.summary = (
-            f"{met}/{self.total} met, {unmet} unmet, {skipped} skipped. "
+            f"required {self.required_met_count}/{self.required_total} met, "
+            f"optional {self.optional_met_count}/{self.optional_total} met, "
+            f"{met}/{self.total} total met, {unmet} unmet, {skipped} skipped. "
             f"Verdict: {'accepted' if self.accepted else 'rejected'}."
         )
 
@@ -167,6 +292,12 @@ class AcceptanceVerdict:
             "evaluated_at": self.evaluated_at,
             "met_count": self.met_count,
             "unmet_count": self.unmet_count,
+            "required_total": self.required_total,
+            "required_met_count": self.required_met_count,
+            "required_unmet_count": self.required_unmet_count,
+            "optional_total": self.optional_total,
+            "optional_met_count": self.optional_met_count,
+            "optional_unmet_count": self.optional_unmet_count,
         }
 
     @classmethod

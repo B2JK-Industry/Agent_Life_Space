@@ -47,17 +47,17 @@ python -m agent --intake-git-url file:///path/to/repo --intake-work-type review 
 python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-preview
 python -m agent --list-plans
 python -m agent --list-deliveries
-python -m pytest tests/ -q   # Testy (1286+ testov)
+python -m pytest tests/ -q   # Testy (1290+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.9.0** — phase 2 kickoff release.
+Aktuálna: **v1.9.1** — phase 2 acceptance clarity release.
 
-Nové v `v1.9.0`:
-- build verification teraz ukladá suite-level aj per-step verification artifacts
-- build delivery bundle nesie verification artifact ids/summaries a richer acceptance handoff summary
-- build execution teraz používa explicitné source-aware execution policy s deny-by-default blockom pre nepodporované mutable zdroje
-- runtime model teraz ukazuje aj higher-level operating profiles: `local_owner`, `operator_controlled`, `enterprise_hardened`
+Nové v `v1.9.1`:
+- acceptance criteria teraz podporujú explicitné `required` vs `optional` správanie
+- CLI a unified intake vedia z jednoduchých stringov parsovať richer acceptance shape
+- unmet required acceptance criteria teraz vracajú structured denial payload a detailný failure summary
+- build delivery summary nesie required/optional acceptance counts a blocking unmet criteria
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

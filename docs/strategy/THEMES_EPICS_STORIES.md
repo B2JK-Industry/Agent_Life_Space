@@ -11,7 +11,7 @@ Use it for:
 
 ## Current Progress Snapshot
 
-Assessment basis: after Phase 2 Kickoff slice.
+Assessment basis: after Phase 2 Acceptance Clarity slice.
 
 Important:
 - this is a strategy progress snapshot, not a merge-state indicator
@@ -23,7 +23,7 @@ Important:
 |-------|--------|-----------------|---------------|-----|
 | T1 Platform Foundation | `in_progress` | 96% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted job/plan/trace/delivery records, retention-aware artifact records with prune flow, first-class workspace joins, and explicit environment profiles for review/build/acquisition/export flows. | No unified cross-domain action layer yet. |
 | T2 Reviewer Product | `complete_for_phase` | 90% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, converged Telegram and structured API review entrypoints, plus shared review delivery lifecycle state. | PR comment packs and LLM analysis are v2. |
-| T3 Builder Product | `in_progress` | 85% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery, source-aware execution policy traces and blocking, plus deterministic patch/diff, richer verification/acceptance delivery evidence, and persisted delivery lifecycle output. | Build step is still placeholder and there is no external delivery send path. |
+| T3 Builder Product | `in_progress` | 88% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery, source-aware execution policy traces and blocking, plus deterministic patch/diff, richer verification/acceptance delivery evidence, explicit required/optional acceptance semantics, and clearer failure payloads. | Build step is still placeholder and there is no external delivery send path. |
 | T4 Operator Product | `in_progress` | 92% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, shared review/build delivery lifecycle state, evidence export, and richer operator report/CLI surfaces now exist. | No live backend/UI and no full external delivery workflow yet. |
 | T5 Security, Governance, And Policy | `in_progress` | 91% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, multi-step approval thresholds, plus runtime risky-execution approvals for unified intake. | Build execution and broader runtime action flow still sit outside one unified policy enforcement boundary. |
 | T6 Cost, Usage, And Observability | `in_progress` | 89% | UsageSummary, a durable per-job cost ledger, persisted job duration/retry/failure telemetry, runtime hard/soft/stop-loss budget posture, budget-aware escalation controls, durable plan/trace/delivery telemetry, shared runtime job/artifact/workspace queries, richer operator reporting, and explicit approval backlog plus retention posture summaries now exist. | No live operator UI or deeper cross-runtime telemetry yet. |
@@ -191,7 +191,7 @@ Stories:
 ### Epic T3-E2: Build Verification Loop
 
 - status: `in_progress`
-- approx_progress: 90%
+- approx_progress: 93%
 
 Stories:
 - T3-E2-S1: Add test, lint, and type-check loop for implementation jobs.
@@ -203,9 +203,9 @@ Stories:
   - current_state: Successful build jobs can now request a deterministic post-build reviewer pass through `ReviewService`, and completion is now governed by explicit deterministic review-gate policies (`critical_findings`, `high_or_critical`, `advisory`).
   - missing: Reviewer still runs in `READ_ONLY_HOST` mode over the built workspace path, and policy is not yet unified with the wider execution boundary.
 - T3-E2-S3: Fail jobs clearly when acceptance criteria are not met.
-  - status: `in_progress`
-  - current_state: BuildService fails job when acceptance criteria unmet. AcceptanceVerdict.evaluate() checks all non-skipped criteria.
-  - missing: Evaluation is still rule-based and limited; no semantic requirement engine.
+  - status: `complete_for_phase`
+  - current_state: BuildService now fails builds with structured denial payloads and detailed unmet-required-criterion summaries instead of generic count-only rejection strings, while delivery summaries expose the same blocking-vs-optional acceptance state.
+  - missing: The acceptance engine is still deterministic and rule-based; there is no semantic requirement model yet.
 - T3-E2-S4: Capture all verification artifacts and verdicts.
   - status: `complete_for_phase`
   - current_state: Verification now persists one suite-level report plus per-step verification artifacts, and build delivery bundles expose those artifact ids and summaries for operator handoff.
@@ -214,13 +214,13 @@ Stories:
 ### Epic T3-E3: Acceptance Criteria Engine
 
 - status: `in_progress`
-- approx_progress: 78%
+- approx_progress: 84%
 
 Stories:
 - T3-E3-S1: Define acceptance criteria object model.
-  - status: `in_progress`
-  - current_state: AcceptanceCriterion with CriterionKind (FUNCTIONAL, QUALITY, SECURITY, PERFORMANCE), CriterionStatus (PENDING, MET, UNMET, SKIPPED). meet()/fail()/skip() methods.
-  - missing: No semantic evaluation beyond rule-based checks.
+  - status: `complete_for_phase`
+  - current_state: AcceptanceCriterion now has explicit kind, required-vs-optional semantics, evaluator hints, typed status transitions, and lightweight parsing from operator/CLI strings into a more structured builder-facing object model.
+  - missing: The object model is stronger, but semantic requirement matching is still outside the current deterministic evaluator set.
 - T3-E3-S2: Attach acceptance criteria to jobs.
   - status: `in_progress`
   - current_state: BuildIntake carries acceptance_criteria list. BuildJob inherits them. AcceptanceVerdict evaluates at completion.
