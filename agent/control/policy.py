@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from agent.build.models import BuildJobType
 from agent.control.models import ArtifactKind, JobKind
 from agent.review.models import ReviewJobType
 
@@ -69,6 +70,25 @@ class ReviewExecutionPolicy:
 
 
 @dataclass(frozen=True)
+class BuildExecutionPolicy:
+    """Deterministic execution boundary for mutable builder work."""
+
+    id: str
+    label: str
+    description: str
+    environment_profile_id: str = "build_workspace_local"
+    allow_workspace_mutation: bool = True
+    workspace_required: bool = True
+    allowed_sources: tuple[str, ...] = ("manual", "operator", "api", "resume")
+    allowed_build_types: tuple[BuildJobType, ...] = (
+        BuildJobType.IMPLEMENTATION,
+        BuildJobType.INTEGRATION,
+        BuildJobType.DEVOPS,
+        BuildJobType.TESTING,
+    )
+
+
+@dataclass(frozen=True)
 class DeliveryDecisionPolicy:
     """Deterministic delivery policy profile."""
 
@@ -103,6 +123,21 @@ class EnvironmentProfile:
     host_read_only: bool = False
     allow_network: bool = False
     acquisition_allowed: bool = False
+
+
+@dataclass(frozen=True)
+class OperatingEnvironmentProfile:
+    """Higher-level local/operator/enterprise execution posture."""
+
+    id: str
+    label: str
+    description: str
+    intended_for: str
+    default_environment_profile_ids: tuple[str, ...]
+    default_build_execution_policy_id: str
+    default_delivery_policy_id: str
+    default_gateway_policy_id: str
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -170,6 +205,17 @@ _REVIEW_EXECUTION_POLICIES: dict[str, ReviewExecutionPolicy] = {
         allow_host_read=True,
         allow_git_subprocess=True,
         allowed_review_types=(ReviewJobType.PR_REVIEW,),
+    ),
+}
+
+_BUILD_EXECUTION_POLICIES: dict[str, BuildExecutionPolicy] = {
+    "workspace_local_mutation": BuildExecutionPolicy(
+        id="workspace_local_mutation",
+        label="Workspace local mutation",
+        description=(
+            "Allow mutable builder execution only inside the managed workspace "
+            "for approved local/operator build sources."
+        ),
     ),
 }
 
@@ -294,6 +340,74 @@ _ENVIRONMENT_PROFILES: dict[str, EnvironmentProfile] = {
     ),
 }
 
+_OPERATING_ENVIRONMENT_PROFILES: dict[str, OperatingEnvironmentProfile] = {
+    "local_owner": OperatingEnvironmentProfile(
+        id="local_owner",
+        label="Local owner",
+        description=(
+            "Single-machine owner workflow using CLI and local managed workspaces "
+            "without external send."
+        ),
+        intended_for="Local owner-operated development and review",
+        default_environment_profile_ids=(
+            "review_host_read_only",
+            "build_workspace_local",
+            "delivery_export_only",
+        ),
+        default_build_execution_policy_id="workspace_local_mutation",
+        default_delivery_policy_id="approval_required",
+        default_gateway_policy_id="disabled_by_default",
+        notes=(
+            "Mutable work remains workspace-bound.",
+            "External send still stays approval-gated and disabled by default.",
+        ),
+    ),
+    "operator_controlled": OperatingEnvironmentProfile(
+        id="operator_controlled",
+        label="Operator controlled",
+        description=(
+            "Operator-routed build/review workflow with managed acquisition, "
+            "approval, and handoff discipline."
+        ),
+        intended_for="CLI-orchestrated operator workflow over review and build jobs",
+        default_environment_profile_ids=(
+            "review_host_read_only",
+            "build_workspace_local",
+            "repo_import_mirror",
+            "delivery_export_only",
+        ),
+        default_build_execution_policy_id="workspace_local_mutation",
+        default_delivery_policy_id="approval_required",
+        default_gateway_policy_id="disabled_by_default",
+        notes=(
+            "Managed repo import is allowed before routing.",
+            "Delivery remains handoff-oriented until a real external send path exists.",
+        ),
+    ),
+    "enterprise_hardened": OperatingEnvironmentProfile(
+        id="enterprise_hardened",
+        label="Enterprise hardened",
+        description=(
+            "Policy-first posture for stricter deployment environments with "
+            "managed import, approval-heavy delivery, and gateway-ready defaults."
+        ),
+        intended_for="Controlled deployment environments with stronger compliance posture",
+        default_environment_profile_ids=(
+            "review_host_read_only",
+            "build_workspace_local",
+            "repo_import_mirror",
+            "delivery_export_only",
+        ),
+        default_build_execution_policy_id="workspace_local_mutation",
+        default_delivery_policy_id="gateway_only",
+        default_gateway_policy_id="approval_before_gateway",
+        notes=(
+            "Assumes stronger approval and audit requirements around delivery.",
+            "Environment matrix exists before the live enterprise runtime does.",
+        ),
+    ),
+}
+
 _ESCALATION_BUDGET_POLICIES: dict[str, EscalationBudgetPolicy] = {
     "cost_guarded": EscalationBudgetPolicy(
         id="cost_guarded",
@@ -329,6 +443,62 @@ def get_review_execution_policy(
 def list_review_execution_policies() -> list[ReviewExecutionPolicy]:
     """Return known review execution policies."""
     return list(_REVIEW_EXECUTION_POLICIES.values())
+
+
+def get_build_execution_policy(
+    policy_id: str = "workspace_local_mutation",
+) -> BuildExecutionPolicy:
+    """Resolve a configured build execution policy."""
+    return _BUILD_EXECUTION_POLICIES.get(
+        policy_id,
+        _BUILD_EXECUTION_POLICIES["workspace_local_mutation"],
+    )
+
+
+def list_build_execution_policies() -> list[BuildExecutionPolicy]:
+    """Return known build execution policies."""
+    return list(_BUILD_EXECUTION_POLICIES.values())
+
+
+def select_build_execution_policy(
+    *,
+    build_type: BuildJobType | str,
+    source: str = "manual",
+    policy_id: str = "workspace_local_mutation",
+) -> BuildExecutionPolicy:
+    """Select a deterministic build execution policy for mutable work."""
+    normalized_type = (
+        build_type if isinstance(build_type, BuildJobType) else BuildJobType(str(build_type))
+    )
+    policy = get_build_execution_policy(policy_id)
+    if not policy.allow_workspace_mutation:
+        return policy
+    if source and source not in policy.allowed_sources:
+        return BuildExecutionPolicy(
+            id=f"{policy.id}_blocked_source",
+            label=f"{policy.label} (blocked)",
+            description=f"Blocked unknown build source '{source}'.",
+            environment_profile_id=policy.environment_profile_id,
+            allow_workspace_mutation=False,
+            workspace_required=policy.workspace_required,
+            allowed_sources=policy.allowed_sources,
+            allowed_build_types=policy.allowed_build_types,
+        )
+    if normalized_type not in policy.allowed_build_types:
+        return BuildExecutionPolicy(
+            id=f"{policy.id}_blocked_type",
+            label=f"{policy.label} (blocked)",
+            description=(
+                f"Blocked build type '{normalized_type.value}' under execution policy "
+                f"'{policy.id}'."
+            ),
+            environment_profile_id=policy.environment_profile_id,
+            allow_workspace_mutation=False,
+            workspace_required=policy.workspace_required,
+            allowed_sources=policy.allowed_sources,
+            allowed_build_types=policy.allowed_build_types,
+        )
+    return policy
 
 
 def select_review_execution_policy(
@@ -469,6 +639,21 @@ def get_environment_profile(
 def list_environment_profiles() -> list[EnvironmentProfile]:
     """Return known execution environment profiles."""
     return list(_ENVIRONMENT_PROFILES.values())
+
+
+def get_operating_environment_profile(
+    profile_id: str = "local_owner",
+) -> OperatingEnvironmentProfile:
+    """Resolve a higher-level operating environment profile."""
+    return _OPERATING_ENVIRONMENT_PROFILES.get(
+        profile_id,
+        _OPERATING_ENVIRONMENT_PROFILES["local_owner"],
+    )
+
+
+def list_operating_environment_profiles() -> list[OperatingEnvironmentProfile]:
+    """Return higher-level local/operator/enterprise environment profiles."""
+    return list(_OPERATING_ENVIRONMENT_PROFILES.values())
 
 
 def get_escalation_budget_policy(

@@ -169,18 +169,22 @@ class TestBuildIntake:
         intake = BuildIntake(
             repo_path="/tmp/test",
             build_type=BuildJobType.INTEGRATION,
+            execution_policy_id="workspace_local_mutation",
             description="Add API endpoint",
             target_files=["src/api.py"],
             acceptance_criteria=[AcceptanceCriterion(description="Tests pass")],
             run_post_build_review=True,
+            source="operator",
             requester="daniel",
         )
         d = intake.to_dict()
         intake2 = BuildIntake.from_dict(d)
         assert intake2.repo_path == "/tmp/test"
         assert intake2.build_type == BuildJobType.INTEGRATION
+        assert intake2.execution_policy_id == "workspace_local_mutation"
         assert len(intake2.acceptance_criteria) == 1
         assert intake2.run_post_build_review is True
+        assert intake2.source == "operator"
 
 
 # ─────────────────────────────────────────────
@@ -477,6 +481,20 @@ class TestBuildService:
         assert job.status == JobStatus.FAILED
         assert "workspace manager" in job.error
 
+    async def test_build_execution_policy_blocks_unknown_source(self, service, workspace_manager):
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Add feature from unsupported source",
+            source="telegram",
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.BLOCKED
+        assert job.denial["code"] == "build_execution_blocked"
+        assert "Blocked unknown build source" in job.error
+        workspace_manager.create.assert_not_called()
+
     async def test_successful_build_with_acceptance(self, service):
         intake = BuildIntake(
             repo_path=self._repo_dir,
@@ -495,18 +513,55 @@ class TestBuildService:
         assert (Path(self._workspace_dir) / "app.py").exists()
         assert (Path(self._workspace_dir) / ".build_job").exists()
 
-    async def test_build_creates_artifacts(self, service):
+    async def test_build_creates_artifacts(self, service, monkeypatch):
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                ),
+                VerificationResult(
+                    kind=VerificationKind.LINT,
+                    passed=True,
+                    command="ruff check .",
+                    exit_code=0,
+                ),
+            ],
+        )
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Add feature",
         )
         job = await service.run_build(intake)
         artifact_kinds = [a.artifact_kind.value for a in job.artifacts]
+        verification_reports = [
+            artifact for artifact in job.artifacts if artifact.artifact_kind == ArtifactKind.VERIFICATION_REPORT
+        ]
+        suite_reports = [
+            artifact
+            for artifact in verification_reports
+            if artifact.content_json.get("report_kind") == "suite"
+        ]
+        step_reports = [
+            artifact
+            for artifact in verification_reports
+            if artifact.content_json.get("report_kind") == "step"
+        ]
         assert "patch" in artifact_kinds
         assert "diff" in artifact_kinds
         assert "verification_report" in artifact_kinds
         assert "acceptance_report" in artifact_kinds
         assert "execution_trace" in artifact_kinds
+        assert len(suite_reports) == 1
+        assert len(step_reports) == 2
+        assert suite_reports[0].content_json["total_steps"] == 2
+        assert {artifact.content_json["verification_kind"] for artifact in step_reports} == {
+            "test",
+            "lint",
+        }
 
     async def test_build_without_explicit_acceptance_uses_verification_proxy(
         self, service, monkeypatch
@@ -1057,7 +1112,20 @@ class TestBuildService:
 
         monkeypatch.setattr(
             "agent.build.service.run_verification_suite",
-            lambda **kwargs: [],
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                ),
+                VerificationResult(
+                    kind=VerificationKind.LINT,
+                    passed=True,
+                    command="ruff check .",
+                    exit_code=0,
+                ),
+            ],
         )
 
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -1083,6 +1151,12 @@ class TestBuildService:
         assert bundle is not None
         assert bundle["package_type"] == "build_delivery"
         assert "verification_passed" in bundle["summary"]
+        assert bundle["summary"]["verification_artifacts"] == 3
+        assert bundle["summary"]["verification_steps"] == 2
+        assert bundle["payload"]["verification_report"]["report_kind"] == "suite"
+        assert len(bundle["payload"]["verification_artifact_ids"]) == 3
+        assert len(bundle["payload"]["verification_artifacts"]) == 3
+        assert bundle["payload"]["acceptance_summary"]["accepted"] is True
         assert bundle["payload"]["patch"]["metadata"]["files_changed"] >= 1
         assert approval["bundle_id"] == bundle["bundle_id"]
         assert approval["required_approvals"] == 1

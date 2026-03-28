@@ -6,7 +6,7 @@ This file tracks current strategic execution progress against:
 - the actual state of `main`
 
 Assessment basis:
-- branch: `main` (after Phase 1 Final Closure slice)
+- branch: `main` (after Phase 2 Kickoff slice)
 - interpretation date: `2026-03-28`
 
 Important:
@@ -83,13 +83,22 @@ Status legend:
   package preview.
 - Builder verification now performs repo-aware discovery for test, lint, and
   typecheck surfaces instead of relying only on static defaults.
+- Builder execution now resolves explicit build execution policies, records
+  policy traces, and blocks unsupported mutable execution sources with stable
+  deny-by-default payloads.
 - Acceptance criteria now understand richer domain signals, including
   post-build review verdicts plus documentation, target-file, and patch-change
   requirements.
+- Build delivery bundles now carry suite-level plus per-step verification
+  artifacts and richer acceptance handoff summaries instead of flattening that
+  evidence into one generic report.
 - Post-build review thresholds are now controlled through explicit deterministic
   review-gate policies instead of a single hard-coded block rule.
 - Build delivery now records durable lifecycle state and handoff audit events
   for prepared, awaiting_approval, approved, rejected, and handed_off phases.
+- Runtime model now exposes higher-level local, operator-controlled, and
+  enterprise-hardened operating environment profiles on top of the lower-level
+  execution environment boundaries.
 - Review delivery now converges on the shared `DeliveryPackage` /
   `DeliveryRecord` lifecycle, including prepared/awaiting_approval/approved/
   handed_off state, approval linkage, and explicit handoff after approval.
@@ -147,12 +156,12 @@ Status legend:
 |------|--------|-----------------|--------------------------|--------------------|
 | T1 Platform Foundation | in_progress | 96% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted plan/trace/delivery records, first-class workspace joins, shared product-job persistence, retention-aware artifact records, explicit retention posture/prune flows, and explicit environment profiles exposed through the orchestrator and CLI. | No unified cross-domain action layer yet. |
 | T2 Reviewer Product | complete_for_phase | 96% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode, Telegram `/review`, structured API review entrypoint, shared delivery lifecycle, and reusable handoff summary artifacts now converge through the shared runtime. | LLM analysis and richer external delivery automation are v2 |
-| T3 Builder Product | in_progress | 80% | Builder bounded context is tracked on `main`, capability-declared, resumable, orchestrator-wired, CLI-reachable, workspace-synced, repo-aware verification-discovering, policy-gated after review, and now emits deterministic patch/diff artifacts plus persisted delivery lifecycle state. | Build step is still placeholder-grade. No LLM implementation or external delivery send path |
+| T3 Builder Product | in_progress | 85% | Builder bounded context is tracked on `main`, capability-declared, resumable, orchestrator-wired, CLI-reachable, workspace-synced, repo-aware verification-discovering, source-aware execution-policy-gated, and now emits deterministic patch/diff artifacts plus richer verification/acceptance delivery evidence and persisted lifecycle state. | Build step is still placeholder-grade. No LLM implementation or external delivery send path |
 | T4 Operator Product | in_progress | 92% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, multi-step approval gating, shared review/build delivery lifecycle state, evidence export, and richer operator report service now exist. | No live backend/UI and no full external delivery workflow yet |
-| T5 Security, Governance, And Policy | in_progress | 90% | Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approval storage with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution policy profiles, multi-step approval thresholds, runtime risky-execution approval gating for operator intake, and broader structured denial payloads now exist across core blocked flows. | Build and broader runtime execution still do not run under one fully unified enforcement engine |
+| T5 Security, Governance, And Policy | in_progress | 92% | Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approval storage with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution policy profiles, source-aware build-execution policy profiles, multi-step approval thresholds, runtime risky-execution approval gating for operator intake, and broader structured denial payloads now exist across core blocked flows. | Build and broader runtime execution still do not run under one fully unified enforcement engine |
 | T6 Cost, Usage, And Observability | in_progress | 91% | UsageSummary on jobs, a durable per-job control-plane cost ledger, persisted duration/retry/failure telemetry for product jobs, orchestrator-visible build/review counters, durable planning/delivery traces, runtime budget enforcement, budget-aware escalation controls, operator-facing reporting, and review-eval smoke checks in CI now exist. | No live operator UI, golden quality set, or deeper cross-runtime cost telemetry |
 | T7 External Capability Gateway | not_started | 0% | Nothing | No gateway contract |
-| T8 Enterprise Hardening | in_progress | 88% | Shared control-plane layer, explicit runtime coexistence rules, review + build bounded contexts on shared primitives, persisted job/plan/delivery state, retention-aware artifact records with prune flow, environment profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, and deterministic review execution policy boundaries now exist. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack. |
+| T8 Enterprise Hardening | in_progress | 91% | Shared control-plane layer, explicit runtime coexistence rules, review + build bounded contexts on shared primitives, persisted job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, and deterministic review/build execution policy boundaries now exist. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack. |
 
 ## Epic Snapshot
 
@@ -178,8 +187,8 @@ Status legend:
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
 | T3-E1 Capability-Based Build Execution | in_progress | 84% | BuildJob, BuildIntake, BuildService, BuildStorage, workspace sync, capability catalog, orchestrator runtime entrypoint, CLI build entrypoint, resumable checkpoints, deterministic patch/diff capture, and build delivery package preview now exist on `main`. | Build step is placeholder (no real code generation). |
-| T3-E2 Build Verification Loop | in_progress | 84% | Verification suite now discovers test/lint/typecheck surfaces from repo signals in the workspace. Successful jobs can invoke deterministic post-build review before completion, and review findings now flow through explicit review-gate policy profiles. | Discovery remains heuristic, and reviewer still runs in READ_ONLY_HOST mode over the built workspace path. |
-| T3-E3 Acceptance Criteria Engine | in_progress | 70% | Acceptance criteria support typed states, keyword-bound verification checks, explicit `verify:` commands, review-backed security checks, and change-set-aware docs/target-file evaluators. | No semantic requirement engine beyond deterministic rule-based evaluators. |
+| T3-E2 Build Verification Loop | in_progress | 90% | Verification suite now discovers test/lint/typecheck surfaces from repo signals in the workspace, persists suite-level plus per-step verification artifacts, and exposes that evidence through the build delivery bundle. Successful jobs can invoke deterministic post-build review before completion, and review findings now flow through explicit review-gate policy profiles. | Discovery remains heuristic, and reviewer still runs in READ_ONLY_HOST mode over the built workspace path. |
+| T3-E3 Acceptance Criteria Engine | in_progress | 78% | Acceptance criteria support typed states, keyword-bound verification checks, explicit `verify:` commands, review-backed security checks, change-set-aware docs/target-file evaluators, and delivery-usable acceptance reports with structured handoff summaries. | No semantic requirement engine beyond deterministic rule-based evaluators. |
 
 ### T4 Operator Product
 
@@ -193,7 +202,7 @@ Status legend:
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T5-E1 Policy Control Plane | in_progress | 88% | Tool policy deny-by-default now sits alongside deterministic build review-gate, delivery, and review-execution policy profiles, plus shared job-persistence, artifact-retention, and external-gateway policy models surfaced through persistence, artifact, review, reporting, and structured denial payloads across blocked flows. | Build and broader runtime execution are still not governed by one shared enforcement engine. |
+| T5-E1 Policy Control Plane | in_progress | 91% | Tool policy deny-by-default now sits alongside deterministic build review-gate, delivery, review-execution, and source-aware build-execution policy profiles, plus shared job-persistence, artifact-retention, and external-gateway policy models surfaced through persistence, artifact, review, reporting, runtime-model metadata, and structured denial payloads across blocked flows. | Build and broader runtime execution are still not governed by one shared enforcement engine. |
 | T5-E2 Approval Model | in_progress | 90% | Approval queue, strict delivery approval, persistent ApprovalStorage, and query filters now cover job/artifact/workspace/bundle linkage across review and build delivery flows, and unified intake/build/review delivery can now require multi-step approval for budget-sensitive, high-risk, or higher-severity work. | Broader policy/action unification and richer approval chains remain partial. |
 | T5-E3 Client-Safe Output | mostly_complete | 70% | Full redaction pipeline, requester/source stripped | Wider system outputs beyond reviewer |
 
@@ -217,7 +226,7 @@ Status legend:
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
 | T8-E1 Contract-First Boundaries | in_progress | 79% | Shared control-plane primitives now back build and review directly. ADR-001 sidecar, unified intake/planning, explicit runtime coexistence rules, cross-system job/artifact/query/report surfaces, and deterministic review execution policy boundaries reinforce the boundary. | Boundaries are documented and queryable, but not yet enforced as extraction-grade invariants. |
-| T8-E2 Deployment And Environment Profiles | in_progress | 45% | Explicit environment profiles now define review, build, acquisition/import, and export-only execution boundaries and are surfaced through the runtime model, planner metadata, and persisted job context. | No higher-level local/operator/enterprise profile matrix yet |
+| T8-E2 Deployment And Environment Profiles | in_progress | 76% | Explicit lower-level execution environment profiles now define review, build, acquisition/import, and export-only boundaries, and the runtime model now also exposes local-owner, operator-controlled, and enterprise-hardened operating profiles with default build/delivery/gateway posture. | The higher-level profile matrix now exists, but it is not yet enforced as a deployment-grade runtime contract across the whole stack |
 | T8-E3 Compliance-Friendly Foundations | in_progress | 82% | Redaction module, client-safe review bundle export, client-safe evidence export, delivery gating, retained artifact records with expiry/recoverability/prune state, shared artifact traceability, and dedicated evidence export workflow now exist. | Enterprise data-handling rules and broader non-review client-safe packaging remain partial. |
 
 ## Current Strategic Interpretation
@@ -232,7 +241,8 @@ Status legend:
 - with a shared delivery-package model plus build and review delivery previews, approval linkage, and handoff audit state
 - with managed git-source acquisition/import before runtime routing
 - with retention-aware artifact and persisted product-job state now feeding both internal and client-safe evidence export packages
-- with explicit environment profiles and budget-aware escalation controls around runtime execution
+- with explicit execution environment profiles plus a higher-level local/operator/enterprise operating profile matrix and budget-aware escalation controls around runtime execution
+- with build delivery bundles that now surface richer verification and acceptance evidence for operator handoff
 - but without full builder capability (build step is placeholder)
 - and without a live operator UI or a fully unified build/review execution-policy engine
 
@@ -342,10 +352,10 @@ Review/audit-driven fixes landed on `main`:
 
 See [NEXT_BACKLOG.md](/Users/danielbabjak/Desktop/Agent_Life_Space/docs/strategy/NEXT_BACKLOG.md) for the prioritized execution queue.
 
-Now that Phase 1 reviewer closure has real handoff artifacts, client-safe
-export reuse, structured denials, and CI smoke coverage, the next
+Now that Phase 2 kickoff has explicit build execution policy, richer builder
+handoff evidence, and a higher-level operating environment matrix, the next
 high-leverage work is:
-1. Push deny-by-default policy deeper into build execution and remaining shared runtime actions
-2. Define a higher-level local/operator/enterprise environment profile matrix
-3. Capture richer builder verification artifacts and acceptance evidence for delivery
-4. Formalize enterprise data-handling rules and the first gateway contract
+1. Finish structured denials across remaining finance/social/adapter edges
+2. Turn review quality from smoke-only coverage into durable golden cases
+3. Formalize enterprise data-handling rules and the first gateway contract
+4. Push builder acceptance semantics beyond deterministic rule matching
