@@ -11,7 +11,7 @@ Use it for:
 
 ## Current Progress Snapshot
 
-Assessment basis: after Phase 2 Acceptance Clarity slice.
+Assessment basis: after Phase 2 Builder Execution slice.
 
 Important:
 - this is a strategy progress snapshot, not a merge-state indicator
@@ -23,8 +23,8 @@ Important:
 |-------|--------|-----------------|---------------|-----|
 | T1 Platform Foundation | `in_progress` | 96% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted job/plan/trace/delivery records, retention-aware artifact records with prune flow, first-class workspace joins, and explicit environment profiles for review/build/acquisition/export flows. | No unified cross-domain action layer yet. |
 | T2 Reviewer Product | `complete_for_phase` | 90% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, converged Telegram and structured API review entrypoints, plus shared review delivery lifecycle state. | PR comment packs and LLM analysis are v2. |
-| T3 Builder Product | `in_progress` | 88% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery, source-aware execution policy traces and blocking, plus deterministic patch/diff, richer verification/acceptance delivery evidence, explicit required/optional acceptance semantics, and clearer failure payloads. | Build step is still placeholder and there is no external delivery send path. |
-| T4 Operator Product | `in_progress` | 92% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, shared review/build delivery lifecycle state, evidence export, and richer operator report/CLI surfaces now exist. | No live backend/UI and no full external delivery workflow yet. |
+| T3 Builder Product | `in_progress` | 92% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery, source-aware execution policy traces and blocking, deterministic patch/diff, richer verification/acceptance delivery evidence, explicit required/optional acceptance semantics, clearer failure payloads, and a bounded local implementation engine for structured workspace mutations. | No general code generation yet, and there is no external delivery send path. |
+| T4 Operator Product | `in_progress` | 93% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report/CLI surfaces, and operation-count-aware builder planning now exist. | No live backend/UI and no full external delivery workflow yet. |
 | T5 Security, Governance, And Policy | `in_progress` | 91% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, multi-step approval thresholds, plus runtime risky-execution approvals for unified intake. | Build execution and broader runtime action flow still sit outside one unified policy enforcement boundary. |
 | T6 Cost, Usage, And Observability | `in_progress` | 89% | UsageSummary, a durable per-job cost ledger, persisted job duration/retry/failure telemetry, runtime hard/soft/stop-loss budget posture, budget-aware escalation controls, durable plan/trace/delivery telemetry, shared runtime job/artifact/workspace queries, richer operator reporting, and explicit approval backlog plus retention posture summaries now exist. | No live operator UI or deeper cross-runtime telemetry yet. |
 | T7 External Capability Gateway | `not_started` | 0% | Nothing yet. | No gateway contract. |
@@ -159,15 +159,15 @@ Stories:
 ## Theme T3: Builder Product
 
 - status: `in_progress`
-- approx_progress: 80%
+- approx_progress: 92%
 
 Goal: make implementation work first-class, controlled, and acceptance-driven.
 
 ### Epic T3-E1: Capability-Based Build Execution
 
 - status: `in_progress`
-- approx_progress: 84%
-- remaining_gap: Build flow now has runtime entrypoints, declared capabilities, resumable checkpoints, and delivery-package preview artifacts, but the build step is still placeholder-grade.
+- approx_progress: 91%
+- remaining_gap: Build flow now has runtime entrypoints, declared capabilities, resumable checkpoints, a bounded local implementation engine, and delivery-package preview artifacts, but it still lacks general code generation and broader execution planning.
 
 Stories:
 - T3-E1-S1: Define implementation capability catalog for backend, frontend,
@@ -177,16 +177,20 @@ Stories:
   - missing: External provider routing remains future scope.
 - T3-E1-S2: Expose builder through a real product entrypoint.
   - status: `mostly_complete`
-  - current_state: `AgentOrchestrator.run_build_job()` now exposes builder through the shared runtime, and `python -m agent --build-repo ...` provides a thin CLI adapter on top of it.
+  - current_state: `AgentOrchestrator.run_build_job()` now exposes builder through the shared runtime, `python -m agent --build-repo ...` provides a thin CLI adapter, and that CLI can now load a structured implementation plan from JSON for bounded local execution.
   - missing: No operator/chat/API entrypoint yet, and capability catalog remains separate scope.
 - T3-E1-S3: Capture patch sets, diffs, and execution traces as artifacts.
   - status: `complete_for_phase`
   - current_state: Builder now captures deterministic PATCH + DIFF artifacts by comparing source repo and workspace, alongside verification, acceptance, review, findings, and execution trace artifacts persisted via BuildStorage.
-  - missing: Patch export is honest but still reflects a placeholder build step when no real implementation engine changes files.
+  - missing: Patch export is honest, but audit-only builds still have no structured workspace mutations to capture.
 - T3-E1-S4: Make execution resumable after interruption.
   - status: `mostly_complete`
   - current_state: BuildJob now records checkpoints, resume lineage, and can resume through `BuildService.resume_build()` and `python -m agent --build-resume ...`, reusing successful phases and rerunning failed ones.
   - missing: No planner-driven or distributed-worker resume policy yet.
+- T3-E1-S5: Replace placeholder build step with a bounded local implementation engine.
+  - status: `mostly_complete`
+  - current_state: BuildService now executes structured workspace mutations (`write_file`, `append_text`, `replace_text`, `json_set`) through a bounded local engine, persists per-operation results, and exposes implementation mode plus execution summaries through job metadata, delivery bundles, CLI, and planning surfaces.
+  - missing: Execution still depends on an explicit structured plan; there is no freeform or LLM-backed code generation yet.
 
 ### Epic T3-E2: Build Verification Loop
 
@@ -214,7 +218,7 @@ Stories:
 ### Epic T3-E3: Acceptance Criteria Engine
 
 - status: `in_progress`
-- approx_progress: 84%
+- approx_progress: 86%
 
 Stories:
 - T3-E3-S1: Define acceptance criteria object model.
@@ -223,8 +227,8 @@ Stories:
   - missing: The object model is stronger, but semantic requirement matching is still outside the current deterministic evaluator set.
 - T3-E3-S2: Attach acceptance criteria to jobs.
   - status: `in_progress`
-  - current_state: BuildIntake carries acceptance_criteria list. BuildJob inherits them. AcceptanceVerdict evaluates at completion.
-  - missing: Criteria are attached and checked, but richer requirement matching is still missing.
+  - current_state: BuildIntake carries acceptance_criteria list, BuildJob inherits them, AcceptanceVerdict evaluates at completion, and unified operator intake now carries richer builder execution structure earlier in planning/runtime handoff.
+  - missing: Acceptance criteria still mostly enter planning as plain strings, and richer requirement matching is still missing.
 - T3-E3-S3: Validate criteria at completion time.
   - status: `mostly_complete`
   - current_state: Completion-time validation now supports keyword-bound verification checks, explicit `verify:` commands executed in the workspace, review-backed security checks, and change-set-aware docs/target-file evaluators.
@@ -237,7 +241,7 @@ Stories:
 ## Theme T4: Operator Product
 
 - status: `in_progress`
-- approx_progress: 82%
+- approx_progress: 85%
 
 Goal: coordinate work end-to-end and support repeatable client delivery.
 
@@ -250,7 +254,7 @@ Stories:
 - T4-E1-S1: Create intake model for repo paths, git URLs, diff ranges, and work
   type.
   - status: `complete_for_phase`
-  - current_state: `agent/control/intake.py` now defines a unified operator intake envelope for repo paths, git URLs, diff ranges, work type, build type, acceptance criteria, routing metadata, and managed acquisition hints for supported git sources.
+  - current_state: `agent/control/intake.py` now defines a unified operator intake envelope for repo paths, git URLs, diff ranges, work type, build type, acceptance criteria, structured builder implementation plans, routing metadata, and managed acquisition hints for supported git sources.
   - missing: Live operator UI and broader remote-provider workflows remain outside the current phase.
 - T4-E1-S2: Add qualification logic for scope, risk, and budget.
   - status: `mostly_complete`
@@ -273,7 +277,7 @@ Stories:
 Stories:
 - T4-E2-S1: Create JobPlan model and planner outputs.
   - status: `complete_for_phase`
-  - current_state: `JobPlan`, `JobPlanStep`, `JobPlanPhase`, `JobPlanCapability`, and `JobPlanBudgetEnvelope` now exist in `agent/control/intake.py`, and planner output is surfaced through preview/submit flows plus persisted `JobPlanRecord` handoff state.
+  - current_state: `JobPlan`, `JobPlanStep`, `JobPlanPhase`, `JobPlanCapability`, and `JobPlanBudgetEnvelope` now exist in `agent/control/intake.py`, planner output is surfaced through preview/submit flows plus persisted `JobPlanRecord` handoff state, and builder planning now carries operation-count-aware execution metadata.
   - missing: Planner output is durable, but not yet a distributed execution history.
 - T4-E2-S2: Split work into review, build, verify, deliver phases.
   - status: `complete_for_phase`
@@ -543,5 +547,6 @@ surface a phase-aware `JobPlan` with scope, risk, budget, and capability
 decisions instead of only a route decision. Persisted product-job records,
 retention-aware artifact state, environment profiles, evidence export, and
 per-job cost ledger entries now make the shared control plane materially more
-auditable than the earlier foundation-only snapshot, even though the build step
-itself still remains placeholder-grade (no real code generation).
+auditable than the earlier foundation-only snapshot, and builder execution now
+has a bounded local mutation engine, even though there is still no general
+code-generation path.

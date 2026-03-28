@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import signal
 import sys
@@ -630,12 +631,39 @@ async def show_artifact_command(
     await agent.stop()
 
 
+def _load_build_operation_plan(plan_file: str) -> list[object]:
+    """Load a structured build implementation plan from JSON."""
+    from agent.build.models import BuildOperation
+
+    try:
+        with open(plan_file, encoding="utf-8") as f:
+            payload = json.load(f)
+    except OSError as e:
+        raise ValueError(f"Could not read implementation plan file: {e}") from e
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Implementation plan file is not valid JSON: {e}") from e
+
+    if isinstance(payload, dict):
+        payload = (
+            payload.get("implementation_plan")
+            or payload.get("operations")
+            or payload.get("plan")
+            or []
+        )
+    if not isinstance(payload, list):
+        raise ValueError("Implementation plan file must contain a JSON list of operations")
+    if not all(isinstance(item, dict) for item in payload):
+        raise ValueError("Implementation plan operations must be JSON objects")
+    return [BuildOperation.from_dict(item) for item in payload]
+
+
 async def run_build_command(
     *,
     data_dir: str = "agent",
     repo_path: str,
     description: str,
     target_files: list[str] | None = None,
+    implementation_plan: list[object] | None = None,
     acceptance_criteria: list[str] | None = None,
     requester: str = "cli",
     context: str = "",
@@ -653,6 +681,7 @@ async def run_build_command(
         repo_path=repo_path,
         description=description,
         target_files=target_files or [],
+        implementation_plan=implementation_plan or [],
         acceptance_criteria=[
             AcceptanceCriterion.from_text(item)
             for item in (acceptance_criteria or [])
@@ -695,6 +724,7 @@ async def run_intake_command(
     context: str = "",
     focus_areas: list[str] | None = None,
     target_files: list[str] | None = None,
+    implementation_plan: list[object] | None = None,
     acceptance_criteria: list[str] | None = None,
     preview_only: bool = False,
 ) -> None:
@@ -715,6 +745,7 @@ async def run_intake_command(
         context=context,
         focus_areas=focus_areas or [],
         target_files=target_files or [],
+        implementation_plan=implementation_plan or [],
         acceptance_criteria=acceptance_criteria or [],
     )
 
@@ -1034,6 +1065,11 @@ def main() -> None:
         help="Acceptance criterion for the build job; repeatable",
     )
     parser.add_argument(
+        "--build-plan-file",
+        default="",
+        help="JSON file with a structured implementation plan for --build-repo",
+    )
+    parser.add_argument(
         "--build-requester",
         default="cli",
         help="Requester label for --build-repo execution",
@@ -1139,6 +1175,11 @@ def main() -> None:
         action="append",
         default=[],
         help="Unified operator intake: acceptance criterion; repeatable",
+    )
+    parser.add_argument(
+        "--intake-plan-file",
+        default="",
+        help="Unified operator intake: JSON file with a structured implementation plan",
     )
     parser.add_argument(
         "--intake-preview",
@@ -1296,12 +1337,21 @@ def main() -> None:
     elif args.build_repo:
         if not args.build_description:
             parser.error("--build-description is required with --build-repo")
+        try:
+            build_plan = (
+                _load_build_operation_plan(args.build_plan_file)
+                if args.build_plan_file
+                else []
+            )
+        except ValueError as e:
+            parser.error(str(e))
         asyncio.run(
             run_build_command(
                 data_dir=args.data_dir,
                 repo_path=args.build_repo,
                 description=args.build_description,
                 target_files=args.build_target_file,
+                implementation_plan=build_plan,
                 acceptance_criteria=args.build_acceptance,
                 requester=args.build_requester,
                 context=args.build_context,
@@ -1309,6 +1359,14 @@ def main() -> None:
             )
         )
     elif args.intake_repo or args.intake_git_url:
+        try:
+            intake_plan = (
+                _load_build_operation_plan(args.intake_plan_file)
+                if args.intake_plan_file
+                else []
+            )
+        except ValueError as e:
+            parser.error(str(e))
         asyncio.run(
             run_intake_command(
                 data_dir=args.data_dir,
@@ -1322,6 +1380,7 @@ def main() -> None:
                 context=args.intake_context,
                 focus_areas=args.intake_focus_area,
                 target_files=args.intake_target_file,
+                implementation_plan=intake_plan,
                 acceptance_criteria=args.intake_acceptance,
                 preview_only=args.intake_preview,
             )

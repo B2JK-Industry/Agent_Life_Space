@@ -44,20 +44,21 @@ python -m agent --list-retained-artifacts
 python -m agent --prune-expired-retained-artifacts
 python -m agent --list-cost-ledger
 python -m agent --intake-git-url file:///path/to/repo --intake-work-type review --intake-description "Imported review"
-python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-preview
+python -m agent --build-repo . --build-description "Apply bounded builder plan" --build-plan-file plan.json
+python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-plan-file plan.json --intake-preview
 python -m agent --list-plans
 python -m agent --list-deliveries
-python -m pytest tests/ -q   # Testy (1290+ testov)
+python -m pytest tests/ -q   # Testy (1297+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.9.1** — phase 2 acceptance clarity release.
+Aktuálna: **v1.10.0** — phase 2 builder execution release.
 
-Nové v `v1.9.1`:
-- acceptance criteria teraz podporujú explicitné `required` vs `optional` správanie
-- CLI a unified intake vedia z jednoduchých stringov parsovať richer acceptance shape
-- unmet required acceptance criteria teraz vracajú structured denial payload a detailný failure summary
-- build delivery summary nesie required/optional acceptance counts a blocking unmet criteria
+Nové v `v1.10.0`:
+- builder vie vykonať bounded local implementation plan cez explicitné operácie `write_file`, `append_text`, `replace_text` a `json_set`
+- CLI aj unified intake vedia niesť structured implementation plan cez `--build-plan-file` a `--intake-plan-file`
+- build job teraz perzistentne nesie implementation mode a per-operation results
+- build delivery summary a control-plane metadata ukazujú implementation execution summary pre operator handoff
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

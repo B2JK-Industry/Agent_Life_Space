@@ -5,43 +5,43 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Phase 2 Acceptance Clarity slice."
+  assessed_state_note: "Snapshot after Phase 2 Builder Execution slice."
   interpretation_date: "2026-03-28"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
     T2: { status: complete_for_phase, approx_progress: 96 }
-    T3: { status: in_progress, approx_progress: 88 }
-    T4: { status: in_progress, approx_progress: 92 }
+    T3: { status: in_progress, approx_progress: 92 }
+    T4: { status: in_progress, approx_progress: 93 }
     T5: { status: in_progress, approx_progress: 92 }
     T6: { status: in_progress, approx_progress: 91 }
     T7: { status: not_started, approx_progress: 0 }
     T8: { status: in_progress, approx_progress: 91 }
 next_execution_backlog:
   - priority: P0
+    story_id: T3-E3-S2
+    title: "Carry richer acceptance structure through intake and planning"
+    why_now: "Structured implementation plans now reach runtime and planning, but richer acceptance structure still mostly enters the planner as plain strings."
+  - priority: P0
+    story_id: T3-E3-S3
+    title: "Deepen deterministic acceptance evaluators"
+    why_now: "The builder now has a real bounded execution path, so the next honest builder gap is stronger deterministic acceptance evaluation over those changes."
+  - priority: P1
     story_id: T5-E1-S3
     title: "Add structured denial reasons everywhere"
-    why_now: "Core blocker flows already emit stable denial payloads, but some finance, social, and adapter edges still return plain strings and break operator-facing consistency."
-  - priority: P0
+    why_now: "Builder denial payloads are now richer, but some finance, social, and adapter edges still return plain strings and break operator-facing consistency."
+  - priority: P1
     story_id: T6-E3-S1
     title: "Build golden review cases"
     why_now: "Smoke coverage now guards reviewer handoff structure, so the next quality step is durable golden cases rather than only structural regression tests."
-  - priority: P0
+  - priority: P1
     story_id: T8-E3-S4
     title: "Prepare data-handling rules for future enterprise requirements"
     why_now: "Enterprise-facing operating profiles and client-safe evidence export now exist, so formalizing retention, redaction, and handoff rules is the next honest hardening step."
   - priority: P1
-    story_id: T3-E3-S3
-    title: "Deepen deterministic acceptance evaluators"
-    why_now: "The acceptance model now has explicit required/optional semantics and clearer failure payloads, so the next builder step is expanding deterministic evaluator coverage before semantic matching."
-  - priority: P1
-    story_id: T3-E3-S2
-    title: "Carry richer acceptance structure through intake and planning"
-    why_now: "The builder object model is stronger now, but planner/intake surfaces still mostly originate from plain strings and do not yet expose the richer criterion structure explicitly."
-  - priority: P1
     story_id: T7-E1-S1
     title: "Define gateway contract for external capabilities"
     why_now: "Execution policy, operating profiles, approval, retention, and cost foundations are now strong enough that a gateway boundary can be defined without premature plumbing."
-  - priority: P1
+  - priority: P2
     story_id: T8-E2-S3
     title: "Add configuration discipline for project roots, secrets, and storage"
     why_now: "The higher-level operating environment matrix now exists, but concrete deployment-grade configuration discipline is still loose."
@@ -236,15 +236,15 @@ themes:
     name: Builder Product
     goal: Make implementation controlled, testable, and acceptance-driven.
     status: in_progress
-    approx_progress: 88
-    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, acceptance criteria engine, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, source-aware build execution policy gating, richer verification/acceptance delivery evidence, explicit required/optional acceptance semantics, clearer failure payloads, policy-driven post-build review gate, and deterministic patch/diff plus delivery-lifecycle output.
-    main_gap: No LLM implementation, no real code generation, and no external delivery send path yet.
+    approx_progress: 92
+    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, acceptance criteria engine, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, source-aware build execution policy gating, richer verification/acceptance delivery evidence, explicit required/optional acceptance semantics, clearer failure payloads, policy-driven post-build review gate, deterministic patch/diff plus delivery-lifecycle output, and a bounded local implementation engine with structured workspace mutations.
+    main_gap: No general code generation, no LLM implementation, and no external delivery send path yet.
     epics:
       - id: T3-E1
         name: Capability-Based Build Execution
         status: in_progress
-        approx_progress: 84
-        remaining_gap: Build flow exists, has real runtime entrypoints, declared capabilities, resumable checkpoints, and delivery-package preview artifacts, but the build step is still placeholder-grade.
+        approx_progress: 91
+        remaining_gap: Build flow exists, has real runtime entrypoints, declared capabilities, resumable checkpoints, a bounded local implementation engine, and delivery-package preview artifacts, but it still lacks general code generation and wider execution planning.
         stories:
           - id: T3-E1-S1
             name: Define implementation capability catalog
@@ -254,18 +254,23 @@ themes:
           - id: T3-E1-S2
             name: Expose builder through a real product entrypoint
             status: mostly_complete
-            current_state: AgentOrchestrator now exposes run_build_job(), and python -m agent --build-repo ... routes builder work through the shared runtime.
+            current_state: AgentOrchestrator now exposes run_build_job(), python -m agent --build-repo ... routes builder work through the shared runtime, and that CLI can now load a structured implementation plan from JSON for bounded local execution.
             missing: No operator/chat/API entrypoint yet, and capability routing remains separate scope.
           - id: T3-E1-S3
             name: Capture patch sets, diffs, and execution traces as artifacts
             status: complete_for_phase
             current_state: Builder now captures deterministic patch + diff artifacts by comparing source repo and workspace, alongside verification, acceptance, review, finding-list, and trace artifacts persisted via BuildStorage.
-            missing: Patch export is honest but still reflects placeholder execution when no implementation engine changes files.
+            missing: Patch export is honest, but audit-only builds still have no structured workspace mutations to capture.
           - id: T3-E1-S4
             name: Make execution resumable after interruption
             status: mostly_complete
             current_state: BuildJob now records checkpoints, resume lineage, and can resume through BuildService.resume_build() and python -m agent --build-resume ..., reusing successful phases and rerunning failed ones.
             missing: No planner-driven or distributed-worker resume policy yet.
+          - id: T3-E1-S5
+            name: Replace placeholder build step with a bounded local implementation engine
+            status: mostly_complete
+            current_state: BuildService now executes structured workspace mutations (write_file, append_text, replace_text, json_set) through a bounded local engine, persists per-operation results, and exposes implementation mode plus execution summaries through job metadata, delivery bundles, CLI, and planning surfaces.
+            missing: Execution still depends on an explicit structured plan; there is no freeform or LLM-backed code generation yet.
       - id: T3-E2
         name: Build Verification Loop
         status: in_progress
@@ -294,7 +299,7 @@ themes:
       - id: T3-E3
         name: Acceptance Criteria Engine
         status: in_progress
-        approx_progress: 84
+        approx_progress: 86
         stories:
           - id: T3-E3-S1
             name: Define acceptance criteria object model
@@ -304,8 +309,8 @@ themes:
           - id: T3-E3-S2
             name: Attach acceptance criteria to jobs
             status: in_progress
-            current_state: BuildIntake carries acceptance_criteria and BuildJob inherits them.
-            missing: Criteria are attached and checked, but richer requirement matching is still missing.
+            current_state: BuildIntake carries acceptance_criteria and BuildJob inherits them, and unified operator intake now carries richer builder execution structure earlier in planning/runtime handoff.
+            missing: Acceptance criteria still mostly enter planning as plain strings, and richer requirement matching is still missing.
           - id: T3-E3-S3
             name: Validate criteria at completion time
             status: mostly_complete
@@ -321,19 +326,19 @@ themes:
     name: Operator Product
     goal: Coordinate end-to-end work and delivery.
     status: in_progress
-    approx_progress: 92
-    current_state: Unified intake routing, phase-aware JobPlan preview/submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, workspace joins, richer operator report service, internal/client-safe evidence export, and shared build/review delivery lifecycle now exist alongside CI typecheck.
+    approx_progress: 93
+    current_state: Unified intake routing, phase-aware JobPlan preview/submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, workspace joins, richer operator report service, internal/client-safe evidence export, shared build/review delivery lifecycle, and operation-count-aware builder planning now exist alongside CI typecheck.
     main_gap: No live backend/UI and no full external delivery workflow yet.
     epics:
       - id: T4-E1
         name: Intake And Qualification
         status: in_progress
-        approx_progress: 92
+        approx_progress: 94
         stories:
           - id: T4-E1-S1
             name: Create intake model for repo paths, git URLs, diff ranges, and work type
             status: complete_for_phase
-            current_state: agent/control/intake.py now defines a unified operator intake envelope for repo paths, git URLs, diff ranges, work type, build type, acceptance criteria, routing metadata, and managed acquisition hints for supported git sources.
+            current_state: agent/control/intake.py now defines a unified operator intake envelope for repo paths, git URLs, diff ranges, work type, build type, acceptance criteria, structured builder implementation plans, routing metadata, and managed acquisition hints for supported git sources.
             missing: Live operator UI and broader remote-provider workflows remain outside the current phase.
           - id: T4-E1-S2
             name: Add qualification logic for scope, risk, and budget
@@ -353,12 +358,12 @@ themes:
       - id: T4-E2
         name: Job Planning And Routing
         status: in_progress
-        approx_progress: 82
+        approx_progress: 85
         stories:
           - id: T4-E2-S1
             name: Create JobPlan model and planner outputs
             status: complete_for_phase
-            current_state: JobPlan, JobPlanStep, JobPlanPhase, JobPlanCapability, and JobPlanBudgetEnvelope now exist in agent/control/intake.py, and planner output is surfaced through preview/submit flows plus persisted JobPlanRecord handoff state.
+            current_state: JobPlan, JobPlanStep, JobPlanPhase, JobPlanCapability, and JobPlanBudgetEnvelope now exist in agent/control/intake.py, planner output is surfaced through preview/submit flows plus persisted JobPlanRecord handoff state, and builder planning now carries operation-count-aware execution metadata.
             missing: Planner output is durable, but not yet a distributed execution history.
           - id: T4-E2-S2
             name: Split work into review, build, verify, deliver phases

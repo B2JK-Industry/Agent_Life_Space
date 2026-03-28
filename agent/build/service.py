@@ -23,6 +23,7 @@ This service does NOT:
 from __future__ import annotations
 
 import difflib
+import json
 import shlex
 import shutil
 import subprocess
@@ -38,9 +39,14 @@ from agent.build.models import (
     ArtifactKind,
     BuildArtifact,
     BuildCheckpointPhase,
+    BuildImplementationMode,
     BuildIntake,
     BuildJob,
     BuildJobType,
+    BuildOperation,
+    BuildOperationResult,
+    BuildOperationStatus,
+    BuildOperationType,
     BuildPhase,
     CriterionEvaluator,
     CriterionKind,
@@ -388,11 +394,12 @@ class BuildService:
             t_build = job.trace("build")
             build_ok = self._execute_build(job, workspace_path)
             if build_ok:
-                t_build.complete("build step completed")
+                build_summary = self._build_step_summary(job)
+                t_build.complete(build_summary)
                 self._record_checkpoint(
                     job,
                     BuildCheckpointPhase.BUILT,
-                    detail=f"capability={job.capability_id}",
+                    detail=build_summary,
                 )
             else:
                 t_build.fail(job.error or "build failed")
@@ -643,23 +650,330 @@ class BuildService:
         return job
 
     def _execute_build(self, job: BuildJob, workspace_path: str) -> bool:
-        """Execute the build step.
-
-        In v1 foundation, this remains a placeholder. The repo has
-        already been materialized into the workspace, so this step
-        only validates that the workspace is writable and leaves an
-        audit marker.
-        """
+        """Execute the mutable build step inside the managed workspace."""
         wp = Path(workspace_path)
         if not wp.is_dir():
             job.error = f"Workspace path does not exist: {workspace_path}"
             return False
 
-        # v1: create a marker file to show workspace was used
         marker = wp / ".build_job"
-        marker.write_text(f"job_id={job.id}\nbuild_type={job.build_type.value}\n")
-        self._workspace_manager.record_file(job.workspace_id, str(marker))
+        marker.write_text(
+            (
+                f"job_id={job.id}\n"
+                f"build_type={job.build_type.value}\n"
+                f"capability_id={job.capability_id}\n"
+            ),
+            encoding="utf-8",
+        )
+        self._record_workspace_file(job, marker)
+
+        if not job.intake.implementation_plan:
+            job.implementation_mode = BuildImplementationMode.AUDIT_MARKER_ONLY
+            job.implementation_results = []
+            self._record_control_trace(
+                trace_kind=TraceRecordKind.EXECUTION,
+                title="Build implementation mode",
+                detail="No structured implementation plan supplied; audit marker only.",
+                job_id=job.id,
+                workspace_id=job.workspace_id,
+                metadata=self._implementation_metadata(job),
+            )
+            return True
+
+        job.implementation_mode = BuildImplementationMode.BOUNDED_LOCAL_ENGINE
+        job.implementation_results = []
+
+        for operation in job.intake.implementation_plan:
+            operation_trace = job.trace(
+                f"implement:{operation.operation_type.value}:{operation.path}"
+            )
+            try:
+                result = self._apply_build_operation(
+                    job=job,
+                    workspace_root=wp,
+                    operation=operation,
+                )
+            except Exception as e:
+                result = BuildOperationResult(
+                    operation_id=operation.id,
+                    operation_type=operation.operation_type,
+                    path=operation.path,
+                    status=BuildOperationStatus.FAILED,
+                    changed=False,
+                    detail=str(e),
+                )
+                job.implementation_results.append(result)
+                detail = (
+                    f"{operation.operation_type.value} {operation.path}: {e}"
+                )
+                operation_trace.fail(detail)
+                job.error = f"Implementation step failed: {detail}"
+                job.denial = make_denial(
+                    code="build_implementation_failed",
+                    summary="Build implementation step failed",
+                    detail=job.error,
+                    scope=job.id,
+                    policy_id=job.intake.execution_policy_id or "workspace_local_mutation",
+                    environment_profile_id=self._build_environment_profile_id(job),
+                    suggested_action=(
+                        "Fix the structured implementation plan or workspace content and rerun the build."
+                    ),
+                    metadata=self._implementation_metadata(job),
+                ).to_dict()
+                self._record_control_trace(
+                    trace_kind=TraceRecordKind.EXECUTION,
+                    title="Build implementation failure",
+                    detail=detail,
+                    job_id=job.id,
+                    workspace_id=job.workspace_id,
+                    metadata=self._implementation_metadata(job),
+                )
+                return False
+
+            job.implementation_results.append(result)
+            operation_trace.complete(result.detail)
+
+        self._record_control_trace(
+            trace_kind=TraceRecordKind.EXECUTION,
+            title="Structured build implementation plan",
+            detail=self._build_step_summary(job),
+            job_id=job.id,
+            workspace_id=job.workspace_id,
+            metadata=self._implementation_metadata(job),
+        )
         return True
+
+    def _apply_build_operation(
+        self,
+        *,
+        job: BuildJob,
+        workspace_root: Path,
+        operation: BuildOperation,
+    ) -> BuildOperationResult:
+        target = self._resolve_workspace_operation_path(workspace_root, operation.path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        if operation.operation_type == BuildOperationType.WRITE_FILE:
+            existing = (
+                target.read_text(encoding="utf-8")
+                if target.exists()
+                else None
+            )
+            if existing == operation.content:
+                return BuildOperationResult(
+                    operation_id=operation.id,
+                    operation_type=operation.operation_type,
+                    path=operation.path,
+                    status=BuildOperationStatus.NOOP,
+                    changed=False,
+                    detail="Target file already matches the requested content.",
+                )
+            target.write_text(operation.content, encoding="utf-8")
+            self._record_workspace_file(job, target)
+            return BuildOperationResult(
+                operation_id=operation.id,
+                operation_type=operation.operation_type,
+                path=operation.path,
+                status=BuildOperationStatus.APPLIED,
+                changed=True,
+                detail=f"Wrote {operation.path}.",
+            )
+
+        if operation.operation_type == BuildOperationType.APPEND_TEXT:
+            existing = target.read_text(encoding="utf-8") if target.exists() else ""
+            if operation.content and operation.content in existing:
+                return BuildOperationResult(
+                    operation_id=operation.id,
+                    operation_type=operation.operation_type,
+                    path=operation.path,
+                    status=BuildOperationStatus.NOOP,
+                    changed=False,
+                    detail="Requested content is already present.",
+                )
+            updated = f"{existing}{operation.content}"
+            target.write_text(updated, encoding="utf-8")
+            self._record_workspace_file(job, target)
+            return BuildOperationResult(
+                operation_id=operation.id,
+                operation_type=operation.operation_type,
+                path=operation.path,
+                status=BuildOperationStatus.APPLIED,
+                changed=True,
+                detail=f"Appended content to {operation.path}.",
+            )
+
+        if operation.operation_type == BuildOperationType.REPLACE_TEXT:
+            if not target.exists():
+                raise ValueError(f"Target file does not exist: {operation.path}")
+            existing = target.read_text(encoding="utf-8")
+            if operation.match_text not in existing:
+                if operation.replacement_text and operation.replacement_text in existing:
+                    return BuildOperationResult(
+                        operation_id=operation.id,
+                        operation_type=operation.operation_type,
+                        path=operation.path,
+                        status=BuildOperationStatus.NOOP,
+                        changed=False,
+                        detail="Replacement text is already present.",
+                    )
+                raise ValueError(f"match_text not found in {operation.path}")
+            updated = existing.replace(
+                operation.match_text,
+                operation.replacement_text,
+                1,
+            )
+            if updated == existing:
+                return BuildOperationResult(
+                    operation_id=operation.id,
+                    operation_type=operation.operation_type,
+                    path=operation.path,
+                    status=BuildOperationStatus.NOOP,
+                    changed=False,
+                    detail="Requested replacement produced no file change.",
+                )
+            target.write_text(updated, encoding="utf-8")
+            self._record_workspace_file(job, target)
+            return BuildOperationResult(
+                operation_id=operation.id,
+                operation_type=operation.operation_type,
+                path=operation.path,
+                status=BuildOperationStatus.APPLIED,
+                changed=True,
+                detail=f"Replaced text in {operation.path}.",
+            )
+
+        if operation.operation_type == BuildOperationType.JSON_SET:
+            if target.exists():
+                try:
+                    document = json.loads(target.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON in {operation.path}: {e}") from e
+            else:
+                document = {}
+            if not isinstance(document, dict):
+                raise ValueError(
+                    f"json_set requires a JSON object at {operation.path}"
+                )
+            current: Any = document
+            for part in operation.json_path[:-1]:
+                nested = current.get(part)
+                if nested is None:
+                    nested = {}
+                    current[part] = nested
+                if not isinstance(nested, dict):
+                    raise ValueError(
+                        f"json_path {'/'.join(operation.json_path)} crosses a non-object node"
+                    )
+                current = nested
+            final_key = operation.json_path[-1]
+            if current.get(final_key) == operation.value:
+                return BuildOperationResult(
+                    operation_id=operation.id,
+                    operation_type=operation.operation_type,
+                    path=operation.path,
+                    status=BuildOperationStatus.NOOP,
+                    changed=False,
+                    detail=(
+                        f"JSON path {'.'.join(operation.json_path)} already matches the requested value."
+                    ),
+                )
+            current[final_key] = operation.value
+            target.write_text(
+                json.dumps(document, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            self._record_workspace_file(job, target)
+            return BuildOperationResult(
+                operation_id=operation.id,
+                operation_type=operation.operation_type,
+                path=operation.path,
+                status=BuildOperationStatus.APPLIED,
+                changed=True,
+                detail=f"Updated JSON path {'.'.join(operation.json_path)} in {operation.path}.",
+            )
+
+        raise ValueError(f"Unsupported build operation: {operation.operation_type.value}")
+
+    def _resolve_workspace_operation_path(
+        self,
+        workspace_root: Path,
+        relative_path: str,
+    ) -> Path:
+        candidate = Path(relative_path)
+        if candidate.is_absolute():
+            raise ValueError("Build operation paths must be relative to the workspace")
+        if ".." in candidate.parts:
+            raise ValueError("Build operation paths must not contain '..'")
+        resolved = (workspace_root / candidate).resolve()
+        try:
+            resolved.relative_to(workspace_root.resolve())
+        except ValueError as e:
+            raise ValueError(
+                "Build operation path escapes the managed workspace"
+            ) from e
+        return resolved
+
+    def _record_workspace_file(self, job: BuildJob, path: Path) -> None:
+        if self._workspace_manager is None or not job.workspace_id:
+            return
+        self._workspace_manager.record_file(job.workspace_id, str(path))
+
+    def _build_step_summary(self, job: BuildJob) -> str:
+        if job.implementation_mode == BuildImplementationMode.AUDIT_MARKER_ONLY:
+            return "No structured implementation plan supplied; audit marker recorded."
+
+        applied = sum(
+            1
+            for result in job.implementation_results
+            if result.status == BuildOperationStatus.APPLIED
+        )
+        noop = sum(
+            1
+            for result in job.implementation_results
+            if result.status == BuildOperationStatus.NOOP
+        )
+        changed_paths = sorted(
+            {
+                result.path
+                for result in job.implementation_results
+                if result.changed
+            }
+        )
+        return (
+            "Structured implementation plan executed via bounded local engine: "
+            f"{len(job.implementation_results)} operations, "
+            f"{applied} applied, {noop} noop, {len(changed_paths)} changed path(s)."
+        )
+
+    def _workspace_execution_evidence(self, job: BuildJob) -> str:
+        if job.implementation_mode == BuildImplementationMode.AUDIT_MARKER_ONLY:
+            return "Workspace synchronized; no structured implementation plan supplied."
+        changed_paths = [
+            result.path
+            for result in job.implementation_results
+            if result.changed
+        ]
+        summary = ", ".join(changed_paths[:5]) or "none"
+        return (
+            f"Workspace synchronized; bounded local engine ran "
+            f"{len(job.implementation_results)} operations; changed_paths={summary}"
+        )
+
+    def _implementation_metadata(self, job: BuildJob) -> dict[str, Any]:
+        return {
+            "mode": job.implementation_mode.value,
+            "operation_count": len(job.intake.implementation_plan),
+            "changed_operations": sum(
+                1 for result in job.implementation_results if result.changed
+            ),
+            "failed_operations": sum(
+                1
+                for result in job.implementation_results
+                if result.status == BuildOperationStatus.FAILED
+            ),
+            "plan": [operation.to_dict() for operation in job.intake.implementation_plan],
+            "results": [result.to_dict() for result in job.implementation_results],
+        }
 
     def _discover_verification_plan(
         self,
@@ -1083,7 +1397,7 @@ class BuildService:
                 continue
 
             if criterion.evaluator == CriterionEvaluator.WORKSPACE:
-                criterion.meet("Workspace synchronized and build step completed")
+                criterion.meet(self._workspace_execution_evidence(job))
                 continue
 
             if normalized.startswith("verify:"):
@@ -1149,7 +1463,7 @@ class BuildService:
                 continue
 
             if "build" in normalized or "workspace" in normalized:
-                criterion.meet("Workspace synchronized and build step completed")
+                criterion.meet(self._workspace_execution_evidence(job))
                 continue
 
             if criterion.kind == CriterionKind.QUALITY:
@@ -1366,6 +1680,7 @@ class BuildService:
                 "verification_passed": job.verification_passed,
                 "verification_results": [item.to_dict() for item in job.verification_results],
                 "acceptance": job.acceptance.to_dict(),
+                "implementation": self._implementation_metadata(job),
                 "post_build_review": {
                     "requested": job.intake.run_post_build_review,
                     "job_id": job.post_build_review_job_id,
@@ -2127,6 +2442,11 @@ class BuildService:
             summary={
                 "build_type": job.build_type.value,
                 "capability_id": job.capability_id,
+                "implementation_mode": job.implementation_mode.value,
+                "implementation_operations": len(job.intake.implementation_plan),
+                "changed_operations": sum(
+                    1 for result in job.implementation_results if result.changed
+                ),
                 "verification_passed": job.verification_passed,
                 "acceptance_accepted": job.acceptance.accepted,
                 "review_requested": job.intake.run_post_build_review,
@@ -2149,6 +2469,7 @@ class BuildService:
                 "verification_artifacts": verification_summaries,
                 "acceptance_report": acceptance_payload,
                 "acceptance_summary": acceptance_summary,
+                "implementation": self._implementation_metadata(job),
                 "patch": {
                     "artifact_id": (patch_artifact or {}).get("id", ""),
                     "content": (patch_artifact or {}).get("content", ""),

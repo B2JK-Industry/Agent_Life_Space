@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from agent.build.capabilities import get_capability
-from agent.build.models import AcceptanceCriterion, BuildIntake, BuildJobType
+from agent.build.models import (
+    AcceptanceCriterion,
+    BuildIntake,
+    BuildJobType,
+    BuildOperation,
+)
 from agent.control.acquisition import inspect_git_url
 from agent.control.policy import get_delivery_policy, get_review_gate_policy
 from agent.finance.budget_policy import BudgetPolicy
@@ -68,6 +73,7 @@ class OperatorIntake:
     context: str = ""
     focus_areas: list[str] = field(default_factory=list)
     target_files: list[str] = field(default_factory=list)
+    implementation_plan: list[BuildOperation] = field(default_factory=list)
     acceptance_criteria: list[str] = field(default_factory=list)
     run_post_build_review: bool = True
     max_files: int = 100
@@ -82,6 +88,8 @@ class OperatorIntake:
             errors.append("max_files must be >= 1")
         if self.work_type == OperatorWorkType.BUILD and not self.description:
             errors.append("description is required for build routing")
+        for operation in self.implementation_plan:
+            errors.extend(operation.validate())
         return errors
 
     @property
@@ -104,6 +112,9 @@ class OperatorIntake:
             "context": self.context,
             "focus_areas": list(self.focus_areas),
             "target_files": list(self.target_files),
+            "implementation_plan": [
+                operation.to_dict() for operation in self.implementation_plan
+            ],
             "acceptance_criteria": list(self.acceptance_criteria),
             "run_post_build_review": self.run_post_build_review,
             "max_files": self.max_files,
@@ -412,6 +423,10 @@ class OperatorIntakeService:
             execution_policy_id="workspace_local_mutation",
             description=intake.description,
             target_files=list(intake.target_files),
+            implementation_plan=[
+                BuildOperation.from_dict(operation.to_dict())
+                for operation in intake.implementation_plan
+            ],
             acceptance_criteria=[
                 AcceptanceCriterion.from_text(item)
                 for item in intake.acceptance_criteria
@@ -474,7 +489,7 @@ class OperatorIntakeService:
             return intake.work_type
         if intake.diff_spec:
             return OperatorWorkType.REVIEW
-        if intake.acceptance_criteria or intake.target_files:
+        if intake.acceptance_criteria or intake.target_files or intake.implementation_plan:
             return OperatorWorkType.BUILD
         description = intake.description.lower()
         build_hints = ("implement", "build", "fix", "refactor", "add", "change")
@@ -499,6 +514,10 @@ class OperatorIntakeService:
         if intake.target_files:
             reasons.append(
                 f"target_files present ({len(intake.target_files)}), so scoped execution is available."
+            )
+        if intake.implementation_plan:
+            reasons.append(
+                f"implementation_plan present ({len(intake.implementation_plan)} operations), so the builder can run bounded local mutations."
             )
         if intake.acceptance_criteria:
             reasons.append(
@@ -536,6 +555,12 @@ class OperatorIntakeService:
         ]
 
         if qualification.resolved_work_type == OperatorWorkType.BUILD:
+            operation_count = len(intake.implementation_plan)
+            build_detail = (
+                f"Apply {operation_count} structured workspace operation(s) through the bounded local engine."
+                if operation_count
+                else "Execute the current builder capability in the workspace. Without a structured implementation plan this remains audit-only."
+            )
             steps.extend(
                 [
                     JobPlanStep(
@@ -550,8 +575,8 @@ class OperatorIntakeService:
                         phase=PlanPhase.BUILD,
                         title="Run deterministic build execution",
                         status=status,
-                        detail="Execute the current builder capability in the workspace.",
-                        outputs=["build_trace"],
+                        detail=build_detail,
+                        outputs=["build_trace", "implementation_results"],
                         capability_ids=capabilities_by_phase.get(PlanPhase.BUILD, []),
                     ),
                     JobPlanStep(
@@ -645,16 +670,20 @@ class OperatorIntakeService:
             )
         ]
         if qualification.resolved_work_type == OperatorWorkType.BUILD:
+            operation_count = len(intake.implementation_plan)
+            build_summary = (
+                f"Prepare a managed workspace and apply {operation_count} structured builder operation(s)."
+                if operation_count
+                else "Prepare a managed workspace and run the selected builder capability in audit-only mode."
+            )
             phases.extend(
                 [
                     JobPlanPhase(
                         phase=PlanPhase.BUILD,
                         title="Build",
                         status=status,
-                        summary=(
-                            "Prepare a managed workspace and run the selected builder capability."
-                        ),
-                        outputs=["workspace", "build_trace"],
+                        summary=build_summary,
+                        outputs=["workspace", "build_trace", "implementation_results"],
                         capability_ids=capabilities_by_phase.get(PlanPhase.BUILD, []),
                     ),
                     JobPlanPhase(
@@ -757,6 +786,13 @@ class OperatorIntakeService:
                 f"Plan is blocked for {subject}. Resolve blockers before execution can start."
             )
         if qualification.resolved_work_type == OperatorWorkType.BUILD:
+            operation_count = len(intake.implementation_plan)
+            if operation_count:
+                return (
+                    f"Execute a {intake.build_type.value} build over {subject}, "
+                    f"apply {operation_count} structured workspace operation(s), "
+                    "verify it, evaluate acceptance, and capture recovery-safe artifacts."
+                )
             return (
                 f"Execute a {intake.build_type.value} build over {subject}, "
                 "verify it, evaluate acceptance, and capture recovery-safe artifacts."
@@ -777,6 +813,8 @@ class OperatorIntakeService:
             parts.append(f"diff={intake.diff_spec}")
         if intake.target_files:
             parts.append(f"targets={len(intake.target_files)}")
+        if intake.implementation_plan:
+            parts.append(f"implementation_ops={len(intake.implementation_plan)}")
         if intake.acceptance_criteria:
             parts.append(f"acceptance={len(intake.acceptance_criteria)}")
         if intake.focus_areas:
@@ -803,6 +841,11 @@ class OperatorIntakeService:
         if intake.target_files:
             signals.append(f"{len(intake.target_files)} target file(s) requested")
             score += min(len(intake.target_files), 4)
+        if intake.implementation_plan:
+            signals.append(
+                f"{len(intake.implementation_plan)} structured implementation operation(s) declared"
+            )
+            score += min(len(intake.implementation_plan), 4)
         if intake.acceptance_criteria:
             signals.append(
                 f"{len(intake.acceptance_criteria)} acceptance criterion/criteria declared"
@@ -853,6 +896,8 @@ class OperatorIntakeService:
             factors.append("scope exceeds the lightweight execution envelope")
         if len(intake.target_files) >= 5:
             factors.append("target set spans multiple files")
+        if len(intake.implementation_plan) >= 4:
+            factors.append("implementation plan spans multiple bounded mutations")
         if len(intake.acceptance_criteria) >= 4:
             factors.append("acceptance surface is broad")
 
@@ -887,6 +932,7 @@ class OperatorIntakeService:
             f"resolved_work_type={qualification.resolved_work_type.value}",
             f"scope_size={qualification.scope_size}",
             f"target_files={len(intake.target_files)}",
+            f"implementation_operations={len(intake.implementation_plan)}",
             f"acceptance_criteria={len(intake.acceptance_criteria)}",
         ]
         if intake.run_post_build_review and qualification.resolved_work_type == OperatorWorkType.BUILD:
@@ -932,6 +978,7 @@ class OperatorIntakeService:
     ) -> float:
         amount = 1.5 if qualification.resolved_work_type == OperatorWorkType.REVIEW else 4.0
         amount += min(len(intake.target_files), 6) * 0.8
+        amount += min(len(intake.implementation_plan), 8) * 0.7
         amount += min(len(intake.acceptance_criteria), 6) * 1.1
         amount += min(len(intake.focus_areas), 4) * 0.4
         if intake.diff_spec:
@@ -1103,9 +1150,15 @@ class OperatorIntakeService:
                 "build_type": intake.build_type.value,
                 "supports_resume": capability.supports_resume,
                 "review_after_build_default": capability.review_after_build_default,
+                "structured_operation_count": len(intake.implementation_plan),
                 "verification_defaults": [
                     item.value for item in capability.verification_defaults
                 ],
+                "implementation_mode": (
+                    "bounded_local_engine"
+                    if intake.implementation_plan
+                    else "audit_marker_only"
+                ),
                 "environment_profile_id": "build_workspace_local",
             },
         )

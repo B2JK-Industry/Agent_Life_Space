@@ -14,6 +14,8 @@ from agent.build.models import (
     BuildArtifact,
     BuildIntake,
     BuildJob,
+    BuildOperation,
+    BuildOperationType,
 )
 from agent.control.artifact_queries import ArtifactQueryService
 from agent.control.evidence_export import EvidenceExportService
@@ -448,6 +450,42 @@ class TestBuilderCliAdapter:
         assert intake.acceptance_criteria[0].description == "Tests pass"
         assert '"job_id": "build-123"' in capsys.readouterr().out
 
+    @pytest.mark.asyncio
+    async def test_run_build_command_carries_structured_implementation_plan(
+        self, monkeypatch
+    ):
+        from agent import __main__ as agent_main
+
+        mock_agent = MagicMock()
+        mock_agent.initialize = AsyncMock()
+        mock_agent.run_build_job = AsyncMock(return_value=BuildJob(id="build-456"))
+        mock_agent.get_product_job.return_value = {
+            "job_id": "build-456",
+            "job_kind": "build",
+            "status": "completed",
+        }
+        mock_agent.stop = AsyncMock()
+
+        monkeypatch.setattr(agent_main, "AgentOrchestrator", lambda data_dir: mock_agent)
+
+        await agent_main.run_build_command(
+            data_dir="agent",
+            repo_path="/tmp/repo",
+            description="Build via CLI with plan",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.REPLACE_TEXT,
+                    path="app.py",
+                    match_text="return 1",
+                    replacement_text="return 2",
+                )
+            ],
+        )
+
+        intake = mock_agent.run_build_job.await_args.args[0]
+        assert len(intake.implementation_plan) == 1
+        assert intake.implementation_plan[0].operation_type == BuildOperationType.REPLACE_TEXT
+
 
 class TestOrchestratorEntryPoints:
     @pytest.mark.asyncio
@@ -780,6 +818,43 @@ class TestUnifiedOperatorIntake:
             step["phase"] == "verify" for step in preview["plan"]["steps"]
         )
 
+    def test_preview_surfaces_structured_implementation_plan(self):
+        service = OperatorIntakeService()
+        intake = OperatorIntake(
+            repo_path="/tmp/repo",
+            work_type="build",
+            description="Implement bounded local change",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.REPLACE_TEXT,
+                    path="app.py",
+                    match_text="return 1",
+                    replacement_text="return 2",
+                ),
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="docs/notes.md",
+                    content="# Notes\n",
+                ),
+            ],
+            acceptance_criteria=["Tests pass"],
+            target_files=["app.py", "docs/notes.md"],
+        )
+
+        preview = service.preview(intake)
+
+        assert "implementation_ops=2" in preview["plan"]["scope_summary"]
+        assert any(
+            assignment["metadata"].get("structured_operation_count") == 2
+            for assignment in preview["plan"]["capability_assignments"]
+            if assignment["phase"] == "build"
+        )
+        assert any(
+            "structured workspace operation" in step["detail"]
+            for step in preview["plan"]["steps"]
+            if step["phase"] == "build"
+        )
+
     def test_preview_uses_budget_policy_and_provider(self):
         service = OperatorIntakeService(
             budget_status_provider=lambda amount: {
@@ -883,6 +958,27 @@ class TestUnifiedOperatorIntake:
         assert build_intake.acceptance_criteria[0].required is False
         assert build_intake.acceptance_criteria[0].description == "docs updated"
         assert build_intake.acceptance_criteria[1].kind.value == "security"
+
+    def test_to_build_intake_preserves_structured_implementation_plan(self):
+        service = OperatorIntakeService()
+        intake = OperatorIntake(
+            repo_path="/tmp/repo",
+            work_type="build",
+            description="Implement endpoint",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.JSON_SET,
+                    path="config.json",
+                    json_path=["release", "version"],
+                    value="1.10.0",
+                )
+            ],
+        )
+
+        build_intake = service.to_build_intake(intake)
+
+        assert len(build_intake.implementation_plan) == 1
+        assert build_intake.implementation_plan[0].operation_type == BuildOperationType.JSON_SET
 
     @pytest.mark.asyncio
     async def test_orchestrator_submit_operator_intake_routes_to_build(
