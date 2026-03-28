@@ -10,6 +10,29 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.16.1] — 2026-03-29
+
+Telegram owner-identity and language-default fix.
+
+### Telegram / Identity / Persona
+- Fresh installs no longer inherit hardcoded `Daniel` owner identity or forced
+  Slovak response defaults in runtime prompts and Telegram handling
+- Telegram owner messages now keep the real Telegram display name while passing
+  explicit owner status through the callback path
+- Runtime identity and language behavior now come from deployment config through
+  `AGENT_OWNER_NAME`, `AGENT_OWNER_FULL_NAME`, and `AGENT_DEFAULT_LANGUAGE`
+
+### Docs / Deployment
+- `.env.example`, `CLAUDE.md`, `JOHN.md`, and bundled owner knowledge now
+  describe deployment-specific owner/language configuration instead of shipping
+  Daniel-specific defaults
+- Added regression coverage for runtime persona identity and Telegram owner
+  resolution on fresh installs
+
+### Verification
+- Full verification passed with `1350 passed, 4 skipped`
+- `ruff check .` passed
+
 ## [1.16.0] — 2026-03-28
 
 Documented buyer-side Obolos gateway release.

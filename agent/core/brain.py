@@ -31,7 +31,8 @@ from typing import Any
 import structlog
 
 from agent.core.agent import AgentOrchestrator
-from agent.core.persona import AGENT_PROMPT, SIMPLE_PROMPT, SYSTEM_PROMPT
+from agent.core.identity import get_agent_identity, get_response_language_instruction
+from agent.core.persona import get_agent_prompt, get_simple_prompt, get_system_prompt
 from agent.social.channel import IncomingMessage
 
 logger = structlog.get_logger(__name__)
@@ -231,7 +232,7 @@ class AgentBrain:
 
         # Build prompt
         is_agent_chat = message.channel_type == "agent_api"
-        active_prompt = AGENT_PROMPT if is_agent_chat else SYSTEM_PROMPT
+        active_prompt = get_agent_prompt() if is_agent_chat else get_system_prompt()
 
         # Learning-augmented prompt (add past errors if relevant)
         if learner:
@@ -244,9 +245,14 @@ class AgentBrain:
         conv_context = ""
         if chat_conv:
             conv_lines = []
-            owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
+            identity = get_agent_identity()
+            owner_name = identity.owner_name
             for msg in chat_conv[-self._max_conversation:]:
-                role = msg.get("sender", owner_name) if msg["role"] == "user" else "John"
+                role = (
+                    msg.get("sender", owner_name)
+                    if msg["role"] == "user"
+                    else identity.agent_name
+                )
                 conv_lines.append(f"{role}: {msg['content'][:200]}")
             conv_context = "\n".join(conv_lines)
 
@@ -261,10 +267,10 @@ class AgentBrain:
                 f"{active_prompt}\n"
                 f"Si programátor.\n\n"
                 f"ÚLOHA: {text}\n\n"
-                f"Na konci VŽDY napíš zhrnutie. Odpovedaj po slovensky."
+                f"At the end always include a short summary. {get_response_language_instruction()}"
             )
         elif task_type in ("simple", "factual", "greeting"):
-            prompt = f"{SIMPLE_PROMPT}\n{message.sender_name}: {text}\n"
+            prompt = f"{get_simple_prompt()}\n{message.sender_name}: {text}\n"
         else:
             prompt = f"{active_prompt}\n"
             if rag_context:
@@ -273,7 +279,10 @@ class AgentBrain:
                 prompt += f"{persistent_context}\n\n"
             elif conv_context:
                 prompt += f"Predchádzajúca konverzácia:\n{conv_context}\n\n"
-            prompt += f"{message.sender_name}: {text}\nOdpovedaj po slovensky."
+            prompt += (
+                f"{message.sender_name}: {text}\n"
+                f"{get_response_language_instruction()}"
+            )
 
         # ── Layer 6: LLM call via provider ──
         from agent.core.llm_provider import GenerateRequest, get_provider

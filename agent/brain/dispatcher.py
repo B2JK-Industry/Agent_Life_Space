@@ -197,7 +197,7 @@ class InternalDispatcher:
             return "Finance modul nie je dostupný."
 
     async def _handle_identity(self) -> str:
-        from agent.core.persona import SYSTEM_PROMPT  # noqa: E402
+        from agent.core.persona import get_system_prompt  # noqa: E402
         # Return first 2 sentences of centralized persona
-        sentences = SYSTEM_PROMPT.strip().split(".")
+        sentences = get_system_prompt().strip().split(".")
         return ".".join(sentences[:3]).strip() + "."

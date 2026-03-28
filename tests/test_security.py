@@ -319,7 +319,7 @@ class TestAgentAPIAuth:
 class TestOwnerIdentification:
     """Tests for TelegramBot owner resolution in _handle_message."""
 
-    def _make_bot(self, allowed_ids=None, owner_name="Daniel"):
+    def _make_bot(self, allowed_ids=None, owner_name="owner"):
         with patch("agent.social.telegram_bot.aiohttp"):
             from agent.social.telegram_bot import TelegramBot
             bot = TelegramBot(
@@ -333,13 +333,14 @@ class TestOwnerIdentification:
             return bot
 
     @pytest.mark.asyncio
-    async def test_owner_user_gets_owner_name(self):
-        """When user_id is in allowed_users, username should be owner_name."""
-        bot = self._make_bot(allowed_ids=[12345], owner_name="Daniel")
+    async def test_owner_user_keeps_real_display_name_and_is_marked_owner(self):
+        """Authorized owner should keep Telegram display name, not a baked-in default."""
+        bot = self._make_bot(allowed_ids=[12345], owner_name="owner")
         captured = {}
 
-        async def mock_callback(text, user_id, chat_id, username="", chat_type=""):
+        async def mock_callback(text, user_id, chat_id, username="", chat_type="", **kwargs):
             captured["username"] = username
+            captured["is_owner"] = kwargs.get("is_owner")
             return "ok"
 
         bot.on_message(mock_callback)
@@ -353,16 +354,18 @@ class TestOwnerIdentification:
         with patch.object(bot, "send_message", new_callable=AsyncMock):
             await bot._handle_message(message)
 
-        assert captured["username"] == "Daniel"
+        assert captured["username"] == "dan_tg"
+        assert captured["is_owner"] is True
 
     @pytest.mark.asyncio
     async def test_non_owner_gets_raw_username(self):
         """When user_id is NOT in allowed_users, use raw telegram username."""
-        bot = self._make_bot(allowed_ids=[12345], owner_name="Daniel")
+        bot = self._make_bot(allowed_ids=[12345], owner_name="owner")
         captured = {}
 
-        async def mock_callback(text, user_id, chat_id, username="", chat_type=""):
+        async def mock_callback(text, user_id, chat_id, username="", chat_type="", **kwargs):
             captured["username"] = username
+            captured["is_owner"] = kwargs.get("is_owner")
             return "ok"
 
         bot.on_message(mock_callback)
@@ -378,14 +381,15 @@ class TestOwnerIdentification:
             await bot._handle_message(message)
 
         assert captured["username"] == "stranger"
+        assert captured["is_owner"] is False
 
     @pytest.mark.asyncio
     async def test_non_owner_first_name_fallback(self):
         """When no username, fall back to first_name."""
-        bot = self._make_bot(allowed_ids=[12345], owner_name="Daniel")
+        bot = self._make_bot(allowed_ids=[12345], owner_name="owner")
         captured = {}
 
-        async def mock_callback(text, user_id, chat_id, username="", chat_type=""):
+        async def mock_callback(text, user_id, chat_id, username="", chat_type="", **kwargs):
             captured["username"] = username
             return "ok"
 
@@ -516,10 +520,10 @@ class TestGroupChatSafeMode:
         # Simulate the handle() logic that sets _force_safe_mode
         # We replicate the relevant lines from handle() since calling handle()
         # requires full async pipeline
-        import os
+        from agent.core.identity import get_agent_identity
         h._current_sender = "stranger"
         h._current_chat_type = "supergroup"
-        owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
+        owner_name = get_agent_identity().owner_name
         is_owner = h._current_sender == owner_name
         is_group = h._current_chat_type in ("group", "supergroup")
         if is_group and not is_owner:
@@ -531,8 +535,8 @@ class TestGroupChatSafeMode:
     def test_safe_mode_not_set_for_owner_in_group(self, handler_with_loop):
         """handle() should set _force_safe_mode=False for owner in group."""
         h = handler_with_loop
-        import os
-        owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
+        from agent.core.identity import get_agent_identity
+        owner_name = get_agent_identity().owner_name
         h._current_sender = owner_name
         h._current_chat_type = "supergroup"
         is_owner = h._current_sender == owner_name
@@ -586,8 +590,8 @@ class TestGroupChatSafeMode:
     async def test_full_handle_owner_not_safe_mode(self, handler_with_loop):
         """Owner in group should NOT have safe mode."""
         h = handler_with_loop
-        import os
-        owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
+        from agent.core.identity import get_agent_identity
+        owner_name = get_agent_identity().owner_name
 
         async def mock_handle_text(text, ctx=None):
             return "odpoved"

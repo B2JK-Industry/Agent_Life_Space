@@ -24,12 +24,11 @@ from typing import Any
 import structlog
 
 from agent.core.agent import AgentOrchestrator
+from agent.core.identity import get_agent_identity, get_response_language_instruction
 from agent.core.paths import get_project_root
+from agent.core.persona import get_agent_prompt, get_simple_prompt, get_system_prompt
 
 logger = structlog.get_logger(__name__)
-
-# Re-export from centralized persona module for backward compatibility
-from agent.core.persona import AGENT_PROMPT, SIMPLE_PROMPT, SYSTEM_PROMPT  # noqa: E402, F811
 
 
 @dataclass
@@ -100,13 +99,20 @@ class TelegramHandler:
             return "Prázdna správa."
 
         # Build per-request context (no shared instance state — prevents race conditions)
-        owner_name = os.environ.get("AGENT_OWNER_NAME", "Daniel")
-        if not username or username == "unknown":
-            sender = owner_name if chat_type == "private" else "unknown"
-        else:
+        owner_name = get_agent_identity().owner_name
+        explicit_is_owner = kwargs.get("is_owner")
+        if username and username != "unknown":
             sender = username
+        elif explicit_is_owner:
+            sender = owner_name
+        else:
+            sender = "unknown" if chat_type != "private" else "user"
 
-        is_owner = sender == owner_name
+        is_owner = (
+            bool(explicit_is_owner)
+            if explicit_is_owner is not None
+            else sender == owner_name
+        )
         is_group = chat_type in ("group", "supergroup")
 
         ctx = RequestContext(
@@ -930,9 +936,13 @@ class TelegramHandler:
         has_conversation = len(chat_conv) > 0
         if has_conversation:
             conv_lines = []
+            identity = get_agent_identity()
             for msg in chat_conv[-self._max_conversation:]:
-                _owner = os.environ.get("AGENT_OWNER_NAME", "Daniel")
-                role = msg.get("sender", _owner) if msg["role"] == "user" else "John"
+                role = (
+                    msg.get("sender", identity.owner_name)
+                    if msg["role"] == "user"
+                    else identity.agent_name
+                )
                 conv_lines.append(f"{role}: {msg['content'][:200]}")
             conv_context = "\n".join(conv_lines)
 
@@ -953,10 +963,10 @@ class TelegramHandler:
         # === STEP 5: Build prompt based on task type ===
         # Vyber system prompt podľa toho kto píše
         is_agent_chat = ctx.chat_type == "agent_api" or (
-            ctx.sender not in (os.environ.get("AGENT_OWNER_NAME", "Daniel"), "unknown", "")
+            ctx.sender not in (get_agent_identity().owner_name, "unknown", "", "user")
             and ctx.chat_type in ("group", "supergroup", "agent_api")
         )
-        active_prompt = AGENT_PROMPT if is_agent_chat else SYSTEM_PROMPT
+        active_prompt = get_agent_prompt() if is_agent_chat else get_system_prompt()
 
         # SECURITY: Non-owner v skupine nemôže spúšťať programming tasky
         if ctx.force_safe_mode and task_type == "programming":
@@ -974,11 +984,11 @@ class TelegramHandler:
                 prompt += f"Obsah odkazov z úlohy:\n{url_context}\n\n"
             prompt += (
                 "Prečítaj súbory, napíš/uprav kód, spusti testy, commitni.\n"
-                "Na konci VŽDY napíš zhrnutie. Odpovedaj po slovensky."
+                f"Na konci VŽDY napíš zhrnutie. {get_response_language_instruction()}"
             )
         elif task_type in ("simple", "factual", "greeting") and not tool_context.count("\n") > 2:
             prompt = (
-                f"{SIMPLE_PROMPT}\n"
+                f"{get_simple_prompt()}\n"
                 f"{ctx.sender}: {text}\n"
             )
         else:
@@ -997,7 +1007,8 @@ class TelegramHandler:
                 prompt += f"Obsah odkazov:\n{url_context}\n\n"
             prompt += (
                 f"{ctx.sender}: {text}\n"
-                f"Použi aktuálne dáta vyššie ak sú relevantné. Odpovedaj po slovensky."
+                "Použi aktuálne dáta vyššie ak sú relevantné. "
+                f"{get_response_language_instruction()}"
             )
 
         # === STEP 5.5: Learning prompt augmentation ===
@@ -1036,7 +1047,13 @@ class TelegramHandler:
                 # Retry with simpler prompt
                 logger.warning("empty_result", original_prompt_len=len(prompt))
                 retry_response = await provider.generate(GenerateRequest(
-                    messages=[{"role": "user", "content": f"{active_prompt}\nOtázka: {text}\nOdpovedaj priamo, stručne, po slovensky."}],
+                    messages=[{
+                        "role": "user",
+                        "content": (
+                            f"{active_prompt}\nOtázka: {text}\n"
+                            f"Respond directly and briefly. {get_response_language_instruction()}"
+                        ),
+                    }],
                     model=model.model_id,
                     max_turns=1,
                     timeout=60,
