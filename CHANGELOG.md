@@ -10,6 +10,39 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-03-28
+
+Phase 2 provider gateway release.
+
+### Gateway / Provider Delivery
+- External gateway now models one concrete provider, `obolos.tech`, through
+  explicit provider, capability, and route records instead of stopping at a
+  generic future-facing contract
+- Gateway routing now exposes a provider-ready catalog with route readiness,
+  target/auth config posture, and provider-aware metadata through the runtime,
+  CLI, and operator report
+- Build and review delivery can now send through provider capability routing
+  with env/vault-backed auth resolution and fallback to backup routes when the
+  primary endpoint is unavailable or returns retryable failures
+
+### Quality / Observability
+- Review quality telemetry now records release labels, runtime duration, and
+  regression deltas against the previous quality baseline instead of only a
+  one-shot golden-case snapshot
+- Operator reporting now surfaces gateway catalog readiness and review-quality
+  regression posture alongside the existing delivery, approval, and cost views
+
+### Runtime / Configuration
+- Runtime model now exposes provider catalogs and route metadata directly,
+  making the external gateway story more concrete for Phase 2 planning and
+  operator inspection
+- Project-root fallback now prefers the checked-out repository root when
+  available instead of assuming a home-directory default
+
+### Verification
+- Full release verification passed with `1332 passed, 4 skipped`
+- `ruff check .` and operator `npm run typecheck` both passed
+
 ## [1.12.0] — 2026-03-28
 
 Phase 2 verification hardening release.

@@ -794,6 +794,83 @@ class TestOrchestratorEntryPoints:
 
         await agent.stop()
 
+    @pytest.mark.asyncio
+    async def test_orchestrator_gateway_and_quality_signals_flow_into_report(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        from agent.core.agent import AgentOrchestrator
+
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        (repo_dir / "app.py").write_text("def main():\n    return 1\n")
+        (repo_dir / "README.md").write_text("# Repo\n")
+
+        agent = AgentOrchestrator(data_dir=str(tmp_path / "agent"), watchdog_interval=60.0)
+        agent.workspaces._root = tmp_path / "workspaces"
+        agent.workspaces._db_path = str(tmp_path / "workspaces" / "workspaces.db")
+        await agent.initialize()
+
+        review_job = await agent.run_review_job(
+            ReviewIntake(
+                repo_path=str(repo_dir),
+                review_type=ReviewJobType.REPO_AUDIT,
+                context="Gateway report integration",
+            )
+        )
+        approval = agent.request_review_delivery_approval(review_job.id)
+        agent.approval_queue.approve(approval["approval_request_id"], decided_by="owner-1")
+
+        async def request_executor(**_: object) -> dict[str, object]:
+            return {
+                "status_code": 202,
+                "response_json": {"accepted": True},
+                "response_text": "accepted",
+            }
+
+        agent.gateway._request_executor = request_executor
+        monkeypatch.setenv(
+            "AGENT_OBOLOS_REVIEW_WEBHOOK_URL",
+            "https://obolos.example.test/review",
+        )
+        monkeypatch.setenv("AGENT_OBOLOS_AUTH_TOKEN", "secret-token")
+
+        send_result = await agent.send_review_delivery_via_gateway(
+            review_job.id,
+            provider_id="obolos.tech",
+            capability_id="review_handoff_v1",
+        )
+        quality = await agent.evaluate_review_quality(release_label="v1.13.0")
+        report = agent.get_operator_report(limit=10)
+        cost_entries = agent.list_cost_ledger(job_id=review_job.id, limit=10)
+        delivery = agent.get_review_delivery_record(review_job.id)
+
+        assert send_result["ok"] is True
+        assert send_result["delivery_record"]["status"] == "handed_off"
+        assert send_result["provider_id"] == "obolos.tech"
+        assert send_result["route_id"] == "obolos_review_handoff_primary"
+        assert delivery is not None
+        assert delivery["status"] == "handed_off"
+        assert report["summary"]["recent_gateway_traces"] >= 1
+        assert report["summary"]["gateway_routes_configured"] >= 1
+        assert report["recent_gateway_traces"]
+        assert any(
+            trace["title"] == "Gateway delivery succeeded"
+            for trace in report["recent_gateway_traces"]
+        )
+        assert report["latest_review_quality"]["total_cases"] == quality["total_cases"]
+        assert (
+            report["latest_review_quality"]["exact_case_matches"]
+            == quality["exact_case_matches"]
+        )
+        assert report["review_quality_trend"]["has_baseline"] is False
+        assert report["gateway_catalog"]["summary"]["configured_routes"] >= 1
+        assert cost_entries
+        assert cost_entries[0]["source_type"] == "external_gateway_call"
+
+        await agent.stop()
+
 
 class TestUnifiedOperatorIntake:
     def test_qualification_routes_diff_to_review(self):
@@ -1305,8 +1382,37 @@ class TestRuntimeModel:
             "disabled_by_default",
             "approval_before_gateway",
         }
+        approval_gateway_policy = next(
+            item
+            for item in model["external_gateway_policies"]
+            if item["id"] == "approval_before_gateway"
+        )
+        assert approval_gateway_policy["auth_required"] is True
+        assert approval_gateway_policy["allow_network"] is True
+        assert approval_gateway_policy["timeout_seconds"] == 12
+        assert approval_gateway_policy["max_retries"] == 2
+        assert "webhook_json" in approval_gateway_policy["allowed_target_kinds"]
+        assert "https" in approval_gateway_policy["allowed_url_schemes"]
+        assert approval_gateway_policy["environment_profile_id"] == "external_gateway_send"
         gateway_contracts = {item["id"] for item in model["external_gateway_contracts"]}
         assert "external_capability_gateway_v1" in gateway_contracts
+        gateway_contract = next(
+            item
+            for item in model["external_gateway_contracts"]
+            if item["id"] == "external_capability_gateway_v1"
+        )
+        assert gateway_contract["allow_network"] is True
+        assert "provider_context" in gateway_contract["request_fields"]
+        assert "target" in gateway_contract["request_fields"]
+        assert "delivery_bundle" in gateway_contract["request_fields"]
+        assert gateway_contract["supported_target_kinds"] == ["webhook_json"]
+        providers = {item["id"] for item in model["external_capability_providers"]}
+        assert "obolos.tech" in providers
+        routes = {item["route_id"] for item in model["external_capability_routes"]}
+        assert {
+            "obolos_review_handoff_primary",
+            "obolos_build_delivery_primary",
+        } <= routes
         data_rules = {item["id"] for item in model["data_handling_rules"]}
         assert {
             "internal_operator_evidence_v1",

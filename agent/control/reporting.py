@@ -21,6 +21,7 @@ class OperatorReportService:
         status_provider: Any = None,
         control_plane_state: Any = None,
         workspace_queries: Any = None,
+        gateway_service: Any = None,
     ) -> None:
         self._job_queries = job_queries
         self._artifact_queries = artifact_queries
@@ -29,6 +30,7 @@ class OperatorReportService:
         self._status_provider = status_provider
         self._control_plane_state = control_plane_state
         self._workspace_queries = workspace_queries
+        self._gateway_service = gateway_service
 
     def get_report(self, limit: int = 20) -> dict[str, Any]:
         jobs = [job.to_dict() for job in self._job_queries.list_jobs(limit=limit)]
@@ -71,6 +73,28 @@ class OperatorReportService:
             if self._control_plane_state is not None
             else []
         )
+        recent_gateway_traces = (
+            [
+                trace.to_dict()
+                for trace in self._control_plane_state.list_traces(
+                    trace_kind="gateway",
+                    limit=limit,
+                )
+            ]
+            if self._control_plane_state is not None
+            else []
+        )
+        recent_quality_traces = (
+            [
+                trace.to_dict()
+                for trace in self._control_plane_state.list_traces(
+                    trace_kind="quality",
+                    limit=limit,
+                )
+            ]
+            if self._control_plane_state is not None
+            else []
+        )
         recent_deliveries = (
             [delivery.to_dict() for delivery in self._control_plane_state.list_deliveries(limit=limit)]
             if self._control_plane_state is not None
@@ -96,6 +120,12 @@ class OperatorReportService:
             if self._workspace_queries is not None
             else []
         )
+        gateway_catalog = (
+            self._gateway_service.describe_capability_catalog()
+            if self._gateway_service is not None
+            else {}
+        )
+        gateway_summary = gateway_catalog.get("summary", {})
         retention_posture = (
             self._control_plane_state.get_retention_posture(limit=max(limit, 500))
             if self._control_plane_state is not None
@@ -205,6 +235,41 @@ class OperatorReportService:
                         "detail": self._job_attention_detail(job),
                     }
                 )
+        latest_review_quality = (
+            recent_quality_traces[0]["metadata"]
+            if recent_quality_traces
+            else {}
+        )
+        review_quality_trend = dict(latest_review_quality.get("trend", {}))
+        if review_quality_trend.get("regression_detected"):
+            inbox.append(
+                {
+                    "kind": "quality_attention",
+                    "id": "review_quality",
+                    "status": "warning",
+                    "title": "Review quality regression detected",
+                    "detail": review_quality_trend.get(
+                        "summary",
+                        "Golden review quality regressed versus the previous release.",
+                    ),
+                }
+            )
+        if gateway_summary.get("total_routes", 0) > 0 and gateway_summary.get(
+            "configured_routes",
+            0,
+        ) == 0:
+            inbox.append(
+                {
+                    "kind": "gateway_attention",
+                    "id": "gateway_catalog",
+                    "status": "warning",
+                    "title": "External gateway routes are not configured",
+                    "detail": (
+                        f"{gateway_summary.get('total_routes', 0)} provider route(s) "
+                        "exist but none are ready for live send."
+                    ),
+                }
+            )
 
         approval_backlog = self._approval_backlog(all_approvals)
 
@@ -225,6 +290,7 @@ class OperatorReportService:
                 ),
                 "persisted_plans": control_stats.get("plans", len(recent_plans)),
                 "recent_traces": control_stats.get("traces", len(recent_traces)),
+                "recent_gateway_traces": len(recent_gateway_traces),
                 "delivery_records": control_stats.get("deliveries", len(recent_deliveries)),
                 "persisted_product_jobs": control_stats.get("product_jobs", len(recent_persisted_jobs)),
                 "retained_artifacts": control_stats.get("retained_artifacts", len(recent_retained_artifacts)),
@@ -232,6 +298,8 @@ class OperatorReportService:
                 "pruned_retained_artifacts": retention_posture.get("by_status", {}).get("pruned", 0),
                 "cost_ledger_entries": control_stats.get("cost_entries", len(recent_cost_entries)),
                 "recorded_cost_usd": control_stats.get("recorded_cost_usd", 0.0),
+                "gateway_routes_total": gateway_summary.get("total_routes", 0),
+                "gateway_routes_configured": gateway_summary.get("configured_routes", 0),
                 "disabled_tools": controls.get("total_disabled", 0),
                 "active_workspaces": workspace_health.get("by_status", {}).get("active", 0),
                 "active_workers": worker_execution.get("active_jobs", 0),
@@ -245,6 +313,10 @@ class OperatorReportService:
                 "retried_product_jobs": sum(
                     1 for record in recent_persisted_jobs
                     if record.get("retry_count", 0) > 0
+                ),
+                "quality_regression_detected": review_quality_trend.get(
+                    "regression_detected",
+                    False,
                 ),
                 "max_product_job_duration_ms": max(
                     (record.get("duration_ms") or 0.0) for record in recent_persisted_jobs
@@ -273,6 +345,10 @@ class OperatorReportService:
             "recent_artifacts": artifacts[:limit],
             "recent_plans": recent_plans[:limit],
             "recent_traces": recent_traces[:limit],
+            "recent_gateway_traces": recent_gateway_traces[:limit],
+            "latest_review_quality": latest_review_quality,
+            "review_quality_trend": review_quality_trend,
+            "gateway_catalog": gateway_catalog,
             "recent_deliveries": recent_deliveries[:limit],
             "recent_persisted_jobs": recent_persisted_jobs[:limit],
             "recent_retained_artifacts": recent_retained_artifacts[:limit],

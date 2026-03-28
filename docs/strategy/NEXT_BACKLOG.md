@@ -6,75 +6,74 @@ This file is the near-term execution backlog derived from the current state of
 Assessment basis:
 - branch: `main`
 - interpretation date: `2026-03-28`
-- baseline: after Phase 2 Verification Hardening slice
+- baseline: after Phase 2 Provider Gateway and Quality Trend slice
 
 ## Ready Now
 
 ### P0
 
-1. `T7-E1-S2` Add auth, timeout, retry, and rate-limit policy.
-   Why now: the first external gateway contract now exists, so the next honest
-   step is turning that contract into an enforceable runtime boundary instead
-   of leaving it as planning metadata only.
+1. `T3-E1-S5` Deepen the bounded local implementation engine.
+   Why now: the gateway and delivery path are now more production-shaped, so
+   the biggest remaining honest Phase 2 gap is still builder depth rather than
+   more boundary scaffolding.
 
-2. `T6-E3-S2` Measure finding precision and false positives.
-   Why now: golden review cases now exist in CI, so the next quality step is
-   to turn them into tracked quality signals instead of one-time regression
-   fixtures.
+2. `T5-E1-S4` Ensure policy is deterministic and separately testable.
+   Why now: provider routing now sits inside the gateway boundary, so the next
+   architectural risk is drift between build, review, and provider-aware
+   gateway policy rather than missing policy primitives.
 
 ### P1
 
-3. `T5-E1-S4` Ensure policy is deterministic and separately testable.
-   Why now: structured denials now span more runtime edges, but build, review,
-   gateway, and broader action execution still are not governed by one clearly
-   testable enforcement story.
+3. `T7-E2-S2` Deepen capability catalog and routing logic.
+   Why now: a concrete provider now exists, but routing still ends in a
+   webhook-shaped handoff instead of richer provider-specific request/response
+   semantics.
 
-4. `T8-E2-S3` Add configuration discipline for project roots, secrets, and storage.
-   Why now: runtime/data-handling contracts are clearer, but deployment-grade
-   configuration discipline is still loose across project roots and storage.
+4. `T7-E2-S3` Deepen fallback and failure handling.
+   Why now: fallback now exists, so the next step is making downstream failure
+   interpretation and retry/fallback policy more provider-aware.
 
-5. `T3-E2-S2` Add review-after-build pass before completion.
-   Why now: post-build review already exists and verification discovery is now
-   deeper, so the next builder verification gap is converging that review gate
-   with the wider execution-policy boundary.
+5. `T3-E3-S2` Deepen structured acceptance through execution and delivery.
+   Why now: builder can now deliver through provider-backed handoff, so the
+   next product move is making acceptance semantics more meaningful than a
+   deterministic checklist alone.
 
 ### P2
 
-6. `T7-E1-S3` Add audit and cost tracking for external calls.
-   Why now: the gateway contract now names request/response and denial fields,
-   so the next safe move is durable audit and cost bookkeeping before any real
-   provider integration.
+6. `T6-E3-S4` Promote quality trends into stronger release gating.
+   Why now: release labels, latency, and regression deltas now exist, but they
+   still need to drive more of the release and operator loop.
 
-7. `T7-E1-S4` Add policy gating for when external capability use is allowed.
-   Why now: the gateway contract and policy defaults both exist now, but they
-   are not yet tied together into one enforceable external-call decision path.
+7. `T8-E2-S4` Add deployment documentation for controlled environments.
+   Why now: provider routing, vault-backed auth, and project-root discipline
+   are now real runtime concerns, so production-oriented setup docs need to
+   catch up before broader use.
 
 ## What Closed In This Cycle
 
-- `T3-E2-S1` Builder verification discovery now looks at Python and Node/TS
-  repo signals, package scripts, Makefile targets, CI workflow hints, and
-  repo-local toolchains before resolving verification commands.
-- `T5-E1-S3` Structured denial payloads now cover the remaining major social,
-  web, tool-execution, and finance-budget edges instead of falling back to
-  plain strings.
-- `T6-E3-S1` Reviewer quality moved from smoke-only structure checks toward
-  durable golden verdict cases, and CI now runs both smoke and golden suites.
-- `T7-E1-S1` Runtime model now exposes a first explicit gateway contract for
-  future external capabilities.
-- `T8-E3-S4` Runtime model now carries explicit internal, client-safe, and
-  retained-trace data-handling rules for future enterprise packaging and
-  handoff work.
+- `T7-E2-S1` `obolos.tech` now exists as an explicit provider inside the
+  gateway model instead of only a future-facing contract note.
+- `T7-E2-S2` Gateway routing now resolves provider capability routes by job
+  kind/export mode and surfaces route readiness through CLI/runtime/reporting.
+- `T7-E2-S3` Provider-backed sends now support fallback between configured
+  routes when one endpoint is unavailable or returns retryable failures.
+- `T7-E2-S4` Targeted gateway tests now cover provider route readiness,
+  provider send success, fallback, and missing-config failure behavior.
+- `T6-E3-S4` Review quality telemetry now records release labels, duration,
+  and trend deltas against the previous quality baseline.
+- `T8-E2-S3` Project-root and gateway config posture are now more explicit via
+  repo-root inference plus env/vault-backed gateway readiness reporting.
 
 ## Exit Criteria For The Next Backlog Slice
 
 The next slice should be considered successful when:
-- the gateway contract grows from planning metadata into an enforceable
-  auth/timeout/retry/rate-limit runtime boundary
-- golden review cases gain tracked precision/false-positive signals instead of
-  only static verdict expectations
-- policy behavior across build/review/gateway edges is clearer and more
-  separately testable
-- deployment-oriented configuration discipline becomes explicit for roots,
-  secrets, and storage
-- post-build review policy converges further with the wider build execution
-  boundary
+- builder execution meaningfully deepens beyond today's bounded local mutation
+  set
+- provider routing grows from generic webhook handoff toward richer
+  provider-specific request/response semantics
+- policy behavior across build/review/provider gateway becomes easier to test
+  and reason about as one deterministic story
+- quality trend telemetry starts shaping release/operator decisions instead of
+  staying a passive metric
+- controlled-environment deployment docs catch up to the now-real gateway,
+  vault, and repo-root runtime posture
