@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from agent.build.models import BuildJobType, VerificationKind
+from agent.build.models import BuildJobType, BuildOperationType, VerificationKind
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,8 @@ class BuildCapability:
     label: str
     summary: str
     supported_target_patterns: list[str] = field(default_factory=list)
+    supported_operation_types: list[BuildOperationType] = field(default_factory=list)
+    max_operation_count: int = 12
     verification_defaults: list[VerificationKind] = field(default_factory=list)
     supports_resume: bool = True
     review_after_build_default: bool = True
@@ -32,6 +34,17 @@ _CATALOG: dict[BuildJobType, BuildCapability] = {
         label="Implementation",
         summary="General code changes with test/lint/typecheck verification.",
         supported_target_patterns=["*.py", "*.ts", "*.tsx", "*.js", "*.jsx"],
+        supported_operation_types=[
+            BuildOperationType.WRITE_FILE,
+            BuildOperationType.APPEND_TEXT,
+            BuildOperationType.REPLACE_TEXT,
+            BuildOperationType.INSERT_BEFORE_TEXT,
+            BuildOperationType.INSERT_AFTER_TEXT,
+            BuildOperationType.DELETE_TEXT,
+            BuildOperationType.DELETE_FILE,
+            BuildOperationType.JSON_SET,
+        ],
+        max_operation_count=20,
         verification_defaults=[
             VerificationKind.TEST,
             VerificationKind.LINT,
@@ -44,6 +57,17 @@ _CATALOG: dict[BuildJobType, BuildCapability] = {
         label="Integration",
         summary="Cross-module changes with the same verification loop plus post-build review.",
         supported_target_patterns=["*.py", "*.ts", "*.tsx", "*.yml", "*.yaml"],
+        supported_operation_types=[
+            BuildOperationType.WRITE_FILE,
+            BuildOperationType.APPEND_TEXT,
+            BuildOperationType.REPLACE_TEXT,
+            BuildOperationType.INSERT_BEFORE_TEXT,
+            BuildOperationType.INSERT_AFTER_TEXT,
+            BuildOperationType.DELETE_TEXT,
+            BuildOperationType.DELETE_FILE,
+            BuildOperationType.JSON_SET,
+        ],
+        max_operation_count=24,
         verification_defaults=[
             VerificationKind.TEST,
             VerificationKind.LINT,
@@ -56,6 +80,17 @@ _CATALOG: dict[BuildJobType, BuildCapability] = {
         label="DevOps",
         summary="Config/automation changes with deterministic verification when available.",
         supported_target_patterns=["Dockerfile", "*.yml", "*.yaml", "*.sh", "*.tf"],
+        supported_operation_types=[
+            BuildOperationType.WRITE_FILE,
+            BuildOperationType.APPEND_TEXT,
+            BuildOperationType.REPLACE_TEXT,
+            BuildOperationType.INSERT_BEFORE_TEXT,
+            BuildOperationType.INSERT_AFTER_TEXT,
+            BuildOperationType.DELETE_TEXT,
+            BuildOperationType.DELETE_FILE,
+            BuildOperationType.JSON_SET,
+        ],
+        max_operation_count=16,
         verification_defaults=[
             VerificationKind.LINT,
             VerificationKind.TEST,
@@ -67,6 +102,17 @@ _CATALOG: dict[BuildJobType, BuildCapability] = {
         label="Testing",
         summary="Test-focused changes with the same workspace and review discipline.",
         supported_target_patterns=["tests/**", "test_*.py", "*.spec.ts", "*.test.ts"],
+        supported_operation_types=[
+            BuildOperationType.WRITE_FILE,
+            BuildOperationType.APPEND_TEXT,
+            BuildOperationType.REPLACE_TEXT,
+            BuildOperationType.INSERT_BEFORE_TEXT,
+            BuildOperationType.INSERT_AFTER_TEXT,
+            BuildOperationType.DELETE_TEXT,
+            BuildOperationType.DELETE_FILE,
+            BuildOperationType.JSON_SET,
+        ],
+        max_operation_count=18,
         verification_defaults=[
             VerificationKind.TEST,
             VerificationKind.LINT,

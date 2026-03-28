@@ -202,6 +202,57 @@ class ExternalGatewayService:
             "approval_status": approval_status,
         }
         if result["ok"]:
+            resolved_provider_context = provider_context or {}
+            provider_receipt = self._extract_provider_receipt(
+                result=result,
+                provider_context=resolved_provider_context,
+            )
+            missing_receipt_fields = self._missing_provider_receipt_fields(
+                provider_receipt=provider_receipt,
+                provider_context=resolved_provider_context,
+            )
+            if missing_receipt_fields:
+                detail = (
+                    "Provider response missing required receipt field(s): "
+                    + ", ".join(missing_receipt_fields)
+                )
+                denial = make_denial(
+                    code="gateway_provider_receipt_invalid",
+                    summary="Provider-backed gateway delivery returned an incomplete receipt",
+                    detail=detail,
+                    scope=bundle_id or target_url,
+                    policy_id=policy.id,
+                    environment_profile_id=policy.environment_profile_id,
+                    suggested_action=(
+                        "Check the provider response contract or retry through a healthy route."
+                    ),
+                    metadata={**metadata, "missing_receipt_fields": missing_receipt_fields},
+                )
+                self._record_trace(
+                    title="Gateway provider receipt invalid",
+                    detail=detail,
+                    job_id=str(bundle.get("job_id", "")),
+                    bundle_id=bundle_id,
+                    metadata={
+                        **metadata,
+                        "status_code": result["status_code"],
+                        "attempts": result["attempts"],
+                        "response_json": result["response_json"],
+                        "response_text": result["response_text"],
+                        "missing_receipt_fields": missing_receipt_fields,
+                    },
+                )
+                return {
+                    **base_response,
+                    "ok": False,
+                    "status": "failed",
+                    "status_code": result["status_code"],
+                    "error": denial.message,
+                    "denial": denial.to_dict(),
+                    "errors": [*result["errors"], detail],
+                    "response_json": result["response_json"],
+                    "response_text": result["response_text"],
+                }
             self._record_trace(
                 title="Gateway delivery succeeded",
                 detail=(
@@ -216,6 +267,7 @@ class ExternalGatewayService:
                     "attempts": result["attempts"],
                     "response_json": result["response_json"],
                     "response_text": result["response_text"],
+                    "provider_receipt": provider_receipt,
                 },
             )
             if policy.record_cost:
@@ -226,7 +278,8 @@ class ExternalGatewayService:
                     estimated_cost_usd=estimated_cost_usd,
                     target_url=target_url,
                     attempts=result["attempts"],
-                    provider_context=provider_context or {},
+                    provider_context=resolved_provider_context,
+                    provider_receipt=provider_receipt,
                 )
             return {
                 **base_response,
@@ -234,6 +287,7 @@ class ExternalGatewayService:
                 "status_code": result["status_code"],
                 "response_json": result["response_json"],
                 "response_text": result["response_text"],
+                "provider_receipt": provider_receipt,
             }
 
         denial = make_denial(
@@ -312,6 +366,9 @@ class ExternalGatewayService:
                     "allowed_export_modes": list(route.allowed_export_modes),
                     "gateway_contract_id": route.gateway_contract_id,
                     "gateway_policy_id": route.gateway_policy_id,
+                    "request_mode": route.request_mode,
+                    "response_mode": route.response_mode,
+                    "receipt_fields": list(route.receipt_fields),
                     "estimated_cost_usd": route.estimated_cost_usd,
                     "notes": list(route.notes),
                     "configured": readiness["configured"],
@@ -454,6 +511,9 @@ class ExternalGatewayService:
                 "configured": readiness["configured"],
                 "target_source": readiness["target_source"],
                 "auth_source": readiness["auth_source"],
+                "request_mode": route.request_mode,
+                "response_mode": route.response_mode,
+                "receipt_fields": list(route.receipt_fields),
                 "missing": list(readiness["missing"]),
                 "errors": list(readiness["errors"]),
             }
@@ -487,6 +547,9 @@ class ExternalGatewayService:
                 "fallback_index": fallback_index,
                 "target_source": readiness["target_source"],
                 "auth_source": readiness["auth_source"],
+                "request_mode": route.request_mode,
+                "response_mode": route.response_mode,
+                "receipt_fields": list(route.receipt_fields),
             }
             result = await self.send_delivery(
                 bundle=bundle,
@@ -691,6 +754,7 @@ class ExternalGatewayService:
         status_code = int(result.get("status_code", 0) or 0)
         return (
             denial_code == "gateway_rate_limited"
+            or denial_code == "gateway_provider_receipt_invalid"
             or status_code == 0
             or status_code == 429
             or status_code >= 500
@@ -711,7 +775,7 @@ class ExternalGatewayService:
         export_mode: str,
         provider_context: dict[str, Any],
     ) -> dict[str, Any]:
-        return {
+        payload = {
             "request_id": gateway_run_id,
             "job_id": bundle.get("job_id", ""),
             "bundle_id": bundle.get("bundle_id", ""),
@@ -739,6 +803,80 @@ class ExternalGatewayService:
             "delivery_bundle": bundle,
             "contract_id": contract_id,
         }
+        if provider_context.get("request_mode") == "obolos_handoff_v1":
+            return {
+                "request_id": gateway_run_id,
+                "provider": {
+                    "provider_id": provider_context.get("provider_id", ""),
+                    "provider_label": provider_context.get("provider_label", ""),
+                    "capability_id": provider_context.get("capability_id", ""),
+                    "route_id": provider_context.get("route_id", ""),
+                    "request_mode": provider_context.get("request_mode", ""),
+                    "response_mode": provider_context.get("response_mode", ""),
+                },
+                "handoff": {
+                    "job_id": bundle.get("job_id", ""),
+                    "bundle_id": bundle.get("bundle_id", ""),
+                    "package_type": bundle.get("package_type", ""),
+                    "export_mode": export_mode,
+                    "target_kind": target_kind,
+                    "delivery_policy_id": delivery_policy_id,
+                    "approval_request_id": approval_request_id,
+                    "approval_status": approval_status,
+                },
+                "artifacts": {
+                    "count": bundle.get("artifact_count", 0),
+                    "artifact_ids": list(bundle.get("artifact_ids", [])),
+                },
+                "workspace": {
+                    "workspace_id": bundle.get("workspace_id", ""),
+                },
+                "summary": dict(bundle.get("summary", {})),
+                "bundle_ref": {
+                    "contract_id": contract_id,
+                    "target": {"kind": target_kind, "url": target_url},
+                },
+                "gateway_request": payload,
+            }
+        return payload
+
+    def _extract_provider_receipt(
+        self,
+        *,
+        result: dict[str, Any],
+        provider_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        if provider_context.get("response_mode") != "obolos_receipt_v1":
+            return {}
+        payload = dict(result.get("response_json", {}))
+        return {
+            "delivery_id": str(
+                payload.get("delivery_id")
+                or payload.get("receipt_id")
+                or payload.get("id")
+                or ""
+            ),
+            "status": str(payload.get("status") or ""),
+            "accepted": bool(payload.get("accepted", False)),
+            "message": str(payload.get("message") or payload.get("detail") or ""),
+            "handoff_url": str(payload.get("handoff_url") or payload.get("url") or ""),
+        }
+
+    def _missing_provider_receipt_fields(
+        self,
+        *,
+        provider_receipt: dict[str, Any],
+        provider_context: dict[str, Any],
+    ) -> list[str]:
+        required_fields = [
+            str(field)
+            for field in provider_context.get("receipt_fields", [])
+            if str(field)
+        ]
+        missing = [
+            field for field in required_fields if not provider_receipt.get(field)
+        ]
+        return missing
 
     async def _execute_with_retry(
         self,
@@ -878,6 +1016,7 @@ class ExternalGatewayService:
         target_url: str,
         attempts: int,
         provider_context: dict[str, Any],
+        provider_receipt: dict[str, Any],
     ) -> None:
         if self._control_plane_state is None:
             return
@@ -899,6 +1038,7 @@ class ExternalGatewayService:
                 "target_url": target_url,
                 "attempts": attempts,
                 "provider_context": dict(provider_context),
+                "provider_receipt": dict(provider_receipt),
             },
         )
 

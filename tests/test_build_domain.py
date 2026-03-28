@@ -685,6 +685,119 @@ class TestBuildService:
         assert job.implementation_results[0].status == BuildOperationStatus.FAILED
         assert "match_text not found" in job.error
 
+    async def test_structured_implementation_plan_supports_insert_and_delete_operations(
+        self, service, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                )
+            ],
+        )
+        (Path(self._repo_dir) / "README.md").write_text("intro\nremove me\n", encoding="utf-8")
+        (Path(self._repo_dir) / "legacy.txt").write_text("legacy\n", encoding="utf-8")
+
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Exercise richer structured builder mutations",
+            target_files=["app.py", "README.md", "legacy.txt"],
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.INSERT_AFTER_TEXT,
+                    path="app.py",
+                    match_text="def main():\n",
+                    content="    print('ready')\n",
+                ),
+                BuildOperation(
+                    operation_type=BuildOperationType.INSERT_BEFORE_TEXT,
+                    path="README.md",
+                    match_text="intro\n",
+                    content="# Title\n",
+                ),
+                BuildOperation(
+                    operation_type=BuildOperationType.DELETE_TEXT,
+                    path="README.md",
+                    match_text="remove me\n",
+                ),
+                BuildOperation(
+                    operation_type=BuildOperationType.DELETE_FILE,
+                    path="legacy.txt",
+                ),
+            ],
+        )
+
+        job = await service.run_build(intake)
+        bundle = service.get_delivery_bundle(job.id)
+
+        assert job.status == JobStatus.COMPLETED
+        assert all(
+            result.status == BuildOperationStatus.APPLIED
+            for result in job.implementation_results
+        )
+        assert "print('ready')" in (Path(self._workspace_dir) / "app.py").read_text(
+            encoding="utf-8"
+        )
+        assert (Path(self._workspace_dir) / "README.md").read_text(encoding="utf-8") == (
+            "# Title\nintro\n"
+        )
+        assert not (Path(self._workspace_dir) / "legacy.txt").exists()
+        assert bundle is not None
+        assert bundle["summary"]["operation_mix"]["insert_after_text"] == 1
+        assert bundle["summary"]["operation_mix"]["insert_before_text"] == 1
+        assert bundle["summary"]["operation_mix"]["delete_text"] == 1
+        assert bundle["summary"]["operation_mix"]["delete_file"] == 1
+
+    async def test_capability_guardrails_block_operations_outside_declared_targets(
+        self, service
+    ):
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Attempt out-of-scope mutation",
+            target_files=["app.py"],
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="docs/notes.md",
+                    content="out of scope\n",
+                )
+            ],
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.FAILED
+        assert job.denial["code"] == "build_capability_plan_invalid"
+        assert "outside declared target_files" in job.error
+
+    async def test_capability_guardrails_block_excessive_operation_count(
+        self, service
+    ):
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            build_type=BuildJobType.DEVOPS,
+            description="Attempt too many deterministic mutations",
+            target_files=["README.md"],
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.APPEND_TEXT,
+                    path="README.md",
+                    content=f"line {index}\n",
+                )
+                for index in range(17)
+            ],
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.FAILED
+        assert job.denial["code"] == "build_capability_plan_invalid"
+        assert "allows at most 16 structured operation" in job.error
+
     async def test_structured_workspace_acceptance_checks(self, service, monkeypatch):
         monkeypatch.setattr(
             "agent.build.service.run_verification_suite",

@@ -23,6 +23,7 @@ This service does NOT:
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import json
 import re
 import shlex
@@ -150,6 +151,33 @@ class BuildService:
             self._save_job(job)
             return job
         job.capability_id = capability.id
+        capability_errors = self._validate_capability_plan(
+            intake=intake,
+            capability=capability,
+        )
+        if capability_errors:
+            detail = "; ".join(capability_errors)
+            t_validate.fail(detail)
+            job.status = JobStatus.FAILED
+            job.error = f"Capability constraints failed: {detail}"
+            job.denial = make_denial(
+                code="build_capability_plan_invalid",
+                summary="Build implementation plan violates capability constraints",
+                detail=detail,
+                scope=intake.repo_path,
+                suggested_action=(
+                    "Reduce the operation count, keep mutations inside the declared "
+                    "target files, or choose a capability that matches the requested plan."
+                ),
+                metadata={
+                    "capability_id": capability.id,
+                    "operation_count": len(intake.implementation_plan),
+                    "operation_mix": self._operation_mix(intake.implementation_plan),
+                    "target_files": list(intake.target_files),
+                },
+            ).to_dict()
+            self._save_job(job)
+            return job
         execution_policy = self._build_execution_policy(job)
         self._record_control_trace(
             trace_kind=TraceRecordKind.EXECUTION,
@@ -164,6 +192,25 @@ class BuildService:
                 "allowed": execution_policy.allow_workspace_mutation,
             },
         )
+        if intake.implementation_plan:
+            self._record_control_trace(
+                trace_kind=TraceRecordKind.CAPABILITY,
+                title="Build capability guardrails",
+                detail=(
+                    f"{len(intake.implementation_plan)} structured operation(s) "
+                    f"fit capability {capability.id}."
+                ),
+                job_id=job.id,
+                metadata={
+                    "capability_id": capability.id,
+                    "max_operation_count": capability.max_operation_count,
+                    "supported_operation_types": [
+                        item.value for item in capability.supported_operation_types
+                    ],
+                    "operation_mix": self._operation_mix(intake.implementation_plan),
+                    "target_files": list(intake.target_files),
+                },
+            )
         if not execution_policy.allow_workspace_mutation:
             t_validate.fail(execution_policy.description)
             job.status = JobStatus.BLOCKED
@@ -844,6 +891,95 @@ class BuildService:
                 detail=f"Replaced text in {operation.path}.",
             )
 
+        if operation.operation_type == BuildOperationType.INSERT_BEFORE_TEXT:
+            if not target.exists():
+                raise ValueError(f"Target file does not exist: {operation.path}")
+            existing = target.read_text(encoding="utf-8")
+            combined = f"{operation.content}{operation.match_text}"
+            if combined and combined in existing:
+                return BuildOperationResult(
+                    operation_id=operation.id,
+                    operation_type=operation.operation_type,
+                    path=operation.path,
+                    status=BuildOperationStatus.NOOP,
+                    changed=False,
+                    detail="Requested content is already inserted before the anchor.",
+                )
+            if operation.match_text not in existing:
+                raise ValueError(f"match_text not found in {operation.path}")
+            updated = existing.replace(
+                operation.match_text,
+                f"{operation.content}{operation.match_text}",
+                1,
+            )
+            target.write_text(updated, encoding="utf-8")
+            self._record_workspace_file(job, target)
+            return BuildOperationResult(
+                operation_id=operation.id,
+                operation_type=operation.operation_type,
+                path=operation.path,
+                status=BuildOperationStatus.APPLIED,
+                changed=True,
+                detail=f"Inserted content before anchor in {operation.path}.",
+            )
+
+        if operation.operation_type == BuildOperationType.INSERT_AFTER_TEXT:
+            if not target.exists():
+                raise ValueError(f"Target file does not exist: {operation.path}")
+            existing = target.read_text(encoding="utf-8")
+            combined = f"{operation.match_text}{operation.content}"
+            if combined and combined in existing:
+                return BuildOperationResult(
+                    operation_id=operation.id,
+                    operation_type=operation.operation_type,
+                    path=operation.path,
+                    status=BuildOperationStatus.NOOP,
+                    changed=False,
+                    detail="Requested content is already inserted after the anchor.",
+                )
+            if operation.match_text not in existing:
+                raise ValueError(f"match_text not found in {operation.path}")
+            updated = existing.replace(
+                operation.match_text,
+                f"{operation.match_text}{operation.content}",
+                1,
+            )
+            target.write_text(updated, encoding="utf-8")
+            self._record_workspace_file(job, target)
+            return BuildOperationResult(
+                operation_id=operation.id,
+                operation_type=operation.operation_type,
+                path=operation.path,
+                status=BuildOperationStatus.APPLIED,
+                changed=True,
+                detail=f"Inserted content after anchor in {operation.path}.",
+            )
+
+        if operation.operation_type == BuildOperationType.DELETE_TEXT:
+            if not target.exists():
+                raise ValueError(f"Target file does not exist: {operation.path}")
+            existing = target.read_text(encoding="utf-8")
+            if operation.match_text not in existing:
+                return BuildOperationResult(
+                    operation_id=operation.id,
+                    operation_type=operation.operation_type,
+                    path=operation.path,
+                    status=BuildOperationStatus.NOOP,
+                    changed=False,
+                    detail="Requested text is already absent.",
+                )
+            updated = existing.replace(operation.match_text, "", 1)
+            target.write_text(updated, encoding="utf-8")
+            self._record_workspace_file(job, target)
+            return BuildOperationResult(
+                operation_id=operation.id,
+                operation_type=operation.operation_type,
+                path=operation.path,
+                status=BuildOperationStatus.APPLIED,
+                changed=True,
+                detail=f"Deleted text from {operation.path}.",
+            )
+
         if operation.operation_type == BuildOperationType.JSON_SET:
             if target.exists():
                 try:
@@ -894,6 +1030,29 @@ class BuildService:
                 detail=f"Updated JSON path {'.'.join(operation.json_path)} in {operation.path}.",
             )
 
+        if operation.operation_type == BuildOperationType.DELETE_FILE:
+            if not target.exists():
+                return BuildOperationResult(
+                    operation_id=operation.id,
+                    operation_type=operation.operation_type,
+                    path=operation.path,
+                    status=BuildOperationStatus.NOOP,
+                    changed=False,
+                    detail=f"{operation.path} already absent.",
+                )
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+            return BuildOperationResult(
+                operation_id=operation.id,
+                operation_type=operation.operation_type,
+                path=operation.path,
+                status=BuildOperationStatus.APPLIED,
+                changed=True,
+                detail=f"Deleted {operation.path}.",
+            )
+
         raise ValueError(f"Unsupported build operation: {operation.operation_type.value}")
 
     def _resolve_workspace_operation_path(
@@ -941,10 +1100,15 @@ class BuildService:
                 if result.changed
             }
         )
+        operation_mix = ", ".join(
+            f"{kind}={count}"
+            for kind, count in self._operation_mix(job.intake.implementation_plan).items()
+        )
         return (
             "Structured implementation plan executed via bounded local engine: "
             f"{len(job.implementation_results)} operations, "
-            f"{applied} applied, {noop} noop, {len(changed_paths)} changed path(s)."
+            f"{applied} applied, {noop} noop, {len(changed_paths)} changed path(s), "
+            f"mix={operation_mix or 'none'}."
         )
 
     def _workspace_execution_evidence(self, job: BuildJob) -> str:
@@ -965,6 +1129,7 @@ class BuildService:
         return {
             "mode": job.implementation_mode.value,
             "operation_count": len(job.intake.implementation_plan),
+            "operation_mix": self._operation_mix(job.intake.implementation_plan),
             "changed_operations": sum(
                 1 for result in job.implementation_results if result.changed
             ),
@@ -973,9 +1138,87 @@ class BuildService:
                 for result in job.implementation_results
                 if result.status == BuildOperationStatus.FAILED
             ),
+            "result_status_counts": {
+                BuildOperationStatus.APPLIED.value: sum(
+                    1
+                    for result in job.implementation_results
+                    if result.status == BuildOperationStatus.APPLIED
+                ),
+                BuildOperationStatus.NOOP.value: sum(
+                    1
+                    for result in job.implementation_results
+                    if result.status == BuildOperationStatus.NOOP
+                ),
+                BuildOperationStatus.FAILED.value: sum(
+                    1
+                    for result in job.implementation_results
+                    if result.status == BuildOperationStatus.FAILED
+                ),
+            },
             "plan": [operation.to_dict() for operation in job.intake.implementation_plan],
             "results": [result.to_dict() for result in job.implementation_results],
         }
+
+    def _operation_mix(
+        self,
+        operations: list[BuildOperation],
+    ) -> dict[str, int]:
+        mix: dict[str, int] = {}
+        for operation in operations:
+            key = operation.operation_type.value
+            mix[key] = mix.get(key, 0) + 1
+        return dict(sorted(mix.items()))
+
+    def _validate_capability_plan(
+        self,
+        *,
+        intake: BuildIntake,
+        capability: Any,
+    ) -> list[str]:
+        if not intake.implementation_plan:
+            return []
+
+        errors: list[str] = []
+        if len(intake.implementation_plan) > capability.max_operation_count:
+            errors.append(
+                f"capability {capability.id} allows at most "
+                f"{capability.max_operation_count} structured operation(s)"
+            )
+
+        supported_operation_types = {
+            item.value for item in capability.supported_operation_types
+        }
+        for operation in intake.implementation_plan:
+            if operation.operation_type.value not in supported_operation_types:
+                errors.append(
+                    f"capability {capability.id} does not allow "
+                    f"{operation.operation_type.value}"
+                )
+            if intake.target_files and not self._path_matches_declared_targets(
+                operation.path,
+                intake.target_files,
+            ):
+                errors.append(
+                    f"operation path {operation.path} is outside declared target_files"
+                )
+        return errors
+
+    def _path_matches_declared_targets(
+        self,
+        path: str,
+        target_files: list[str],
+    ) -> bool:
+        candidate = Path(path).as_posix()
+        for declared in target_files:
+            target = str(declared).strip().replace("\\", "/")
+            if not target:
+                continue
+            normalized = target.rstrip("/")
+            if candidate == normalized or candidate.startswith(f"{normalized}/"):
+                return True
+            if fnmatch.fnmatch(candidate, target):
+                return True
+        return False
 
     def _discover_verification_plan(
         self,
@@ -3125,6 +3368,7 @@ class BuildService:
                 "capability_id": job.capability_id,
                 "implementation_mode": job.implementation_mode.value,
                 "implementation_operations": len(job.intake.implementation_plan),
+                "operation_mix": self._operation_mix(job.intake.implementation_plan),
                 "changed_operations": sum(
                     1 for result in job.implementation_results if result.changed
                 ),

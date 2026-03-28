@@ -38,7 +38,7 @@ python -m agent --report     # Operator report / inbox
 python -m agent --runtime-model   # Explicitný runtime model
 python -m agent --gateway-catalog
 python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capability review_handoff_v1 --gateway-export-mode client_safe
-python -m agent --review-quality-eval --review-quality-release-label v1.13.0
+python -m agent --review-quality-eval --review-quality-release-label v1.14.0
 python -m agent --export-evidence-job <job_id>
 python -m agent --export-evidence-job <job_id> --export-evidence-mode client_safe
 python -m agent --list-artifacts  # Shared artifact query surface
@@ -56,14 +56,15 @@ python -m pytest tests/ -q   # Testy
 
 ## Verzia
 
-Aktuálna: **v1.13.0** — phase 2 provider gateway release.
+Aktuálna: **v1.14.0** — phase 2 builder engine v2 and provider receipt release.
 
-Nové v `v1.13.0`:
-- gateway teraz pozná konkrétneho providera `obolos.tech`, capability routes,
-  readiness cez env/vault a fallback medzi primárnou a záložnou route
-- CLI a operator report už vedia ukázať gateway catalog a configuration posture
-- review quality teraz nesleduje len snapshot, ale aj release label, runtime
-  duration a trend/regression voči predchádzajúcemu baseline
-- project root fallback je bezpečnejší a lepšie sedí na reálne checkoutnutý repo
+Nové v `v1.14.0`:
+- builder vie bezpečne robiť aj `insert_before_text`, `insert_after_text`,
+  `delete_text` a `delete_file`, nie len pôvodné základné mutácie
+- builder capability guardrails teraz validujú operation count, typy operácií
+  aj scope voči deklarovaným `target_files` ešte pred mutable execution
+- gateway pre `obolos.tech` už vracia parsed provider receipt a fallbackuje aj
+  pri nekompletnej downstream odpovedi, nie len pri 5xx/unavailable route
+- delivery a cost/traces tým pádom nesú aj provider receipt metadata pre audit
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

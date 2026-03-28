@@ -10,6 +10,39 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.14.0] — 2026-03-28
+
+Phase 2 builder-engine and provider-receipt release.
+
+### Builder / Execution
+- Builder's bounded local implementation engine now supports richer deterministic
+  mutations including insert-before, insert-after, delete-text, and delete-file
+  operations instead of stopping at write/append/replace/json_set only
+- Build capability guardrails now validate structured operation count,
+  operation types, and declared target-file scope before mutable execution
+- Build delivery bundles and implementation metadata now surface operation mix
+  and stronger execution summaries for operator handoff
+
+### Gateway / Provider Delivery
+- `obolos.tech` routes now carry provider-specific request/response semantics,
+  including receipt-aware payload shaping and parsed provider receipts on
+  successful sends
+- Provider fallback now also covers incomplete downstream receipts, not only
+  unavailable or retryable-failure endpoints
+- Gateway cost and trace records now retain provider receipt metadata for
+  later audit and operator inspection
+
+### Strategy / Phase 2
+- Strategy docs now mark the bounded local builder engine as materially deeper
+  and the external gateway as no longer purely webhook-shaped
+- The next backlog now pivots toward semantic acceptance, stronger policy
+  unification, and final Phase 2 closure work instead of more gateway basics
+
+### Verification
+- Full release verification passed with `1337 passed, 4 skipped`
+- Targeted builder/gateway/control-plane suite passed with `122 passed`
+- `ruff check .` and operator `npm run typecheck` both passed
+
 ## [1.13.0] — 2026-03-28
 
 Phase 2 provider gateway release.

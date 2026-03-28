@@ -1225,6 +1225,11 @@ class OperatorIntakeService:
                 "supports_resume": capability.supports_resume,
                 "review_after_build_default": capability.review_after_build_default,
                 "structured_operation_count": len(intake.implementation_plan),
+                "operation_mix": self._implementation_operation_mix(intake),
+                "max_operation_count": capability.max_operation_count,
+                "supported_operation_types": [
+                    item.value for item in capability.supported_operation_types
+                ],
                 "verification_defaults": [
                     item.value for item in capability.verification_defaults
                 ],
@@ -1237,6 +1242,16 @@ class OperatorIntakeService:
                 "environment_profile_id": "build_workspace_local",
             },
         )
+
+    def _implementation_operation_mix(
+        self,
+        intake: OperatorIntake,
+    ) -> dict[str, int]:
+        mix: dict[str, int] = {}
+        for operation in intake.implementation_plan:
+            key = operation.operation_type.value
+            mix[key] = mix.get(key, 0) + 1
+        return dict(sorted(mix.items()))
 
     def _build_review_gate_policy(self, intake: OperatorIntake):
         if not intake.run_post_build_review:
