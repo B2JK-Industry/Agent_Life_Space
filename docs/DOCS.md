@@ -44,21 +44,21 @@ python -m agent --list-retained-artifacts
 python -m agent --prune-expired-retained-artifacts
 python -m agent --list-cost-ledger
 python -m agent --intake-git-url file:///path/to/repo --intake-work-type review --intake-description "Imported review"
-python -m agent --build-repo . --build-description "Apply bounded builder plan" --build-plan-file plan.json
-python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-plan-file plan.json --intake-preview
+python -m agent --build-repo . --build-description "Apply bounded builder plan" --build-plan-file plan.json --build-acceptance-file acceptance.json
+python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-plan-file plan.json --intake-acceptance-file acceptance.json --intake-preview
 python -m agent --list-plans
 python -m agent --list-deliveries
-python -m pytest tests/ -q   # Testy (1297+ testov)
+python -m pytest tests/ -q   # Testy (1303+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.10.0** — phase 2 builder execution release.
+Aktuálna: **v1.11.0** — phase 2 structured acceptance release.
 
-Nové v `v1.10.0`:
-- builder vie vykonať bounded local implementation plan cez explicitné operácie `write_file`, `append_text`, `replace_text` a `json_set`
-- CLI aj unified intake vedia niesť structured implementation plan cez `--build-plan-file` a `--intake-plan-file`
-- build job teraz perzistentne nesie implementation mode a per-operation results
-- build delivery summary a control-plane metadata ukazujú implementation execution summary pre operator handoff
+Nové v `v1.11.0`:
+- builder acceptance criteria teraz vedia niesť structured metadata cez JSON alebo priamo cez unified intake
+- CLI aj unified intake vedia načítať richer acceptance shape cez `--build-acceptance-file` a `--intake-acceptance-file`
+- planner už ukazuje acceptance summary s required/optional/structured breakdownom ešte pred execution
+- deterministic acceptance evaluators teraz pokrývajú workspace text/JSON checks, required changed paths, minimum changed file counts a explicit review thresholds
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

@@ -10,6 +10,40 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.11.0] — 2026-03-28
+
+Phase 2 structured acceptance release.
+
+### Builder / Acceptance
+- Builder acceptance criteria can now carry structured metadata instead of
+  relying only on lightweight strings, and CLI/runtime surfaces can load that
+  richer shape from JSON
+- Deterministic acceptance evaluation now supports structured workspace checks
+  for file existence, text presence/absence, JSON-path value matching, and
+  required changed paths
+- Review-backed and verification-backed acceptance criteria can now use
+  explicit metadata such as verification kind or allowed review thresholds
+
+### Operator / Planning
+- Unified operator intake now preserves structured acceptance criteria through
+  preview, submit, and `to_build_intake()` handoff instead of flattening them
+  back to strings
+- `JobPlan` now exposes an acceptance summary with required/optional counts,
+  structured-criterion counts, and evaluator/kind breakdown before execution
+- `python -m agent --build-repo ... --build-acceptance-file acceptance.json`
+  and `python -m agent --intake-* --intake-acceptance-file acceptance.json`
+  now provide a real CLI path into the richer acceptance slice
+
+### Strategy / Phase 2
+- Strategy docs now mark this cycle as a larger Phase 2 structured-acceptance
+  slice and move the next backlog toward broader structured denials, golden
+  quality cases, and the remaining builder/runtime gaps
+
+### Verification
+- Local release verification passed with `1303 passed, 4 skipped`
+- Targeted builder/control-plane regression coverage passed with `103 passed`
+- `ruff check .` and operator `npm run typecheck` both passed
+
 ## [1.10.0] — 2026-03-28
 
 Phase 2 builder execution release.

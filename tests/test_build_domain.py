@@ -88,6 +88,23 @@ class TestAcceptanceCriteria:
         assert criterion.evaluator == CriterionEvaluator.VERIFY_COMMAND
         assert criterion.description.startswith("verify:")
 
+    def test_criterion_from_input_accepts_structured_dict(self):
+        criterion = AcceptanceCriterion.from_input(
+            {
+                "description": "Config version stamped",
+                "evaluator": "workspace",
+                "metadata": {
+                    "path": "config.json",
+                    "json_path": "release.version",
+                    "expected_value": "1.11.0",
+                },
+            }
+        )
+
+        assert criterion.evaluator == CriterionEvaluator.WORKSPACE
+        assert criterion.metadata["path"] == "config.json"
+        assert criterion.metadata["expected_value"] == "1.11.0"
+
 
 class TestAcceptanceVerdict:
     def test_empty_verdict_not_accepted(self):
@@ -667,6 +684,156 @@ class TestBuildService:
         assert job.denial["code"] == "build_implementation_failed"
         assert job.implementation_results[0].status == BuildOperationStatus.FAILED
         assert "match_text not found" in job.error
+
+    async def test_structured_workspace_acceptance_checks(self, service, monkeypatch):
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                )
+            ],
+        )
+        (Path(self._repo_dir) / "README.md").write_text("# Repo\n")
+
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Stamp config and docs",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.JSON_SET,
+                    path="config.json",
+                    json_path=["release", "version"],
+                    value="1.11.0",
+                ),
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="README.md",
+                    content="# Repo\n\nBuilder release 1.11.0\n",
+                ),
+            ],
+            acceptance_criteria=[
+                AcceptanceCriterion(
+                    description="Config version is stamped",
+                    evaluator=CriterionEvaluator.WORKSPACE,
+                    metadata={
+                        "path": "config.json",
+                        "json_path": "release.version",
+                        "expected_value": "1.11.0",
+                    },
+                ),
+                AcceptanceCriterion(
+                    description="README updated for the release",
+                    evaluator=CriterionEvaluator.WORKSPACE,
+                    metadata={
+                        "path": "README.md",
+                        "contains_text": "Builder release 1.11.0",
+                        "must_change": True,
+                    },
+                ),
+            ],
+        )
+
+        job = await service.run_build(intake)
+        acceptance_artifact = next(
+            artifact
+            for artifact in job.artifacts
+            if artifact.artifact_kind == ArtifactKind.ACCEPTANCE_REPORT
+        )
+
+        assert job.status == JobStatus.COMPLETED
+        assert job.acceptance.accepted is True
+        assert all(
+            criterion.status == CriterionStatus.MET
+            for criterion in job.acceptance.criteria
+        )
+        assert (
+            acceptance_artifact.content_json["delivery_summary"]["structured_count"] == 2
+        )
+        assert (
+            acceptance_artifact.content_json["delivery_summary"]["by_evaluator"]["workspace"]
+            == 2
+        )
+
+    async def test_structured_change_and_review_acceptance_checks(
+        self, workspace_manager, monkeypatch
+    ):
+        from agent.build.service import BuildService
+        from agent.build.storage import BuildStorage
+
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                )
+            ],
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        clean_review = ReviewJob()
+        clean_review.report = ReviewReport(
+            executive_summary="No blocking findings.",
+            verdict="pass",
+        )
+        review_service = self._FakeReviewService(clean_review)
+        service = BuildService(
+            storage=BuildStorage(db_path=db_path),
+            workspace_manager=workspace_manager,
+            review_service=review_service,
+        )
+
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Apply builder slice with structured acceptance",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.REPLACE_TEXT,
+                    path="app.py",
+                    match_text="return 1",
+                    replacement_text="return 2",
+                ),
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="docs/notes.md",
+                    content="# Notes\n- shipped\n",
+                ),
+            ],
+            acceptance_criteria=[
+                AcceptanceCriterion(
+                    description="Required deliverable paths changed",
+                    evaluator=CriterionEvaluator.CHANGE_SET,
+                    metadata={
+                        "required_paths": ["app.py", "docs/notes.md"],
+                        "minimum_changed_files": 2,
+                    },
+                ),
+                AcceptanceCriterion(
+                    description="Post-build review stays below blocking thresholds",
+                    kind=CriterionKind.SECURITY,
+                    evaluator=CriterionEvaluator.REVIEW,
+                    metadata={"max_critical": 0, "max_high": 0},
+                ),
+            ],
+            run_post_build_review=True,
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.COMPLETED
+        assert job.acceptance.accepted is True
+        assert job.acceptance.criteria[0].status == CriterionStatus.MET
+        assert job.acceptance.criteria[1].status == CriterionStatus.MET
+        assert "Structured change-set checks passed" in job.acceptance.criteria[0].evidence
+        assert "review verdict=pass" in job.acceptance.criteria[1].evidence
 
     async def test_build_creates_artifacts(self, service, monkeypatch):
         monkeypatch.setattr(
