@@ -6,42 +6,46 @@ This file is the near-term execution backlog derived from the current state of
 Assessment basis:
 - branch: `main`
 - interpretation date: `2026-03-28`
-- baseline: after Phase 1 Closure Hardening slice
+- baseline: after Phase 1 Delivery Closure slice
 
 ## Ready Now
 
 ### P0
 
-1. `T4-E3-S2` Assemble artifacts, reports, and acceptance results into delivery bundles.
-   Why now: builder delivery and evidence export are stronger, but review
-   delivery still has not migrated onto the shared lifecycle/bundle path.
+1. `T5-E1-S2` Keep policy deny-by-default across execution modes.
+   Why now: review execution, intake gating, delivery lifecycle, and evidence
+   export are now stronger, but build/runtime actions still do not share one
+   unified deny-by-default enforcement boundary.
 
-2. `T1-E2-S4` Add artifact retention and recovery rules.
-   Why now: retention metadata and evidence export now exist, but pruning,
-   archival, and policy-driven deletion workflows are still missing.
+2. `T8-E2-S1` Define local, operator, and enterprise environment profiles.
+   Why now: flow-level environment profiles exist, so the next step is turning
+   them into a higher-level operating model that can guide deployment and
+   policy defaults honestly.
 
-3. `T5-E1-S2` Keep policy deny-by-default across execution modes.
-   Why now: review execution, intake gating, approvals, and evidence export now
-   have clearer boundaries, but build/runtime actions are still not governed by
-   one shared deny-by-default enforcement layer.
+3. `T2-E4-S1` Prepare copy-paste-ready PR comments and summary review artifacts.
+   Why now: review delivery lifecycle and client-safe export are now much
+   stronger, so the next reviewer-facing gap is a truly operator-usable
+   handoff artifact for PR and issue workflows.
 
 ### P1
 
-4. `T8-E3-S3` Support client-safe evidence packaging.
-   Why now: evidence export now exists, so the next gap is packaging it for
-   safer external/operator-facing consumption without leaking internal detail.
-
-5. `T8-E2-S1` Define local, operator, and enterprise environment profiles.
-   Why now: flow-level environment profiles now exist, so the next step is a
-   higher-level deployment/operating profile matrix.
-
-6. `T6-E2-S3` Track approval backlog and blocked reasons.
-   Why now: approvals are persistent and multi-step, but approval observability
-   is still thinner than the rest of the operator report.
-
-7. `T3-E2-S4` Capture all verification artifacts and verdicts.
+4. `T3-E2-S4` Capture all verification artifacts and verdicts.
    Why now: builder verification is repo-aware, but delivery/evidence still
-   benefits from richer first-class verification artifacts.
+   benefits from richer first-class verification artifacts instead of only
+   summarized reports.
+
+5. `T8-E3-S4` Prepare data-handling rules for future enterprise requirements.
+   Why now: client-safe evidence packaging and retention prune flows now exist,
+   so formalizing enterprise data-handling rules is the next honest hardening
+   step.
+
+6. `T6-E3-S3` Add review eval smoke checks to CI or local gating.
+   Why now: reviewer phase-1 scope is effectively closed functionally, so the
+   next quality gap is regression discipline rather than another feature flag.
+
+7. `T5-E1-S3` Add structured denial reasons everywhere.
+   Why now: approval backlog and budget/report posture are richer now, but
+   deny-by-default still needs more consistent operator-visible reasoning.
 
 ### P2
 
@@ -52,29 +56,20 @@ Assessment basis:
 
 ## What Closed In This Cycle
 
-- `T8-E3-S1` Evidence export now assembles persisted jobs, artifacts, retained
-  records, traces, costs, runtime model metadata, and artifact traceability
-  through a dedicated CLI/runtime surface.
-- `T6-E2-S1` Persisted product-job records now track duration, retry count, and
-  failure count, and the operator report summarizes those signals directly.
-- `T6-E1-S3` Brain-side learning overrides and post-routing quality escalation
-  are now budget-aware instead of living outside runtime budget posture.
-- `T4-E1-S4` Unified intake can now acquire supported git sources into a
-  managed mirror before review/build routing while still rejecting unsupported
-  inputs honestly.
-- `T5-E2-S3` Intake and delivery approval requests can now require multi-step
-  approval where deterministic thresholds demand it.
-- `T1-E3-S4` Runtime model now exposes explicit environment profiles for
-  review, build, acquisition/import, and export-only flows.
-- `T6-E1-S4` Operator report now surfaces single-transaction approval caps and
-  richer persisted product-job attention signals alongside budget posture.
+- `T4-E3-S2` Review delivery now assembles into the shared delivery lifecycle
+  instead of staying on a parallel bundle path.
+- `T1-E2-S4` Retained artifacts now support an explicit prune workflow through
+  the control plane, orchestrator, and CLI.
+- `T8-E3-S3` Evidence export now supports a client-safe review mode with
+  redacted approval and delivery packaging.
+- `T6-E2-S3` Operator report now exposes approval backlog status/category
+  counts, blocked reasons, and partial-approval detail.
 
 ## Exit Criteria For The Next Backlog Slice
 
 The next slice should be considered successful when:
-- review delivery starts converging on the same shared delivery lifecycle as
-  builder delivery
-- retained artifacts move beyond inspectable metadata into actual pruning or
-  archival workflows
-- shared deny-by-default policy reaches deeper into build/runtime execution
-- evidence export gains a safer client/operator-facing packaging story
+- deny-by-default policy reaches deeper into build/runtime execution
+- higher-level local/operator/enterprise environment profiles are explicit
+- reviewer handoff gains copy-paste-ready PR comment and summary artifacts
+- builder verification evidence becomes more first-class and queryable
+- reviewer quality regression checks start moving toward repeatable gating

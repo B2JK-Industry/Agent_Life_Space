@@ -28,11 +28,14 @@ import structlog
 
 from agent.control.models import (
     ArtifactKind,
+    DeliveryLifecycleStatus,
+    DeliveryPackage,
     ExecutionMode,
+    JobKind,
     JobStatus,
     TraceRecordKind,
 )
-from agent.control.policy import select_review_execution_policy
+from agent.control.policy import get_delivery_policy, select_review_execution_policy
 from agent.review.analyzers import (
     analyze_diff,
     analyze_repo_structure,
@@ -567,8 +570,8 @@ class ReviewService:
         if self._control_plane_state is None:
             return
         self._control_plane_state.record_retained_artifact(
-            record_id=f"review-delivery-{job.id}",
-            bundle_id=f"review-delivery-{job.id}",
+            record_id=self._delivery_bundle_id(job.id),
+            bundle_id=self._delivery_bundle_id(job.id),
             job_id=job.id,
             job_kind=job.job_kind,
             artifact_kind=ArtifactKind.DELIVERY_BUNDLE,
@@ -633,44 +636,13 @@ class ReviewService:
             return None
 
         artifacts = self._storage.get_artifacts(job_id)
-
-        # Extract artifact contents by type
-        md_report = ""
-        json_report: dict[str, Any] = {}
-        trace_data: list[dict[str, Any]] = []
-        findings_data: list[dict[str, Any]] = []
-
-        for a in artifacts:
-            atype = a.get("artifact_type", "")
-            if atype == "review_report" and a.get("content"):
-                md_report = a["content"]
-            if atype == "review_report" and a.get("content_json"):
-                json_report = a["content_json"]
-            if atype == "execution_trace" and a.get("content_json"):
-                trace_data = a["content_json"].get("trace", [])
-            if atype == "finding_list" and a.get("content_json"):
-                findings_data = a["content_json"].get("findings", [])
-
-        bundle = {
-            "job_id": job.id,
-            "job_type": job.job_type.value,
-            "status": job.status.value,
-            "requester": job.requester,
-            "execution_mode": job.execution_mode.value,
-            "verdict": job.report.verdict,
-            "verdict_confidence": job.report.verdict_confidence.value,
-            "finding_counts": job.report.finding_counts,
-            "markdown_report": md_report,
-            "json_report": json_report,
-            "findings_only": findings_data or [f.to_dict() for f in job.report.findings],
-            "execution_trace": trace_data or [t.to_dict() for t in job.execution_trace],
-            "artifact_count": len(artifacts),
-            # Bundle is NEVER delivery-ready without explicit approval.
-            # Use request_delivery_approval() to gate delivery.
-            "delivery_ready": False,
-            "created_at": job.created_at,
-            "completed_at": job.completed_at,
-        }
+        bundle = self._assemble_delivery_bundle(job=job, artifacts=artifacts)
+        self._sync_delivery_record(
+            bundle=self._delivery_package_from_bundle(bundle),
+            status=DeliveryLifecycleStatus.PREPARED,
+            event_type="prepared",
+            detail="Review delivery package assembled",
+        )
         self._record_delivery_bundle_retention(job=job, bundle=bundle)
         return bundle
 
@@ -689,6 +661,10 @@ class ReviewService:
         if job.status != ReviewJobStatus.COMPLETED:
             return {"error": f"Job '{job_id}' is {job.status.value}, not completed"}
 
+        bundle = self.get_delivery_bundle(job_id)
+        if bundle is None:
+            return {"error": f"Delivery package for '{job_id}' could not be assembled"}
+
         # Approval queue is REQUIRED for external delivery.
         # Without it, delivery is blocked — not silently bypassed.
         if self._approval_queue is None:
@@ -698,6 +674,7 @@ class ReviewService:
                 logger.warning("delivery_approval_dev_bypass", job_id=job_id)
                 return {
                     "job_id": job_id,
+                    "bundle_id": self._delivery_bundle_id(job_id),
                     "delivery_ready": True,
                     "approval_bypassed": True,
                     "warning": "DEV MODE: approval bypassed. Not safe for production.",
@@ -706,10 +683,12 @@ class ReviewService:
                 "error": "Delivery blocked: no approval queue configured. "
                          "External delivery requires approval gating.",
                 "job_id": job_id,
+                "bundle_id": self._delivery_bundle_id(job_id),
                 "delivery_ready": False,
             }
 
         from agent.core.approval import ApprovalCategory
+        delivery_policy = get_delivery_policy()
         required_approvals = self._delivery_required_approvals(job)
         req = self._approval_queue.propose(
             category=ApprovalCategory.EXTERNAL,
@@ -719,17 +698,30 @@ class ReviewService:
             context={
                 "job_id": job_id,
                 "job_kind": job.job_kind.value,
+                "workspace_id": job.workspace_id,
+                "bundle_id": bundle["bundle_id"],
                 "verdict": job.report.verdict,
                 "finding_counts": job.report.finding_counts,
                 "requester": job.requester,
                 "artifact_ids": [artifact.id for artifact in job.artifacts],
+                "delivery_policy_id": delivery_policy.id,
+                "review_type": job.job_type.value,
             },
             required_approvals=required_approvals,
+        )
+        self._sync_delivery_record(
+            bundle=self._delivery_package_from_bundle(bundle),
+            status=DeliveryLifecycleStatus.AWAITING_APPROVAL,
+            event_type="approval_requested",
+            detail=f"Approval requested under delivery policy {delivery_policy.id}",
+            approval_request_id=req.id,
+            metadata={"delivery_policy_id": delivery_policy.id},
         )
         logger.info("review_delivery_approval_requested",
                      job_id=job_id, approval_id=req.id)
         return {
             "job_id": job_id,
+            "bundle_id": bundle["bundle_id"],
             "approval_request_id": req.id,
             "approval_status": "pending",
             "required_approvals": req.required_approvals,
@@ -760,6 +752,41 @@ class ReviewService:
 
         from agent.review.redaction import redact_bundle
         return redact_bundle(bundle)
+
+    def get_delivery_record(self, job_id: str) -> dict[str, Any] | None:
+        """Return persisted delivery lifecycle state for a review job."""
+        bundle_id = self._delivery_bundle_id(job_id)
+        record = self._refresh_delivery_record(bundle_id)
+        if record is None:
+            return None
+        return record.to_dict()
+
+    def mark_delivery_handed_off(self, job_id: str, *, note: str = "") -> dict[str, Any]:
+        """Record final review handoff after approval."""
+        bundle_id = self._delivery_bundle_id(job_id)
+        record = self._refresh_delivery_record(bundle_id)
+        if record is None:
+            return {"error": f"Delivery record not found for job '{job_id}'"}
+        if record.status not in {
+            DeliveryLifecycleStatus.APPROVED,
+            DeliveryLifecycleStatus.HANDED_OFF,
+        }:
+            return {
+                "error": (
+                    f"Delivery record '{bundle_id}' is {record.status.value}, "
+                    "not approved for handoff"
+                ),
+                "bundle_id": bundle_id,
+            }
+        if self._approval_queue is not None and record.approval_request_id:
+            self._approval_queue.mark_executed(record.approval_request_id)
+        record = self._control_plane_state.mark_delivery_handed_off(
+            bundle_id,
+            detail=note or f"Review delivery for job {job_id[:8]} handed off",
+        ) if self._control_plane_state is not None else record
+        if record is None:
+            return {"error": f"Delivery record not found for bundle '{bundle_id}'"}
+        return record.to_dict()
 
     def list_jobs(self, status: str = "", limit: int = 20) -> list[dict[str, Any]]:
         """List review jobs."""
@@ -795,3 +822,136 @@ class ReviewService:
             "approval_queue_configured": self._approval_queue is not None,
             **stats,
         }
+
+    def _assemble_delivery_bundle(
+        self,
+        *,
+        job: ReviewJob,
+        artifacts: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        md_report = ""
+        json_report: dict[str, Any] = {}
+        trace_data: list[dict[str, Any]] = []
+        findings_data: list[dict[str, Any]] = []
+
+        for artifact in artifacts:
+            artifact_type = artifact.get("artifact_type", "")
+            if artifact_type == ArtifactType.REVIEW_REPORT.value and artifact.get("content"):
+                md_report = artifact["content"]
+            if artifact_type == ArtifactType.REVIEW_REPORT.value and artifact.get("content_json"):
+                json_report = artifact["content_json"]
+            if artifact_type == ArtifactType.EXECUTION_TRACE.value and artifact.get("content_json"):
+                trace_data = artifact["content_json"].get("trace", [])
+            if artifact_type == ArtifactType.FINDING_LIST.value and artifact.get("content_json"):
+                findings_data = artifact["content_json"].get("findings", [])
+
+        package = DeliveryPackage(
+            bundle_id=self._delivery_bundle_id(job.id),
+            job_id=job.id,
+            job_kind=job.job_kind,
+            package_type="review_delivery",
+            title=f"Review delivery package for {job.id[:8]}",
+            status=job.status.value,
+            requester=job.requester,
+            workspace_id=job.workspace_id,
+            artifact_ids=[artifact.get("id", "") for artifact in artifacts],
+            artifact_count=len(artifacts),
+            delivery_ready=False,
+            created_at=job.created_at,
+            completed_at=job.completed_at,
+            summary={
+                "review_type": job.job_type.value,
+                "verdict": job.report.verdict,
+                "verdict_confidence": job.report.verdict_confidence.value,
+                "finding_counts": job.report.finding_counts,
+                "client_safe_available": True,
+            },
+            payload={
+                "report_artifact_ids": [
+                    artifact.get("id", "")
+                    for artifact in artifacts
+                    if artifact.get("artifact_type") == ArtifactType.REVIEW_REPORT.value
+                ],
+                "finding_artifact_ids": [
+                    artifact.get("id", "")
+                    for artifact in artifacts
+                    if artifact.get("artifact_type") == ArtifactType.FINDING_LIST.value
+                ],
+                "trace_artifact_ids": [
+                    artifact.get("id", "")
+                    for artifact in artifacts
+                    if artifact.get("artifact_type") == ArtifactType.EXECUTION_TRACE.value
+                ],
+            },
+        )
+        bundle = package.to_dict()
+        bundle.update(
+            {
+                "job_type": job.job_type.value,
+                "execution_mode": job.execution_mode.value,
+                "verdict": job.report.verdict,
+                "verdict_confidence": job.report.verdict_confidence.value,
+                "finding_counts": job.report.finding_counts,
+                "markdown_report": md_report,
+                "json_report": json_report,
+                "findings_only": findings_data or [finding.to_dict() for finding in job.report.findings],
+                "execution_trace": trace_data or [trace.to_dict() for trace in job.execution_trace],
+                "error": job.error,
+            }
+        )
+        return bundle
+
+    def _delivery_bundle_id(self, job_id: str) -> str:
+        return f"review-delivery-{job_id}"
+
+    def _delivery_package_from_bundle(self, bundle: dict[str, Any]) -> DeliveryPackage:
+        return DeliveryPackage(
+            bundle_id=bundle["bundle_id"],
+            job_id=bundle["job_id"],
+            job_kind=JobKind.REVIEW,
+            package_type=bundle.get("package_type", "review_delivery"),
+            title=bundle.get("title", ""),
+            status=bundle.get("status", ""),
+            requester=bundle.get("requester", ""),
+            workspace_id=bundle.get("workspace_id", ""),
+            artifact_ids=list(bundle.get("artifact_ids", [])),
+            artifact_count=int(bundle.get("artifact_count", 0)),
+            delivery_ready=bool(bundle.get("delivery_ready", False)),
+            created_at=bundle.get("created_at", ""),
+            completed_at=bundle.get("completed_at", ""),
+            summary=dict(bundle.get("summary", {})),
+            payload=dict(bundle.get("payload", {})),
+        )
+
+    def _sync_delivery_record(
+        self,
+        *,
+        bundle: DeliveryPackage,
+        status: DeliveryLifecycleStatus,
+        event_type: str,
+        detail: str,
+        approval_request_id: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if self._control_plane_state is None:
+            return
+        self._control_plane_state.record_delivery_bundle(
+            bundle=bundle,
+            status=status,
+            event_type=event_type,
+            detail=detail,
+            approval_request_id=approval_request_id,
+            metadata=metadata or {},
+        )
+
+    def _refresh_delivery_record(self, bundle_id: str):
+        if self._control_plane_state is None:
+            return None
+        return self._control_plane_state.refresh_delivery_status(
+            bundle_id,
+            approval_lookup=(
+                self._approval_queue.get_request
+                if self._approval_queue is not None
+                else None
+            ),
+        )

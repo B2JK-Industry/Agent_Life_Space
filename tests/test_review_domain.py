@@ -896,6 +896,7 @@ class TestDeliveryApproval:
 
         result = service.request_delivery_approval(job.id)
         assert result.get("approval_request_id") is not None
+        assert result["bundle_id"] == f"review-delivery-{job.id}"
         assert result["approval_status"] == "pending"
         assert result["required_approvals"] == 1
         assert result["delivery_ready"] is False
@@ -904,6 +905,7 @@ class TestDeliveryApproval:
         pending = queue.get_pending()
         assert len(pending) == 1
         assert pending[0]["context"]["job_id"] == job.id
+        assert pending[0]["context"]["bundle_id"] == result["bundle_id"]
 
     async def test_delivery_approval_escalates_to_multi_step_on_high_findings(
         self, service_with_approval, sample_repo
@@ -973,6 +975,81 @@ class TestDeliveryApproval:
                 else:
                     _os.environ["AGENT_DEV_MODE"] = old
         os.unlink(db_path)
+
+    async def test_delivery_bundle_tracks_shared_lifecycle(self, sample_repo):
+        from agent.control.state import ControlPlaneStateService
+        from agent.control.storage import ControlPlaneStorage
+        from agent.core.approval import ApprovalQueue
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as review_db, \
+                tempfile.NamedTemporaryFile(suffix=".db", delete=False) as control_db:
+            queue = ApprovalQueue()
+            service = ReviewService(
+                storage=ReviewStorage(db_path=review_db.name),
+                approval_queue=queue,
+                control_plane_state=ControlPlaneStateService(
+                    ControlPlaneStorage(db_path=control_db.name)
+                ),
+            )
+            intake = ReviewIntake(repo_path=sample_repo)
+            job = await service.run_review(intake)
+
+            bundle = service.get_delivery_bundle(job.id)
+            record = service.get_delivery_record(job.id)
+            approval = service.request_delivery_approval(job.id)
+            refreshed = service.get_delivery_record(job.id)
+
+        assert bundle is not None
+        assert record is not None
+        assert bundle["bundle_id"] == f"review-delivery-{job.id}"
+        assert record["status"] == "prepared"
+        assert approval["bundle_id"] == bundle["bundle_id"]
+        assert refreshed is not None
+        assert refreshed["status"] == "awaiting_approval"
+        assert refreshed["approval_request_id"] == approval["approval_request_id"]
+
+        os.unlink(review_db.name)
+        os.unlink(control_db.name)
+
+    async def test_mark_delivery_handed_off_requires_approval(self, sample_repo):
+        from agent.control.state import ControlPlaneStateService
+        from agent.control.storage import ControlPlaneStorage
+        from agent.core.approval import ApprovalQueue
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as review_db, \
+                tempfile.NamedTemporaryFile(suffix=".db", delete=False) as control_db:
+            queue = ApprovalQueue()
+            service = ReviewService(
+                storage=ReviewStorage(db_path=review_db.name),
+                approval_queue=queue,
+                control_plane_state=ControlPlaneStateService(
+                    ControlPlaneStorage(db_path=control_db.name)
+                ),
+            )
+            intake = ReviewIntake(repo_path=sample_repo)
+            job = await service.run_review(intake)
+            approval = service.request_delivery_approval(job.id)
+
+            blocked = service.mark_delivery_handed_off(job.id)
+            queue.approve(approval["approval_request_id"], decided_by="owner-1")
+            approved = service.get_delivery_record(job.id)
+            handed_off = service.mark_delivery_handed_off(job.id, note="Shared with operator")
+            approval_request = queue.get_request(approval["approval_request_id"])
+
+        assert "error" in blocked
+        assert approved is not None
+        assert approved["status"] == "approved"
+        assert handed_off["status"] == "handed_off"
+        assert handed_off["events"][-1]["event_type"] == "handed_off"
+        assert approval_request is not None
+        assert approval_request["status"] == "executed"
+
+        os.unlink(review_db.name)
+        os.unlink(control_db.name)
 
 
 # ─────────────────────────────────────────────

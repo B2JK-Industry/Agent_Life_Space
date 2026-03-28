@@ -5,46 +5,46 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Phase 1 Closure Hardening slice."
+  assessed_state_note: "Snapshot after Phase 1 Delivery Closure slice."
   interpretation_date: "2026-03-28"
   theme_status:
-    T1: { status: in_progress, approx_progress: 95 }
-    T2: { status: complete_for_phase, approx_progress: 88 }
+    T1: { status: in_progress, approx_progress: 96 }
+    T2: { status: complete_for_phase, approx_progress: 90 }
     T3: { status: in_progress, approx_progress: 80 }
-    T4: { status: in_progress, approx_progress: 88 }
+    T4: { status: in_progress, approx_progress: 92 }
     T5: { status: in_progress, approx_progress: 87 }
-    T6: { status: in_progress, approx_progress: 86 }
+    T6: { status: in_progress, approx_progress: 89 }
     T7: { status: not_started, approx_progress: 0 }
-    T8: { status: in_progress, approx_progress: 84 }
+    T8: { status: in_progress, approx_progress: 88 }
 next_execution_backlog:
-  - priority: P0
-    story_id: T4-E3-S2
-    title: "Assemble artifacts, reports, and acceptance results into delivery bundles"
-    why_now: "Builder delivery and evidence export are stronger, but review delivery still has not migrated onto the shared lifecycle/bundle path."
-  - priority: P0
-    story_id: T1-E2-S4
-    title: "Add artifact retention and recovery rules"
-    why_now: "Retention metadata and evidence export now exist, but pruning, archival, and policy-driven deletion workflows are still missing."
   - priority: P0
     story_id: T5-E1-S2
     title: "Keep policy deny-by-default across execution modes"
-    why_now: "Review execution, intake gating, approvals, and evidence export now have clearer boundaries, but build/runtime actions are still not governed by one shared deny-by-default enforcement layer."
-  - priority: P1
-    story_id: T8-E3-S3
-    title: "Support client-safe evidence packaging"
-    why_now: "Evidence export now exists, so the next gap is packaging it for safer external/operator-facing consumption without leaking internal detail."
-  - priority: P1
+    why_now: "Review execution, intake gating, delivery lifecycle, and evidence export are now stronger, but build/runtime actions still do not share one unified deny-by-default enforcement boundary."
+  - priority: P0
     story_id: T8-E2-S1
     title: "Define local, operator, and enterprise environment profiles"
-    why_now: "Flow-level environment profiles now exist, so the next step is a higher-level deployment/operating profile matrix."
-  - priority: P1
-    story_id: T6-E2-S3
-    title: "Track approval backlog and blocked reasons"
-    why_now: "Approvals are persistent and multi-step, but approval observability is still thinner than the rest of the operator report."
+    why_now: "Flow-level environment profiles exist, so the next step is turning them into a higher-level operating model that can guide deployment and policy defaults honestly."
+  - priority: P0
+    story_id: T2-E4-S1
+    title: "Prepare copy-paste-ready PR comments and summary review artifacts"
+    why_now: "Review delivery lifecycle and client-safe export are now much stronger, so the next reviewer-facing gap is a truly operator-usable handoff artifact for PR and issue workflows."
   - priority: P1
     story_id: T3-E2-S4
     title: "Capture all verification artifacts and verdicts"
-    why_now: "Builder verification is repo-aware, but delivery and evidence export still benefit from richer first-class verification artifacts."
+    why_now: "Builder verification is repo-aware, but delivery and evidence export still benefit from richer first-class verification artifacts instead of only summarized reports."
+  - priority: P1
+    story_id: T8-E3-S4
+    title: "Prepare data-handling rules for future enterprise requirements"
+    why_now: "Client-safe evidence packaging and retention prune flows now exist, so formalizing enterprise data-handling rules is the next honest hardening step."
+  - priority: P1
+    story_id: T6-E3-S3
+    title: "Add review eval smoke checks to CI or local gating"
+    why_now: "Reviewer phase-1 scope is effectively closed functionally, so the next quality gap is regression discipline rather than another feature flag."
+  - priority: P1
+    story_id: T5-E1-S3
+    title: "Add structured denial reasons everywhere"
+    why_now: "Approval backlog and budget/report posture are richer now, but deny-by-default still needs more consistent operator-visible reasoning."
   - priority: P2
     story_id: T7-E1-S1
     title: "Define gateway contract for external capabilities"
@@ -54,8 +54,8 @@ themes:
     name: Platform Foundation
     goal: Unify job, artifact, state, and workspace foundations.
     status: in_progress
-    approx_progress: 95
-    current_state: Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared build/review/operate job queries, shared artifact queries, persisted product-job/plan/trace/delivery records, retention-aware artifact state, richer workspace-aware approval/reporting surfaces, and explicit environment profiles for review/build/acquisition/export flows.
+    approx_progress: 96
+    current_state: Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared build/review/operate job queries, shared artifact queries, persisted product-job/plan/trace/delivery records, retention-aware artifact state with prune support, richer workspace-aware approval/reporting surfaces, and explicit environment profiles for review/build/acquisition/export flows.
     main_gap: No unified cross-domain action layer yet.
     epics:
       - id: T1-E1
@@ -108,8 +108,8 @@ themes:
           - id: T1-E2-S4
             name: Add artifact retention and recovery rules
             status: mostly_complete
-            current_state: Control-plane retention records now track build, review, trace, and delivery-bundle outputs with policy ids, expiry timestamps, recoverability, and derived active/expired state exposed through artifact queries and operator reporting.
-            missing: Retention is modeled and inspectable, but not yet enforced through pruning, archival, or compaction workflows.
+            current_state: Control-plane retention records now track build, review, trace, and delivery-bundle outputs with policy ids, expiry timestamps, recoverability, derived active/expired state, and an explicit prune workflow surfaced through the orchestrator and CLI.
+            missing: No automated pruning scheduler, archival workflow, or broader compaction policy yet.
           - id: T1-E2-S5
             name: Persist full intake, report payloads, and artifact payloads for recovery-safe reload
             status: complete_for_phase
@@ -150,14 +150,14 @@ themes:
     name: Reviewer Product
     goal: Make review a first-class client-ready workflow.
     status: complete_for_phase
-    approx_progress: 88
-    current_state: Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode, and converged Telegram plus structured API review entrypoints through the shared runtime.
+    approx_progress: 90
+    current_state: Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode, converged Telegram plus structured API review entrypoints, and shared review delivery lifecycle through the shared runtime.
     main_gap: LLM analysis and PR comment packs are v2 scope.
     epics:
       - id: T2-E1
         name: Review Job Types
-        status: mostly_complete
-        approx_progress: 80
+        status: complete_for_phase
+        approx_progress: 92
         stories:
           - id: T2-E1-S1
             name: Implement repo audit job type
@@ -225,7 +225,9 @@ themes:
             missing: Wider system outputs beyond reviewer.
           - id: T2-E4-S4
             name: Add report packaging for operator handoff
-            status: mostly_complete
+            status: complete_for_phase
+            current_state: Review delivery now assembles a shared delivery package preview, persists lifecycle state, supports explicit approval linkage, and exposes client-safe evidence packaging for operator handoff.
+            missing: PR comment packs and richer external delivery remain future scope.
           - id: T2-E4-S5
             name: Route Telegram and API review entrypoints through ReviewService
             status: complete_for_phase
@@ -320,9 +322,9 @@ themes:
     name: Operator Product
     goal: Coordinate end-to-end work and delivery.
     status: in_progress
-    approx_progress: 88
-    current_state: Unified intake routing, phase-aware JobPlan preview/submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, workspace joins, richer operator report service, evidence export, and shared builder delivery package preview now exist alongside CI typecheck.
-    main_gap: No live backend/UI and no review delivery migration onto the shared lifecycle yet.
+    approx_progress: 92
+    current_state: Unified intake routing, phase-aware JobPlan preview/submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, workspace joins, richer operator report service, internal/client-safe evidence export, and shared build/review delivery lifecycle now exist alongside CI typecheck.
+    main_gap: No live backend/UI and no full external delivery workflow yet.
     epics:
       - id: T4-E1
         name: Intake And Qualification
@@ -376,29 +378,29 @@ themes:
             missing: Trace coverage is still strongest for planning/build delivery, not yet the whole runtime.
       - id: T4-E3
         name: Delivery Workflow
-        status: in_progress
-        approx_progress: 72
+        status: mostly_complete
+        approx_progress: 90
         stories:
           - id: T4-E3-S1
             name: Define delivery package model
             status: complete_for_phase
-            current_state: Shared DeliveryPackage model now exists in agent/control/models.py and is used by builder delivery preview.
-            missing: Review delivery has not yet been migrated onto the shared model.
+            current_state: Shared DeliveryPackage model now exists in agent/control/models.py and is used by both builder and reviewer delivery preview flows.
+            missing: Delivery remains preview and handoff oriented; external send is still later scope.
           - id: T4-E3-S2
             name: Assemble artifacts, reports, and acceptance results into delivery bundles
-            status: mostly_complete
-            current_state: Builder now assembles verification, acceptance, patch, diff, review, findings, and workspace metadata into a delivery package preview, while reviewer keeps its delivery bundle path.
-            missing: Delivery bundles are still split across build/review implementations rather than one unified control-plane service.
+            status: complete_for_phase
+            current_state: Builder assembles verification, acceptance, patch, diff, review, findings, and workspace metadata into delivery package previews, and reviewer now assembles report, findings, trace, approval linkage, and bundle metadata into the same shared lifecycle envelope.
+            missing: There is still no live operator workflow or external send path behind the bundle.
           - id: T4-E3-S3
             name: Gate delivery through approvals
-            status: mostly_complete
-            current_state: Review delivery approval already existed, and builder delivery now requests approval with explicit job, artifact, workspace, and bundle linkage while refreshing lifecycle status after approval changes.
-            missing: Review delivery still uses a separate lifecycle implementation.
+            status: complete_for_phase
+            current_state: Review and build delivery both request approval with explicit job, artifact, workspace, and bundle linkage while refreshing lifecycle status after approval changes.
+            missing: Richer approval chains and real external send remain future scope.
           - id: T4-E3-S4
             name: Record delivery status and handoff audit events
             status: mostly_complete
-            current_state: Builder delivery now persists lifecycle state (prepared, awaiting_approval, approved, rejected, handed_off) plus explicit audit events surfaced through the orchestrator, CLI, workspace joins, and operator report.
-            missing: Shared lifecycle still covers builder delivery more fully than reviewer delivery.
+            current_state: Build and review delivery now persist lifecycle state (prepared, awaiting_approval, approved, rejected, handed_off) plus explicit audit events surfaced through the orchestrator, CLI, workspace joins, and operator report.
+            missing: Delivery events still stop at handoff; no external send execution history yet.
 
   - id: T5
     name: Security, Governance, And Policy
@@ -482,8 +484,8 @@ themes:
     name: Cost, Usage, And Observability
     goal: Make the system operable, measurable, and economically sane.
     status: in_progress
-    approx_progress: 86
-    current_state: UsageSummary now lands in a durable per-job control-plane cost ledger for build and review jobs. Orchestrator-visible build/review counters, persisted product jobs, retained artifacts, durable planning/delivery traces, shared cross-system job/artifact/workspace queries, approval backlog visibility, runtime budget enforcement, budget-aware escalation controls, and operator-facing reporting now include workspace health, worker execution, recorded-cost summaries, product-job telemetry, and budget posture.
+    approx_progress: 89
+    current_state: UsageSummary now lands in a durable per-job control-plane cost ledger for build and review jobs. Orchestrator-visible build/review counters, persisted product jobs, retained artifacts, durable planning/delivery traces, shared cross-system job/artifact/workspace queries, approval backlog visibility with blocked reasons, runtime budget enforcement, budget-aware escalation controls, and operator-facing reporting now include workspace health, worker execution, recorded-cost summaries, product-job telemetry, budget posture, and retention posture.
     main_gap: No live operator UI or deeper cross-runtime telemetry.
     epics:
       - id: T6-E1
@@ -528,7 +530,9 @@ themes:
             missing: No live UI, push updates, or deeper per-worker telemetry yet.
           - id: T6-E2-S3
             name: Track approval backlog and blocked reasons
-            status: started
+            status: complete_for_phase
+            current_state: OperatorReportService now exposes approval backlog counts by status/category plus blocked approval reasons, and partial approvals surface as actionable inbox detail instead of disappearing into storage.
+            missing: No live UI or push-driven approval inbox yet.
           - id: T6-E2-S4
             name: Add operator-facing reporting surface or inbox
             status: complete_for_phase
@@ -577,8 +581,8 @@ themes:
     name: Enterprise Hardening
     goal: Prepare for enterprise-grade architecture without premature fragmentation.
     status: in_progress
-    approx_progress: 84
-    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records, environment profiles, managed acquisition, evidence export, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review execution policy boundaries, ADR-001 sidecar, TS operator contracts and skeleton, and policy-driven redaction.
+    approx_progress: 88
+    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records with prune flow, environment profiles, managed acquisition, internal/client-safe evidence export, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review execution policy boundaries, ADR-001 sidecar, TS operator contracts and skeleton, and policy-driven redaction.
     main_gap: Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack.
     epics:
       - id: T8-E1
@@ -630,11 +634,13 @@ themes:
           - id: T8-E3-S2
             name: Improve redaction and retention strategy
             status: mostly_complete
-            current_state: Shared artifact-retention policies now define expiry, recoverability, and retention metadata for build, review, trace, and delivery outputs.
-            missing: No pruning, archival, or enterprise retention workflow yet.
+            current_state: Shared artifact-retention policies now define expiry, recoverability, retention metadata, and explicit prune outcomes for build, review, trace, and delivery outputs.
+            missing: No automated pruning scheduler, archival workflow, or enterprise retention policy matrix yet.
           - id: T8-E3-S3
             name: Support client-safe evidence packaging
-            status: started
+            status: complete_for_phase
+            current_state: EvidenceExportService plus python -m agent --export-evidence-job ... --export-evidence-mode client_safe now package review evidence through the review redaction pipeline while preserving safe approval and delivery summaries.
+            missing: Non-review client-safe evidence packaging and deeper enterprise data-handling rules remain future scope.
           - id: T8-E3-S4
             name: Prepare data-handling rules for future enterprise requirements
             status: not_started

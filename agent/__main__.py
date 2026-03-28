@@ -527,6 +527,29 @@ async def show_retained_artifact_command(
     await agent.stop()
 
 
+async def prune_retained_artifacts_command(
+    *,
+    data_dir: str = "agent",
+    job_id: str = "",
+    artifact_kind: str = "",
+    retention_policy_id: str = "",
+    limit: int = 50,
+) -> None:
+    """Prune expired retained artifacts and clear their stored snapshots."""
+    import orjson
+
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    records = agent.prune_retained_artifacts(
+        job_id=job_id,
+        artifact_kind=artifact_kind,
+        retention_policy_id=retention_policy_id,
+        limit=limit,
+    )
+    print(orjson.dumps(records, option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
 async def list_cost_ledger_command(
     *,
     data_dir: str = "agent",
@@ -554,6 +577,7 @@ async def export_evidence_command(
     job_id: str,
     kind: str = "",
     export_format: str = "json",
+    export_mode: str = "internal",
 ) -> None:
     """Export a compliance-friendly evidence package for one job."""
     import orjson
@@ -564,6 +588,7 @@ async def export_evidence_command(
         job_id,
         kind=kind or None,
         export_format=export_format,
+        export_mode=export_mode,
     )
     if export_format == "markdown":
         print(result)
@@ -885,6 +910,11 @@ def main() -> None:
         help="List retained artifacts and delivery outputs and exit",
     )
     parser.add_argument(
+        "--prune-expired-retained-artifacts",
+        action="store_true",
+        help="Prune expired retained artifacts and delivery outputs and exit",
+    )
+    parser.add_argument(
         "--retained-artifact-id",
         default="",
         help="Show one retained artifact or delivery-output record by id and exit",
@@ -954,6 +984,12 @@ def main() -> None:
         default="json",
         choices=["json", "markdown"],
         help="Output format for --export-evidence-job",
+    )
+    parser.add_argument(
+        "--export-evidence-mode",
+        default="internal",
+        choices=["internal", "client_safe"],
+        help="Safety/export mode for --export-evidence-job",
     )
     parser.add_argument(
         "--handoff-build-delivery",
@@ -1191,6 +1227,16 @@ def main() -> None:
                 limit=args.retained_limit,
             )
         )
+    elif args.prune_expired_retained_artifacts:
+        asyncio.run(
+            prune_retained_artifacts_command(
+                data_dir=args.data_dir,
+                job_id=args.retained_job_id,
+                artifact_kind=args.retained_artifact_kind,
+                retention_policy_id=args.retention_policy_id,
+                limit=args.retained_limit,
+            )
+        )
     elif args.retained_artifact_id:
         asyncio.run(
             show_retained_artifact_command(
@@ -1214,6 +1260,7 @@ def main() -> None:
                 job_id=args.export_evidence_job,
                 kind=args.export_evidence_kind,
                 export_format=args.export_evidence_format,
+                export_mode=args.export_evidence_mode,
             )
         )
     elif args.handoff_build_delivery:

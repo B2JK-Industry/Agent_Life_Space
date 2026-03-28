@@ -10,6 +10,37 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.8.1] — 2026-03-28
+
+Phase 1 delivery closure release.
+
+### Reviewer / Delivery
+- Review delivery now assembles into the shared `DeliveryPackage` /
+  `DeliveryRecord` lifecycle instead of staying on an ad-hoc parallel bundle
+  path
+- Review delivery approval now carries explicit bundle and workspace linkage,
+  refreshes persisted lifecycle state after approval changes, and supports
+  explicit post-approval handoff
+
+### Control Plane / Compliance
+- Retained artifacts now support an explicit prune workflow through the
+  control-plane service, orchestrator, and CLI via
+  `python -m agent --prune-expired-retained-artifacts`
+- Evidence export now supports a client-safe review mode via
+  `python -m agent --export-evidence-job ... --export-evidence-mode client_safe`
+  so operators can package review evidence without leaking internal detail
+
+### Operator / Observability
+- Operator report now surfaces approval backlog counts by status and category,
+  blocked approval reasons, and partial-approval detail instead of flattening
+  approvals into a simple pending list
+- Operator report now also exposes retention posture, including expired and
+  pruned retained-artifact counts
+
+### Verification
+- Local release verification passed with `1280 passed, 4 skipped`
+- Targeted review/control-plane regression coverage passed with `134 passed`
+
 ## [1.8.0] — 2026-03-28
 
 Phase 1 closure hardening release.
