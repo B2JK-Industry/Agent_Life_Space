@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from agent.control.policy import (
     list_build_execution_policies,
+    list_data_handling_rules,
     list_environment_profiles,
+    list_external_gateway_contracts,
+    list_external_gateway_policies,
     list_operating_environment_profiles,
 )
 
@@ -154,6 +157,44 @@ class RuntimeModelService:
                 }
                 for policy in list_build_execution_policies()
             ],
+            "external_gateway_policies": [
+                {
+                    "id": policy.id,
+                    "label": policy.label,
+                    "enabled": policy.enabled,
+                    "require_approval": policy.require_approval,
+                    "record_cost": policy.record_cost,
+                    "allow_network": policy.allow_network,
+                }
+                for policy in list_external_gateway_policies()
+            ],
+            "external_gateway_contracts": [
+                {
+                    "id": contract.id,
+                    "label": contract.label,
+                    "description": contract.description,
+                    "request_fields": list(contract.request_fields),
+                    "response_fields": list(contract.response_fields),
+                    "default_policy_id": contract.default_policy_id,
+                    "approval_required": contract.approval_required,
+                    "record_cost": contract.record_cost,
+                    "allow_network": contract.allow_network,
+                }
+                for contract in list_external_gateway_contracts()
+            ],
+            "data_handling_rules": [
+                {
+                    "id": rule.id,
+                    "label": rule.label,
+                    "description": rule.description,
+                    "export_modes": list(rule.export_modes),
+                    "redaction_required": rule.redaction_required,
+                    "allowed_handoff_targets": list(rule.allowed_handoff_targets),
+                    "retention_policy_ids": list(rule.retention_policy_ids),
+                    "recoverable": rule.recoverable,
+                }
+                for rule in list_data_handling_rules()
+            ],
             "surfaces": surfaces,
             "global_rules": [
                 "External operator-facing execution must converge on BuildJob or ReviewJob.",
@@ -162,6 +203,8 @@ class RuntimeModelService:
                 "AgentLoop remains an ephemeral queue and must hand off durable work to Task or product jobs.",
                 "Environment profiles define the safe execution boundary for review, build, acquisition, and export flows.",
                 "Operating environment profiles define the higher-level local/operator/enterprise posture over those flow-level execution boundaries.",
+                "External capability use must stay behind an approval-gated gateway contract with explicit cost and denial recording.",
+                "Evidence export modes must follow explicit retention, redaction, and handoff rules before broader enterprise rollout.",
             ],
             "convergence_plan": [
                 "Keep BuildJob and ReviewJob as canonical product records.",

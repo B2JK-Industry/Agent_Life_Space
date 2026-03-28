@@ -5,42 +5,46 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Phase 2 Structured Acceptance slice."
+  assessed_state_note: "Snapshot after Phase 2 Verification Hardening slice."
   interpretation_date: "2026-03-28"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
     T2: { status: complete_for_phase, approx_progress: 96 }
-    T3: { status: in_progress, approx_progress: 95 }
+    T3: { status: in_progress, approx_progress: 96 }
     T4: { status: in_progress, approx_progress: 94 }
-    T5: { status: in_progress, approx_progress: 92 }
-    T6: { status: in_progress, approx_progress: 91 }
-    T7: { status: not_started, approx_progress: 0 }
-    T8: { status: in_progress, approx_progress: 91 }
+    T5: { status: in_progress, approx_progress: 95 }
+    T6: { status: in_progress, approx_progress: 94 }
+    T7: { status: started, approx_progress: 22 }
+    T8: { status: in_progress, approx_progress: 94 }
 next_execution_backlog:
   - priority: P0
-    story_id: T5-E1-S3
-    title: "Add structured denial reasons everywhere"
-    why_now: "Builder denial payloads are now richer, but some finance, social, and adapter edges still return plain strings and break operator-facing consistency."
+    story_id: T7-E1-S2
+    title: "Add auth, timeout, retry, and rate-limit policy"
+    why_now: "The first external gateway contract now exists, so the next honest step is turning that contract into an enforceable runtime boundary instead of leaving it as planning metadata only."
   - priority: P0
-    story_id: T6-E3-S1
-    title: "Build golden review cases"
-    why_now: "Smoke coverage now guards reviewer handoff structure, so the next quality step is durable golden cases rather than only structural regression tests."
+    story_id: T6-E3-S2
+    title: "Measure finding precision and false positives"
+    why_now: "Golden review cases now exist in CI, so the next quality step is to turn them into tracked quality signals instead of one-time regression fixtures."
   - priority: P1
-    story_id: T3-E2-S1
-    title: "Deepen repo-aware verification discovery beyond heuristics"
-    why_now: "The builder now has stronger acceptance semantics and structured evaluator coverage, so the next honest builder gap is smarter verification discovery instead of more keyword rules."
+    story_id: T5-E1-S4
+    title: "Ensure policy is deterministic and separately testable"
+    why_now: "Structured denials now span more runtime edges, but build, review, gateway, and broader action execution still are not governed by one clearly testable enforcement story."
   - priority: P1
-    story_id: T8-E3-S4
-    title: "Prepare data-handling rules for future enterprise requirements"
-    why_now: "Enterprise-facing operating profiles and client-safe evidence export now exist, so formalizing retention, redaction, and handoff rules is the next honest hardening step."
-  - priority: P1
-    story_id: T7-E1-S1
-    title: "Define gateway contract for external capabilities"
-    why_now: "Execution policy, operating profiles, approval, retention, and cost foundations are now strong enough that a gateway boundary can be defined without premature plumbing."
-  - priority: P2
     story_id: T8-E2-S3
     title: "Add configuration discipline for project roots, secrets, and storage"
-    why_now: "The higher-level operating environment matrix now exists, but concrete deployment-grade configuration discipline is still loose."
+    why_now: "Runtime/data-handling contracts are clearer, but deployment-grade configuration discipline is still loose across project roots and storage."
+  - priority: P1
+    story_id: T3-E2-S2
+    title: "Add review-after-build pass before completion"
+    why_now: "Post-build review already exists and verification discovery is now deeper, so the next builder verification gap is converging that review gate with the wider execution-policy boundary."
+  - priority: P2
+    story_id: T7-E1-S3
+    title: "Add audit and cost tracking for external calls"
+    why_now: "The gateway contract now names request/response and denial fields, so the next safe move is durable audit and cost bookkeeping before any real provider integration."
+  - priority: P2
+    story_id: T7-E1-S4
+    title: "Add policy gating for when external capability use is allowed"
+    why_now: "The gateway contract and policy defaults both exist now, but they are not yet tied together into one enforceable external-call decision path."
 themes:
   - id: T1
     name: Platform Foundation
@@ -270,13 +274,13 @@ themes:
       - id: T3-E2
         name: Build Verification Loop
         status: in_progress
-        approx_progress: 93
+        approx_progress: 96
         stories:
           - id: T3-E2-S1
             name: Add test, lint, and type-check loop for implementation jobs
             status: mostly_complete
-            current_state: Builder now performs repo-aware verification discovery for test, lint, and typecheck surfaces, then runs the discovered suite in the workspace. Custom commands remain available underneath the verification layer.
-            missing: Discovery is still heuristic and not yet a language-specific execution planner.
+            current_state: Builder now performs repo-aware verification discovery for test, lint, and typecheck surfaces across Python config, package scripts, Makefile targets, CI workflow hints, and repo-local toolchains before running the discovered suite in the workspace. Custom commands remain available underneath the verification layer.
+            missing: Discovery is deeper and more honest, but still deterministic rather than a full language-specific execution planner.
           - id: T3-E2-S2
             name: Add review-after-build pass before completion
             status: mostly_complete
@@ -406,8 +410,8 @@ themes:
     name: Security, Governance, And Policy
     goal: Ensure all valuable workflows remain controlled and auditable.
     status: in_progress
-    approx_progress: 92
-    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, review-execution, and build-execution policy profiles, multi-step approval thresholds, plus shared job-persistence, artifact-retention, and gateway-default policies now pair with broader structured denial payloads across core blocked flows.
+    approx_progress: 95
+    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, review-execution, and build-execution policy profiles, multi-step approval thresholds, plus shared job-persistence, artifact-retention, gateway-default policies, and broader structured denial payloads across build, review, tool, web, social, and finance-facing blocked flows.
     main_gap: Build and broader runtime action flow still sit outside a single unified policy enforcement boundary.
     epics:
       - id: T5-E1
@@ -427,9 +431,9 @@ themes:
             missing: Build implementation execution and some broader runtime actions still do not run under one shared enforcement boundary.
           - id: T5-E1-S3
             name: Add structured denial reasons everywhere
-            status: mostly_complete
-            current_state: Structured denial payloads now cover tool policy, operator intake, build/review validation and delivery blockers, evidence export, and operator reporting attention detail.
-            missing: Some remaining finance, social, and adapter edges still return plain error strings instead of the shared denial schema.
+            status: complete_for_phase
+            current_state: Structured denial payloads now cover tool policy, operator intake, build/review validation and delivery blockers, evidence export, operator reporting attention detail, finance budget blockers, web access failures, tool-execution failures, and social/API request errors.
+            missing: One unified runtime enforcement engine is still separate scope.
           - id: T5-E1-S4
             name: Ensure policy is deterministic and separately testable
             status: mostly_complete
@@ -488,9 +492,9 @@ themes:
     name: Cost, Usage, And Observability
     goal: Make the system operable, measurable, and economically sane.
     status: in_progress
-    approx_progress: 91
-    current_state: UsageSummary now lands in a durable per-job control-plane cost ledger for build and review jobs. Orchestrator-visible build/review counters, persisted product jobs, retained artifacts, durable planning/delivery traces, shared cross-system job/artifact/workspace queries, approval backlog visibility with blocked reasons, runtime budget enforcement, budget-aware escalation controls, operator-facing reporting, and review-eval smoke checks in CI now cover workspace health, worker execution, recorded-cost summaries, product-job telemetry, budget posture, and retention posture.
-    main_gap: No live operator UI, golden quality set, or deeper cross-runtime telemetry.
+    approx_progress: 94
+    current_state: UsageSummary now lands in a durable per-job control-plane cost ledger for build and review jobs. Orchestrator-visible build/review counters, persisted product jobs, retained artifacts, durable planning/delivery traces, shared cross-system job/artifact/workspace queries, approval backlog visibility with blocked reasons, runtime budget enforcement, budget-aware escalation controls, operator-facing reporting, review-eval smoke checks, and golden review cases in CI now cover workspace health, worker execution, recorded-cost summaries, product-job telemetry, budget posture, and retention posture.
+    main_gap: No live operator UI, precision telemetry, or deeper cross-runtime telemetry.
     epics:
       - id: T6-E1
         name: Cost Ledger
@@ -545,11 +549,13 @@ themes:
       - id: T6-E3
         name: Quality Evals
         status: in_progress
-        approx_progress: 40
+        approx_progress: 72
         stories:
           - id: T6-E3-S1
             name: Build golden review cases
-            status: not_started
+            status: mostly_complete
+            current_state: Dedicated tests/test_review_eval_golden.py now pins clean, secret, and unsafe-pattern repo verdicts, and CI runs that suite explicitly next to the earlier smoke coverage.
+            missing: Golden cases exist, but precision tracking and cross-version trend telemetry remain future scope.
           - id: T6-E3-S2
             name: Measure finding precision and false positives
             status: not_started
@@ -562,16 +568,21 @@ themes:
   - id: T7
     name: External Capability Gateway
     goal: Integrate external capability providers cleanly and safely.
-    status: not_started
-    approx_progress: 0
+    status: started
+    approx_progress: 22
+    current_state: Runtime model and policy layer now expose explicit gateway defaults plus a first planning-safe external gateway contract with request, response, denial, approval, and cost expectations.
+    main_gap: No auth/timeout/retry policy, no runtime execution path, and no provider integration yet.
     epics:
       - id: T7-E1
         name: Gateway Foundation
-        status: not_started
+        status: started
+        approx_progress: 35
         stories:
           - id: T7-E1-S1
             name: Define gateway contract for external capabilities
-            status: not_started
+            status: mostly_complete
+            current_state: Runtime model and policy now expose a first explicit external_capability_gateway_v1 contract with request/response, denial, approval, and cost-record expectations layered on top of gateway policy defaults.
+            missing: The contract exists, but it does not yet govern a live auth, timeout, retry, or execution path.
           - id: T7-E1-S2
             name: Add auth, timeout, retry, and rate-limit policy
             status: not_started
@@ -590,8 +601,8 @@ themes:
     name: Enterprise Hardening
     goal: Prepare for enterprise-grade architecture without premature fragmentation.
     status: in_progress
-    approx_progress: 91
-    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, internal/client-safe evidence export, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review/build execution policy boundaries, ADR-001 sidecar, TS operator contracts and skeleton, and policy-driven redaction.
+    approx_progress: 94
+    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, internal/client-safe evidence export, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review/build execution policy boundaries, ADR-001 sidecar, TS operator contracts and skeleton, policy-driven redaction, and explicit enterprise-facing data-handling rules.
     main_gap: Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack.
     epics:
       - id: T8-E1
@@ -635,7 +646,7 @@ themes:
       - id: T8-E3
         name: Compliance-Friendly Foundations
         status: in_progress
-        approx_progress: 70
+        approx_progress: 90
         stories:
           - id: T8-E3-S1
             name: Improve audit export and artifact traceability
@@ -654,4 +665,6 @@ themes:
             missing: Non-review client-safe evidence packaging and deeper enterprise data-handling rules remain future scope.
           - id: T8-E3-S4
             name: Prepare data-handling rules for future enterprise requirements
-            status: not_started
+            status: mostly_complete
+            current_state: Runtime model now carries explicit rules for internal operator evidence, client-safe review handoff, and retained operational traces, including export mode, redaction expectation, handoff targets, and retention policy linkage.
+            missing: The rules are explicit, but broader non-review client-safe packaging and stronger enforcement remain future scope.

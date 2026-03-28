@@ -201,11 +201,25 @@ class ToolExecutor:
         handler = self._handlers.get(tool_name)
         if not handler:
             self._error_count += 1
+            denial = make_denial(
+                code="tool_handler_missing",
+                summary="Tool execution failed",
+                detail=f"Unknown tool handler: {tool_name}",
+                scope=tool_name,
+                suggested_action="Use a registered tool name or add the missing handler implementation.",
+                metadata={"available_tools": sorted(self._handlers.keys())},
+            )
             action.phase = ActionPhase.FAILED
-            action.error = f"Unknown tool: {tool_name}"
+            action.error = denial.message
             action.completed_at = time.time()
             self._action_log.record(action)
-            return {"error": f"Unknown tool: {tool_name}. Available: {list(self._handlers.keys())}"}
+            return {
+                "error": (
+                    f"Unknown tool: {tool_name}. "
+                    f"Available: {list(self._handlers.keys())}"
+                ),
+                "denial": denial.to_dict(),
+            }
 
         # ── Step 3: EXECUTE ──
         action.phase = ActionPhase.EXECUTING
@@ -233,8 +247,15 @@ class ToolExecutor:
             return result
         except Exception as e:
             self._error_count += 1
+            denial = make_denial(
+                code="tool_execution_failed",
+                summary="Tool execution failed",
+                detail=f"Tool '{tool_name}' failed: {e!s}",
+                scope=tool_name,
+                suggested_action="Inspect the tool input or runtime state and retry when the handler is healthy.",
+            )
             action.phase = ActionPhase.FAILED
-            action.error = str(e)
+            action.error = denial.message
             action.completed_at = time.time()
             action.duration_ms = int((action.completed_at - action.executed_at) * 1000)
             self._action_log.record(action)
@@ -243,7 +264,10 @@ class ToolExecutor:
                          tool=tool_name,
                          action_id=action.id,
                          error=str(e))
-            return {"error": f"Tool '{tool_name}' failed: {e!s}"}
+            return {
+                "error": denial.message,
+                "denial": denial.to_dict(),
+            }
 
     @property
     def action_log(self) -> ActionLog:

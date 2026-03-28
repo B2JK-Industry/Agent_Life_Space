@@ -11,7 +11,7 @@ Use it for:
 
 ## Current Progress Snapshot
 
-Assessment basis: after Phase 2 Structured Acceptance slice.
+Assessment basis: after Phase 2 Verification Hardening slice.
 
 Important:
 - this is a strategy progress snapshot, not a merge-state indicator
@@ -23,12 +23,12 @@ Important:
 |-------|--------|-----------------|---------------|-----|
 | T1 Platform Foundation | `in_progress` | 96% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted job/plan/trace/delivery records, retention-aware artifact records with prune flow, first-class workspace joins, and explicit environment profiles for review/build/acquisition/export flows. | No unified cross-domain action layer yet. |
 | T2 Reviewer Product | `complete_for_phase` | 96% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, converged Telegram and structured API review entrypoints, shared delivery lifecycle state, and reusable handoff summary artifacts now flow through the shared runtime. | LLM analysis and richer external delivery automation are v2. |
-| T3 Builder Product | `in_progress` | 95% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery, source-aware execution policy traces and blocking, deterministic patch/diff, richer verification/acceptance delivery evidence, a bounded local implementation engine, and structured acceptance criteria flowing through CLI, planning, runtime evaluation, and delivery metadata. | No general code generation yet, no semantic requirement engine, and no external delivery send path. |
+| T3 Builder Product | `in_progress` | 96% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery across Python/Node/Make/CI signals, source-aware execution policy traces and blocking, deterministic patch/diff, richer verification/acceptance delivery evidence, a bounded local implementation engine, and structured acceptance criteria flowing through CLI, planning, runtime evaluation, and delivery metadata. | No general code generation yet, no semantic requirement engine, and no external delivery send path. |
 | T4 Operator Product | `in_progress` | 94% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report/CLI surfaces, operation-count-aware builder planning, and acceptance-summary-aware planning now exist. | No live backend/UI and no full external delivery workflow yet. |
-| T5 Security, Governance, And Policy | `in_progress` | 92% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, multi-step approval thresholds, runtime risky-execution approvals for unified intake, and broader structured denial payloads now exist across core blocked flows. | Build execution and broader runtime action flow still sit outside one unified policy enforcement boundary. |
-| T6 Cost, Usage, And Observability | `in_progress` | 91% | UsageSummary, a durable per-job cost ledger, persisted job duration/retry/failure telemetry, runtime hard/soft/stop-loss budget posture, budget-aware escalation controls, durable plan/trace/delivery telemetry, shared runtime job/artifact/workspace queries, richer operator reporting, approval backlog plus retention posture summaries, and review-eval smoke coverage now exist. | No live operator UI or deeper cross-runtime telemetry yet. |
-| T7 External Capability Gateway | `not_started` | 0% | Nothing yet. | No gateway contract. |
-| T8 Enterprise Hardening | `in_progress` | 91% | Shared control-plane layer, explicit runtime coexistence rules, direct review/build primitive reuse, persisted product-job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, and deterministic review/build execution policy boundaries. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack. |
+| T5 Security, Governance, And Policy | `in_progress` | 95% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, explicit gateway defaults, and structured denial payloads now exist across build/review/tool/web/social/finance-facing blocked flows. | Build execution and broader runtime action flow still sit outside one unified policy enforcement boundary. |
+| T6 Cost, Usage, And Observability | `in_progress` | 94% | UsageSummary, a durable per-job cost ledger, persisted job duration/retry/failure telemetry, runtime hard/soft/stop-loss budget posture, budget-aware escalation controls, durable plan/trace/delivery telemetry, shared runtime job/artifact/workspace queries, richer operator reporting, approval backlog plus retention posture summaries, review-eval smoke coverage, and golden review cases now exist. | No live operator UI, precision telemetry, or deeper cross-runtime telemetry yet. |
+| T7 External Capability Gateway | `started` | 22% | Runtime model and policy layer now expose explicit gateway defaults plus a first planning-safe external gateway contract with request/response, denial, approval, and cost expectations. | No auth/timeout/retry policy, no runtime execution path, and no provider integration. |
+| T8 Enterprise Hardening | `in_progress` | 94% | Shared control-plane layer, explicit runtime coexistence rules, direct review/build primitive reuse, persisted product-job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, deterministic review/build execution policy boundaries, and explicit data-handling rules. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack. |
 
 ## Theme T1: Platform Foundation
 
@@ -200,8 +200,8 @@ Stories:
 Stories:
 - T3-E2-S1: Add test, lint, and type-check loop for implementation jobs.
   - status: `mostly_complete`
-  - current_state: Builder now performs repo-aware verification discovery for test, lint, and typecheck surfaces, then runs the discovered suite in the workspace. Custom commands still remain available underneath the verification layer.
-  - missing: Discovery is still heuristic and not yet a language-specific execution planner.
+  - current_state: Builder now performs repo-aware verification discovery for test, lint, and typecheck surfaces across Python config, package scripts, Makefile targets, CI workflow hints, and repo-local toolchains before running the discovered suite in the workspace. Custom commands still remain available underneath the verification layer.
+  - missing: Discovery is deeper and more honest, but still deterministic rather than a full language-specific execution planner.
 - T3-E2-S2: Add review-after-build pass before completion.
   - status: `mostly_complete`
   - current_state: Successful build jobs can now request a deterministic post-build reviewer pass through `ReviewService`, and completion is now governed by explicit deterministic review-gate policies (`critical_findings`, `high_or_critical`, `advisory`).
@@ -341,12 +341,12 @@ Stories:
   - missing: Build implementation execution and some broader runtime actions
     still do not run under one shared enforcement boundary.
 - T5-E1-S3: Add structured denial reasons everywhere.
-  - status: `mostly_complete`
+  - status: `complete_for_phase`
   - current_state: Structured denial payloads now cover tool policy, operator
     intake, build/review validation and delivery blockers, evidence export,
-    and operator reporting attention detail.
-  - missing: Some remaining finance, social, and adapter edges still return
-    plain error strings instead of the shared denial schema.
+    operator reporting attention detail, finance budget blockers, web access
+    failures, tool-execution failures, and social/API request errors.
+  - missing: One unified runtime enforcement engine is still separate scope.
 - T5-E1-S4: Ensure policy is deterministic and separately testable.
 - T5-E1-S5: Bring repository and diff analysis under the shared execution and
   policy boundary.
@@ -444,8 +444,16 @@ Stories:
 
 ### Epic T6-E3: Quality Evals
 
+- approx_progress: 72%
+
 Stories:
 - T6-E3-S1: Build golden review cases.
+  - status: `mostly_complete`
+  - current_state: Dedicated `tests/test_review_eval_golden.py` now pins clean,
+    secret, and unsafe-pattern repo verdicts, and CI runs that suite
+    explicitly next to the earlier smoke coverage.
+  - missing: Golden cases exist, but precision tracking and cross-version trend
+    telemetry remain future scope.
 - T6-E3-S2: Measure finding precision and false positives.
 - T6-E3-S3: Add review eval smoke checks to CI or local gating.
   - status: `complete_for_phase`
@@ -462,8 +470,17 @@ Goal: integrate external capability providers cleanly and safely.
 
 ### Epic T7-E1: Gateway Foundation
 
+- approx_progress: 35%
+
 Stories:
 - T7-E1-S1: Define gateway contract for external capabilities.
+  - status: `mostly_complete`
+  - current_state: Runtime model and policy now expose a first explicit
+    `external_capability_gateway_v1` contract with request/response, denial,
+    approval, and cost-record expectations layered on top of gateway policy
+    defaults.
+  - missing: The contract exists, but it does not yet govern a live auth,
+    timeout, retry, or execution path.
 - T7-E1-S2: Add auth, timeout, retry, and rate-limit policy.
 - T7-E1-S3: Add audit and cost tracking for external calls.
 - T7-E1-S4: Add policy gating for when external capability use is allowed.
@@ -517,7 +534,7 @@ Stories:
 
 ### Epic T8-E3: Compliance-Friendly Foundations
 
-- approx_progress: 70%
+- approx_progress: 90%
 
 Stories:
 - T8-E3-S1: Improve audit export and artifact traceability.
@@ -533,6 +550,13 @@ Stories:
   - current_state: `EvidenceExportService` plus `python -m agent --export-evidence-job ... --export-evidence-mode client_safe` now package review evidence through the review redaction pipeline while preserving safe approval and delivery summaries.
   - missing: Non-review client-safe evidence packaging and deeper enterprise data-handling rules remain future scope.
 - T8-E3-S4: Prepare data-handling rules for future enterprise requirements.
+  - status: `mostly_complete`
+  - current_state: Runtime model now carries explicit rules for internal
+    operator evidence, client-safe review handoff, and retained operational
+    traces, including export mode, redaction expectation, handoff targets, and
+    retention policy linkage.
+  - missing: The rules are explicit, but broader non-review client-safe
+    packaging and stronger enforcement remain future scope.
 
 ---
 

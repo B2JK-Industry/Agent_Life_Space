@@ -24,6 +24,8 @@ import aiosqlite
 import orjson
 import structlog
 
+from agent.control.denials import make_denial
+
 logger = structlog.get_logger(__name__)
 
 
@@ -406,6 +408,33 @@ class FinanceTracker:
         if policy_result is not None:
             within_budget = within_budget and policy_result.allowed
 
+        denial = None
+        if proposed_amount > 0 and not within_budget:
+            detail_parts: list[str] = []
+            if policy_result is not None and policy_result.warnings:
+                detail_parts.extend(policy_result.warnings)
+            else:
+                detail_parts.append(
+                    f"Proposed amount ${proposed_amount:.2f} exceeds the remaining "
+                    "daily or monthly budget."
+                )
+            denial = make_denial(
+                code="finance_budget_blocked",
+                summary="Finance request blocked by budget policy",
+                detail="; ".join(detail_parts),
+                scope="finance",
+                policy_id="budget_limits_v1",
+                suggested_action=(
+                    "Lower the proposed amount or request explicit human approval "
+                    "before retrying."
+                ),
+                metadata={
+                    "amount_usd": proposed_amount,
+                    "daily_remaining": round(daily_remaining, 2),
+                    "monthly_remaining": round(monthly_remaining, 2),
+                },
+            ).to_dict()
+
         return {
             "daily_spent": round(daily_spent, 2),
             "daily_remaining": round(daily_remaining, 2),
@@ -422,6 +451,7 @@ class FinanceTracker:
                 getattr(policy_result, "requires_approval", False)
             ),
             "forecast": forecast,
+            "denial": denial,
         }
 
     def get_total_income(self) -> float:

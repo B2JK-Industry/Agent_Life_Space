@@ -127,6 +127,24 @@ class TestToolExecutor:
         assert result["denial"]["code"] == "unknown_tool"
 
     @pytest.mark.asyncio
+    async def test_missing_registered_handler_returns_structured_denial(self, executor):
+        del executor._handlers["get_status"]
+
+        result = await executor.execute("get_status", {})
+
+        assert "error" in result
+        assert result["denial"]["code"] == "tool_handler_missing"
+
+    @pytest.mark.asyncio
+    async def test_handler_exception_returns_structured_denial(self, executor):
+        executor._handlers["get_status"] = AsyncMock(side_effect=RuntimeError("boom"))
+
+        result = await executor.execute("get_status", {})
+
+        assert "boom" in result["error"]
+        assert result["denial"]["code"] == "tool_execution_failed"
+
+    @pytest.mark.asyncio
     async def test_stats_tracking(self, executor):
         await executor.execute("check_health", {})
         await executor.execute("get_status", {})

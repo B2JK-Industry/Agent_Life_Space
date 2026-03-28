@@ -1184,6 +1184,93 @@ class TestBuildService:
         assert Path(commands[VerificationKind.TYPECHECK][0]).resolve() == (tool_root / "mypy").resolve()
         assert commands[VerificationKind.TYPECHECK][1:] == [".", "--ignore-missing-imports"]
 
+    def test_get_verification_steps_detects_package_scripts_and_workflows(self, service):
+        temp_repo = tempfile.mkdtemp()
+        (Path(temp_repo) / "package.json").write_text(
+            '{"packageManager":"pnpm@8.15.0",'
+            '"scripts":{"test":"vitest run","lint":"eslint .","typecheck":"tsc --noEmit"},'
+            '"devDependencies":{"typescript":"5.5.0"}}'
+        )
+        (Path(temp_repo) / "tsconfig.json").write_text('{"compilerOptions":{"noEmit":true}}\n')
+        (Path(temp_repo) / ".github" / "workflows").mkdir(parents=True)
+        (Path(temp_repo) / ".github" / "workflows" / "ci.yml").write_text(
+            "name: ci\njobs:\n  test:\n    steps:\n      - run: pnpm run typecheck\n"
+        )
+
+        plan = service._discover_verification_plan(temp_repo)
+
+        assert plan["steps"] == [
+            VerificationKind.TEST,
+            VerificationKind.LINT,
+            VerificationKind.TYPECHECK,
+        ]
+        assert "package.json:scripts.test" in plan["step_details"][VerificationKind.TEST.value]
+        assert "package.json:scripts.lint" in plan["step_details"][VerificationKind.LINT.value]
+        assert "package.json:scripts.typecheck" in plan["step_details"][VerificationKind.TYPECHECK.value]
+
+    def test_resolve_verification_commands_prefers_package_manager_scripts_for_node_project(
+        self, service
+    ):
+        (Path(self._workspace_dir) / "package.json").write_text(
+            '{"packageManager":"pnpm@8.15.0",'
+            '"scripts":{"test":"vitest run","lint":"eslint .","typecheck":"tsc --noEmit"}}'
+        )
+        (Path(self._workspace_dir) / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+
+        commands = service._resolve_verification_commands(
+            repo_path=self._repo_dir,
+            workspace_path=self._workspace_dir,
+            steps=[
+                VerificationKind.TEST,
+                VerificationKind.LINT,
+                VerificationKind.TYPECHECK,
+            ],
+        )
+
+        assert commands[VerificationKind.TEST] == ["pnpm", "run", "test"]
+        assert commands[VerificationKind.LINT] == ["pnpm", "run", "lint"]
+        assert commands[VerificationKind.TYPECHECK] == ["pnpm", "run", "typecheck"]
+
+    def test_resolve_verification_commands_uses_make_targets_without_toolchain(
+        self, service
+    ):
+        (Path(self._workspace_dir) / "Makefile").write_text(
+            "test:\n\tpytest -q\nlint:\n\truff check .\ntypecheck:\n\tmypy .\n"
+        )
+
+        commands = service._resolve_verification_commands(
+            repo_path=self._repo_dir,
+            workspace_path=self._workspace_dir,
+            steps=[
+                VerificationKind.TEST,
+                VerificationKind.LINT,
+                VerificationKind.TYPECHECK,
+            ],
+        )
+
+        assert commands[VerificationKind.TEST] == ["make", "test"]
+        assert commands[VerificationKind.LINT] == ["make", "lint"]
+        assert commands[VerificationKind.TYPECHECK] == ["make", "typecheck"]
+
+    def test_resolve_verification_commands_uses_node_typecheck_binary_without_script(
+        self, service
+    ):
+        node_bin = Path(self._repo_dir) / "node_modules" / ".bin"
+        node_bin.mkdir(parents=True)
+        (node_bin / "tsc").write_text("")
+        (Path(self._workspace_dir) / "tsconfig.json").write_text(
+            '{"compilerOptions":{"noEmit":true}}\n'
+        )
+
+        commands = service._resolve_verification_commands(
+            repo_path=self._repo_dir,
+            workspace_path=self._workspace_dir,
+            steps=[VerificationKind.TYPECHECK],
+        )
+
+        assert Path(commands[VerificationKind.TYPECHECK][0]).resolve() == (node_bin / "tsc").resolve()
+        assert commands[VerificationKind.TYPECHECK][1:] == ["--noEmit"]
+
     async def test_build_records_capability_id(self, service, monkeypatch):
         monkeypatch.setattr(
             "agent.build.service.run_verification_suite",

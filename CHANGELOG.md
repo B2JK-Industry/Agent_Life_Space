@@ -10,6 +10,44 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-03-28
+
+Phase 2 verification hardening release.
+
+### Builder / Verification
+- Builder verification discovery now looks deeper into repository signals
+  before choosing test, lint, and typecheck commands, including Python config,
+  `package.json` scripts, Makefile targets, CI workflow hints, and repo-local
+  Node toolchains
+- Verification command resolution now prefers repo-native execution surfaces
+  instead of falling back too quickly to generic defaults, making builder
+  verification more truthful for mixed Python and Node/TypeScript repositories
+
+### Policy / Runtime Boundaries
+- Structured denial payloads now cover the remaining major social/API, web,
+  tool-execution, and finance-budget edges instead of leaking plain string
+  failures
+- Runtime policy and model surfaces now expose the first explicit external
+  gateway contract plus enterprise-oriented data-handling rules for internal,
+  client-safe, and retained-trace packaging
+
+### Reviewer / Quality
+- Golden review cases now pin expected clean, secret, and unsafe-pattern repo
+  verdicts instead of relying only on smoke-style structure checks
+- CI now runs both review-eval smoke and golden suites to catch reviewer
+  regressions earlier
+
+### Strategy / Phase 2
+- Strategy docs now mark this cycle as a larger Phase 2 verification-hardening
+  slice instead of another narrow infra-only increment
+- The next backlog is now focused on enforcing the new gateway/runtime
+  boundary, measuring review precision, and tightening policy/config
+  discipline across the builder path
+
+### Verification
+- Full release verification passed with `1318 passed, 4 skipped`
+- Local targeted regression coverage passed with `159 passed`
+
 ## [1.11.0] — 2026-03-28
 
 Phase 2 structured acceptance release.

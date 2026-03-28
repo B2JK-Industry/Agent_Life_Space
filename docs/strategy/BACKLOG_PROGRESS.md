@@ -6,7 +6,7 @@ This file tracks current strategic execution progress against:
 - the actual state of `main`
 
 Assessment basis:
-- branch: `main` (after Phase 2 Structured Acceptance slice)
+- branch: `main` (after Phase 2 Verification Hardening slice)
 - interpretation date: `2026-03-28`
 
 Important:
@@ -83,6 +83,8 @@ Status legend:
 - Shared policy primitives now cover job-persistence, artifact-retention, and
   external-gateway defaults in addition to delivery and review-gate policy
   profiles.
+- Structured denial payloads now also cover remaining social/API, web, tool
+  execution, and finance-budget edges that previously leaked plain strings.
 - Per-job usage, token, and cost data now land in a durable control-plane
   ledger for build and review jobs.
 - Builder now has a declared capability catalog, resumable checkpoint-based
@@ -90,6 +92,9 @@ Status legend:
   package preview.
 - Builder verification now performs repo-aware discovery for test, lint, and
   typecheck surfaces instead of relying only on static defaults.
+- Builder verification discovery now also reads package scripts, Makefile
+  targets, CI workflow hints, and repo-local Node toolchains before resolving
+  the final suite commands.
 - Builder execution now resolves explicit build execution policies, records
   policy traces, and blocks unsupported mutable execution sources with stable
   deny-by-default payloads.
@@ -122,6 +127,9 @@ Status legend:
 - Runtime model now exposes higher-level local, operator-controlled, and
   enterprise-hardened operating environment profiles on top of the lower-level
   execution environment boundaries.
+- Runtime model now also exposes a first explicit external gateway contract
+  plus internal, client-safe, and retained-trace data-handling rules for
+  future enterprise packaging and provider integration work.
 - Review delivery now converges on the shared `DeliveryPackage` /
   `DeliveryRecord` lifecycle, including prepared/awaiting_approval/approved/
   handed_off state, approval linkage, and explicit handoff after approval.
@@ -172,9 +180,12 @@ Status legend:
   retained-artifact counts.
 - Review eval smoke coverage now runs in CI to guard handoff summary artifacts
   and client-safe redaction against regression.
+- Review eval golden coverage now also runs in CI to pin clean, secret, and
+  unsafe-pattern repo verdicts.
 - Operator has a mock-driven TS skeleton with reporting/inbox contracts, but no
   live backend.
-- External Gateway and most enterprise-hardening work are still ahead.
+- External Gateway has now started at the contract layer, while most runtime
+  enterprise hardening and provider execution work are still ahead.
 
 ## Theme Status
 
@@ -182,12 +193,12 @@ Status legend:
 |------|--------|-----------------|--------------------------|--------------------|
 | T1 Platform Foundation | in_progress | 96% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted plan/trace/delivery records, first-class workspace joins, shared product-job persistence, retention-aware artifact records, explicit retention posture/prune flows, and explicit environment profiles exposed through the orchestrator and CLI. | No unified cross-domain action layer yet. |
 | T2 Reviewer Product | complete_for_phase | 96% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode, Telegram `/review`, structured API review entrypoint, shared delivery lifecycle, and reusable handoff summary artifacts now converge through the shared runtime. | LLM analysis and richer external delivery automation are v2 |
-| T3 Builder Product | in_progress | 95% | Builder bounded context is tracked on `main`, capability-declared, resumable, orchestrator-wired, CLI-reachable, workspace-synced, repo-aware verification-discovering, source-aware execution-policy-gated, and now includes a bounded local implementation engine plus structured acceptance criteria flowing through CLI, planning, runtime evaluation, and delivery metadata. | No general code generation, no semantic requirement engine, and no external delivery send path yet |
+| T3 Builder Product | in_progress | 96% | Builder bounded context is tracked on `main`, capability-declared, resumable, orchestrator-wired, CLI-reachable, workspace-synced, repo-aware verification-discovering across Python/Node/Make/CI signals, source-aware execution-policy-gated, and now includes a bounded local implementation engine plus structured acceptance criteria flowing through CLI, planning, runtime evaluation, and delivery metadata. | No general code generation, no semantic requirement engine, and no external delivery send path yet |
 | T4 Operator Product | in_progress | 94% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, multi-step approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report service, operation-count-aware builder planning, and acceptance-summary-aware planning now exist. | No live backend/UI and no full external delivery workflow yet |
-| T5 Security, Governance, And Policy | in_progress | 92% | Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approval storage with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution policy profiles, source-aware build-execution policy profiles, multi-step approval thresholds, runtime risky-execution approval gating for operator intake, and broader structured denial payloads now exist across core blocked flows. | Build and broader runtime execution still do not run under one fully unified enforcement engine |
-| T6 Cost, Usage, And Observability | in_progress | 91% | UsageSummary on jobs, a durable per-job control-plane cost ledger, persisted duration/retry/failure telemetry for product jobs, orchestrator-visible build/review counters, durable planning/delivery traces, runtime budget enforcement, budget-aware escalation controls, operator-facing reporting, and review-eval smoke checks in CI now exist. | No live operator UI, golden quality set, or deeper cross-runtime cost telemetry |
-| T7 External Capability Gateway | not_started | 0% | Nothing | No gateway contract |
-| T8 Enterprise Hardening | in_progress | 91% | Shared control-plane layer, explicit runtime coexistence rules, review + build bounded contexts on shared primitives, persisted job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, and deterministic review/build execution policy boundaries now exist. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack. |
+| T5 Security, Governance, And Policy | in_progress | 95% | Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approval storage with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, explicit gateway defaults, and structured denial payloads now exist across build/review/tool/web/social/finance-facing blocked flows. | Build and broader runtime execution still do not run under one fully unified enforcement engine |
+| T6 Cost, Usage, And Observability | in_progress | 94% | UsageSummary on jobs, a durable per-job control-plane cost ledger, persisted duration/retry/failure telemetry for product jobs, orchestrator-visible build/review counters, durable planning/delivery traces, runtime budget enforcement, budget-aware escalation controls, operator-facing reporting, review-eval smoke checks, and golden review cases in CI now exist. | No live operator UI, precision telemetry, or deeper cross-runtime cost observability yet |
+| T7 External Capability Gateway | started | 22% | Runtime model and policy layer now expose explicit gateway defaults plus a first planning-safe external gateway contract with request/response, denial, approval, and cost expectations. | No auth/timeout/retry policy, no runtime execution path, and no provider integration yet |
+| T8 Enterprise Hardening | in_progress | 94% | Shared control-plane layer, explicit runtime coexistence rules, review + build bounded contexts on shared primitives, persisted job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, deterministic review/build execution policy boundaries, and explicit enterprise-facing data-handling rules now exist. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack. |
 
 ## Epic Snapshot
 
@@ -205,7 +216,7 @@ Status legend:
 |------|--------|-----------------|--------------------------|---------------|
 | T2-E1 Review Job Types | mostly_complete | 80% | repo_audit, pr_review, release_review | PR/release still v1-grade |
 | T2-E2 Review Output Standardization | complete_for_phase | 90% | Canonical report, severity, Markdown, JSON | None for v1 |
-| T2-E3 Review Verification | mostly_complete | 75% | Verifier exists and tested | No golden-eval-backed quality regime |
+| T2-E3 Review Verification | mostly_complete | 84% | Verifier exists and tested, and both smoke plus golden review-eval suites now run in CI for reviewer handoff and verdict regression. | No precision tracking or version-over-version quality telemetry yet |
 | T2-E4 Review Delivery | complete_for_phase | 96% | Strict approval, full redaction, shared Telegram/API review entrypoints, shared delivery lifecycle records, explicit post-approval handoff, and copy-paste-ready handoff summary artifacts now exist | Richer external delivery automation remains v2 |
 
 ### T3 Builder Product
@@ -213,7 +224,7 @@ Status legend:
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
 | T3-E1 Capability-Based Build Execution | in_progress | 91% | BuildJob, BuildIntake, BuildService, BuildStorage, workspace sync, capability catalog, orchestrator runtime entrypoint, CLI build entrypoint, resumable checkpoints, deterministic patch/diff capture, a bounded local implementation engine, and build delivery package preview now exist on `main`. | No freeform or LLM code generation yet; bounded execution still depends on an explicit structured plan |
-| T3-E2 Build Verification Loop | in_progress | 93% | Verification suite now discovers test/lint/typecheck surfaces from repo signals in the workspace, persists suite-level plus per-step verification artifacts, and exposes that evidence through the build delivery bundle. Successful jobs can invoke deterministic post-build review before completion, and acceptance failures now produce structured operator-facing denial detail. | Discovery remains heuristic, and reviewer still runs in READ_ONLY_HOST mode over the built workspace path. |
+| T3-E2 Build Verification Loop | in_progress | 96% | Verification suite now discovers test/lint/typecheck surfaces from repo signals, package scripts, Make targets, CI workflow hints, and repo-local toolchains in the workspace, persists suite-level plus per-step verification artifacts, and exposes that evidence through the build delivery bundle. Successful jobs can invoke deterministic post-build review before completion, and acceptance failures now produce structured operator-facing denial detail. | Discovery is deeper and more honest, but it is still deterministic rather than a full language-specific execution planner, and reviewer still runs in READ_ONLY_HOST mode over the built workspace path. |
 | T3-E3 Acceptance Criteria Engine | in_progress | 93% | Acceptance criteria now support typed states, required-vs-optional semantics, explicit evaluator hints, structured metadata, keyword-bound verification checks, explicit `verify:` commands, review-backed security checks, workspace text/JSON checks, change-set path/count/docs checks, and delivery-usable acceptance reports with structured handoff summaries. | No semantic requirement engine beyond deterministic rule-based evaluators. |
 
 ### T4 Operator Product
@@ -228,7 +239,7 @@ Status legend:
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T5-E1 Policy Control Plane | in_progress | 91% | Tool policy deny-by-default now sits alongside deterministic build review-gate, delivery, review-execution, and source-aware build-execution policy profiles, plus shared job-persistence, artifact-retention, and external-gateway policy models surfaced through persistence, artifact, review, reporting, runtime-model metadata, and structured denial payloads across blocked flows. | Build and broader runtime execution are still not governed by one shared enforcement engine. |
+| T5-E1 Policy Control Plane | in_progress | 95% | Tool policy deny-by-default now sits alongside deterministic build review-gate, delivery, review-execution, and source-aware build-execution policy profiles, plus shared job-persistence, artifact-retention, external-gateway policy models, a first explicit gateway contract, and structured denial payloads across tool, web, social/API, finance-budget, build, review, export, and reporting flows. | Build and broader runtime execution are still not governed by one shared enforcement engine. |
 | T5-E2 Approval Model | in_progress | 90% | Approval queue, strict delivery approval, persistent ApprovalStorage, and query filters now cover job/artifact/workspace/bundle linkage across review and build delivery flows, and unified intake/build/review delivery can now require multi-step approval for budget-sensitive, high-risk, or higher-severity work. | Broader policy/action unification and richer approval chains remain partial. |
 | T5-E3 Client-Safe Output | mostly_complete | 70% | Full redaction pipeline, requester/source stripped | Wider system outputs beyond reviewer |
 
@@ -238,13 +249,13 @@ Status legend:
 |------|--------|-----------------|--------------------------|---------------|
 | T6-E1 Cost Ledger | in_progress | 84% | Per-job usage, token, and cost entries now persist into the shared control-plane ledger for build and review jobs, finance budget state exposes hard/soft/stop-loss posture plus warnings/forecast, unified intake enforces runtime budget blocks, brain-side escalation is budget-aware, and the operator report surfaces budget posture, approval caps, and margin hints. | No live operator UI or richer real-cost estimation yet |
 | T6-E2 Runtime Observability | in_progress | 92% | Status and traces exist locally, including orchestrator-visible build/review counters, persisted plan/trace/delivery telemetry, shared job/artifact/workspace queries, approval backlog visibility with blocked reasons, operator-facing report output, plus workspace health, worker execution, persisted job, retention posture, cost, and product-job duration/retry/failure summaries. | No live UI, push updates, or deeper cross-runtime telemetry yet |
-| T6-E3 Quality Evals | in_progress | 40% | Tests are strong, and review-eval smoke coverage now guards handoff artifacts and client-safe redaction in CI | No golden cases, precision tracking, or version-over-version quality telemetry |
+| T6-E3 Quality Evals | in_progress | 72% | Tests are strong, review-eval smoke coverage guards handoff artifacts and client-safe redaction in CI, and durable golden review verdict cases now pin clean, secret, and unsafe-repo outcomes in CI as well. | No precision tracking, false-positive telemetry, or version-over-version quality metrics yet |
 
 ### T7 External Capability Gateway
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T7-E1 Gateway Foundation | not_started | 0% | Nothing | No gateway contract |
+| T7-E1 Gateway Foundation | started | 35% | Runtime model and policy now expose a first explicit gateway contract plus default gateway policies with request/response, denial, approval, and cost-record expectations. | No auth/timeout/retry boundary, no live execution path, and no provider integration yet |
 | T7-E2 obolos.tech Integration | not_started | 0% | Nothing | No provider integration |
 
 ### T8 Enterprise Hardening
@@ -253,7 +264,7 @@ Status legend:
 |------|--------|-----------------|--------------------------|---------------|
 | T8-E1 Contract-First Boundaries | in_progress | 79% | Shared control-plane primitives now back build and review directly. ADR-001 sidecar, unified intake/planning, explicit runtime coexistence rules, cross-system job/artifact/query/report surfaces, and deterministic review execution policy boundaries reinforce the boundary. | Boundaries are documented and queryable, but not yet enforced as extraction-grade invariants. |
 | T8-E2 Deployment And Environment Profiles | in_progress | 76% | Explicit lower-level execution environment profiles now define review, build, acquisition/import, and export-only boundaries, and the runtime model now also exposes local-owner, operator-controlled, and enterprise-hardened operating profiles with default build/delivery/gateway posture. | The higher-level profile matrix now exists, but it is not yet enforced as a deployment-grade runtime contract across the whole stack |
-| T8-E3 Compliance-Friendly Foundations | in_progress | 82% | Redaction module, client-safe review bundle export, client-safe evidence export, delivery gating, retained artifact records with expiry/recoverability/prune state, shared artifact traceability, and dedicated evidence export workflow now exist. | Enterprise data-handling rules and broader non-review client-safe packaging remain partial. |
+| T8-E3 Compliance-Friendly Foundations | in_progress | 90% | Redaction module, client-safe review bundle export, client-safe evidence export, delivery gating, retained artifact records with expiry/recoverability/prune state, shared artifact traceability, dedicated evidence export workflow, and explicit internal/client-safe/retained-trace data-handling rules now exist. | Broader non-review client-safe packaging and stronger enforcement of those rules remain partial. |
 
 ## Current Strategic Interpretation
 
@@ -270,6 +281,15 @@ Status legend:
 - with explicit execution environment profiles plus a higher-level local/operator/enterprise operating profile matrix and budget-aware escalation controls around runtime execution
 - with build delivery bundles that now surface richer verification and acceptance evidence for operator handoff
 - with explicit required/optional acceptance semantics, structured acceptance metadata, richer deterministic evaluator coverage, and clearer builder failure payloads for operator-facing rejection states
+- with builder verification discovery that now understands package scripts,
+  Make targets, CI workflow hints, Python config, and repo-local Node/Python
+  toolchains instead of relying on one narrow heuristic path
+- with structured denial payloads now reaching finance-budget, social/API, web,
+  and tool-execution failure edges as well as product-job blockers
+- with durable golden review verdict cases and CI gating around clean, secret,
+  and unsafe-pattern repositories
+- with the first explicit external gateway contract and enterprise-facing
+  data-handling rules available in the runtime model
 - but with builder execution still bounded to explicit structured local operations rather than general code generation
 - and with acceptance still deterministic/rule-based rather than semantic
 - and without a live operator UI or a fully unified build/review execution-policy engine
@@ -349,6 +369,9 @@ Review/audit-driven fixes landed on `main`:
   prepare, approval request, approval refresh, rejection, and handoff.
 - Builder verification now performs repo-aware discovery for test, lint, and
   typecheck surfaces.
+- Builder verification discovery now also inspects package scripts, Makefile
+  targets, CI workflow hints, and repo-local Node toolchains before resolving
+  commands.
 - Post-build review thresholds are now configurable through deterministic
   review-gate policy profiles.
 - Acceptance evaluation now supports review-backed security checks plus
@@ -382,17 +405,24 @@ Review/audit-driven fixes landed on `main`:
 - Structured denial payloads now cover core tool/intake/build/review/export
   blockers, and reporting now reuses those denial details for operator-visible
   job attention.
+- Structured denial payloads now also cover remaining finance-budget, social
+  API, web-access, and tool-execution failure edges.
 - Review eval smoke coverage now validates reviewer handoff artifacts and
   client-safe redaction in CI.
+- Review eval golden coverage now pins clean, secret, and unsafe-pattern repo
+  verdicts in CI instead of relying only on structural smoke tests.
+- Runtime model now exposes the first explicit external gateway contract plus
+  concrete data-handling rules for internal evidence, client-safe handoff, and
+  retained operational traces.
 
 ## Highest-Leverage Next Steps
 
 See [NEXT_BACKLOG.md](/Users/danielbabjak/Desktop/Agent_Life_Space/docs/strategy/NEXT_BACKLOG.md) for the prioritized execution queue.
 
-Now that the Phase 2 structured-acceptance slice carries richer acceptance
-objects through intake, planning, runtime evaluation, and delivery metadata,
-the next high-leverage work is:
-1. Finish structured denials across remaining finance/social/adapter edges
-2. Turn review quality from smoke-only coverage into durable golden cases
-3. Formalize enterprise data-handling rules and the first gateway contract
-4. Deepen repo-aware verification discovery before attempting semantic matching
+Now that the Phase 2 verification-hardening slice strengthened builder
+verification discovery, denial consistency, review goldens, and runtime
+contracts, the next high-leverage work is:
+1. Turn the gateway contract into an enforceable auth/timeout/retry boundary
+2. Measure review precision and false-positive drift over the new golden cases
+3. Strengthen policy determinism and testability across build/review/gateway execution
+4. Add deployment-grade configuration discipline for roots, secrets, and storage
