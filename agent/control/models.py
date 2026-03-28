@@ -174,6 +174,9 @@ class ArtifactKind(str, Enum):
     VERIFICATION_REPORT = "verification_report"
     ACCEPTANCE_REPORT = "acceptance_report"
     DELIVERY_BUNDLE = "delivery_bundle"
+    EXTERNAL_API_REQUEST = "external_api_request"
+    EXTERNAL_API_RESPONSE = "external_api_response"
+    EXTERNAL_API_CATALOG = "external_api_catalog"
     # Shared
     EXECUTION_TRACE = "execution_trace"
 

@@ -88,13 +88,17 @@ Relevant environment variables:
 - `AGENT_OBOLOS_BUILD_WEBHOOK_URL`
 - `AGENT_OBOLOS_BUILD_WEBHOOK_URL_BACKUP`
 - `AGENT_OBOLOS_AUTH_TOKEN`
+- `AGENT_OBOLOS_API_BASE_URL`
+- `AGENT_OBOLOS_WALLET_ADDRESS`
 
 Relevant vault secret:
 - `obolos.tech.auth_token`
+- `obolos.tech.wallet_address`
 
 Resolution posture:
 - target URLs come from env vars
-- auth token can come from env or from the vault secret
+- handoff auth token can come from env or from the vault secret
+- buyer-side API calls use the configured wallet address as bearer auth when required
 - route readiness is visible through the gateway catalog
 
 Useful checks:
@@ -102,7 +106,10 @@ Useful checks:
 ```bash
 python -m agent --gateway-catalog
 python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capability review_handoff_v1 --gateway-export-mode client_safe
-python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capability build_bundle_v1
+python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capability build_delivery_v1
+python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_catalog_v1
+python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability wallet_balance_v1
+python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_api_call_v1 --provider-api-resource pdf-parser
 ```
 
 ## Release-Readiness Gate
@@ -110,7 +117,7 @@ python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capab
 Before a release or important external handoff, run:
 
 ```bash
-python -m agent --release-readiness --release-readiness-release-label v1.15.0
+python -m agent --release-readiness --release-readiness-release-label v1.16.0
 ```
 
 What it checks today:
@@ -139,7 +146,7 @@ Typical command set:
 PATH="$PWD/.tools/node-v24.14.0-darwin-arm64/bin:$PATH" npm run typecheck
 python -m agent --runtime-model
 python -m agent --report
-python -m agent --release-readiness --release-readiness-release-label v1.15.0
+python -m agent --release-readiness --release-readiness-release-label v1.16.0
 ```
 
 ## Phase 2 Reality Check

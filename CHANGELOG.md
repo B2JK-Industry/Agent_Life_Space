@@ -10,6 +10,31 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.16.0] — 2026-03-28
+
+Documented buyer-side Obolos gateway release.
+
+### Gateway / External API
+- Gateway now distinguishes handoff-style delivery from documented provider API
+  invocation through `external_api_call_v1`
+- `obolos.tech` now exposes buyer-side capability routes for marketplace
+  catalog listing, wallet balance, and slug-based marketplace API calls behind
+  the shared gateway boundary
+- CLI now supports generic provider-backed API calls through
+  `python -m agent --call-provider-api ...`
+
+### Traces / Artifacts / Denials
+- Buyer-side external API calls now retain structured request/response
+  artifacts, emit gateway traces, and persist operate-side cost-ledger entries
+- HTTP 402 payment-required responses now produce structured denials instead of
+  surfacing only raw HTTP failures
+
+### Docs / Strategy
+- Strategy docs now describe Obolos more truthfully as a documented buyer-side
+  marketplace provider plus legacy handoff compatibility path
+- Near-term backlog and progress snapshots now align around the post-Phase-2
+  buyer-side gateway slice
+
 ## [1.15.0] — 2026-03-28
 
 Phase 2 closure and release-readiness release.

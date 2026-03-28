@@ -164,6 +164,7 @@ class ExternalCapabilityRoute:
     description: str
     target_kind: str = "webhook_json"
     target_env_var: str = ""
+    default_target_url: str = ""
     auth_token_env_var: str = ""
     auth_token_secret_name: str = ""
     allowed_job_kinds: tuple[JobKind, ...] = (JobKind.BUILD, JobKind.REVIEW)
@@ -330,6 +331,13 @@ _JOB_PERSISTENCE_POLICIES: dict[str, JobPersistencePolicy] = {
         job_kind=JobKind.REVIEW,
         retain_days=365,
     ),
+    "operate_persistent": JobPersistencePolicy(
+        id="operate_persistent",
+        label="Operate job persistence",
+        job_kind=JobKind.OPERATE,
+        retain_days=90,
+        record_cost_ledger=False,
+    ),
 }
 
 _ARTIFACT_RETENTION_POLICIES: dict[str, ArtifactRetentionPolicy] = {
@@ -404,6 +412,40 @@ _EXTERNAL_GATEWAY_POLICIES: dict[str, ExternalGatewayPolicy] = {
         allowed_url_schemes=("http", "https"),
         environment_profile_id="external_gateway_send",
     ),
+    "owner_api_call": ExternalGatewayPolicy(
+        id="owner_api_call",
+        label="Owner API call",
+        enabled=True,
+        require_approval=False,
+        record_cost=True,
+        allow_network=True,
+        auth_required=True,
+        timeout_seconds=20,
+        max_retries=1,
+        retry_backoff_seconds=0.5,
+        rate_limit_calls=10,
+        rate_limit_window_seconds=60,
+        allowed_target_kinds=("http_api",),
+        allowed_url_schemes=("https",),
+        environment_profile_id="external_gateway_send",
+    ),
+    "owner_api_call_optional_auth": ExternalGatewayPolicy(
+        id="owner_api_call_optional_auth",
+        label="Owner API call optional auth",
+        enabled=True,
+        require_approval=False,
+        record_cost=True,
+        allow_network=True,
+        auth_required=False,
+        timeout_seconds=20,
+        max_retries=1,
+        retry_backoff_seconds=0.5,
+        rate_limit_calls=10,
+        rate_limit_window_seconds=60,
+        allowed_target_kinds=("http_api",),
+        allowed_url_schemes=("https",),
+        environment_profile_id="external_gateway_send",
+    ),
 }
 
 _EXTERNAL_GATEWAY_CONTRACTS: dict[str, ExternalGatewayContract] = {
@@ -443,6 +485,38 @@ _EXTERNAL_GATEWAY_CONTRACTS: dict[str, ExternalGatewayContract] = {
         allow_network=True,
         supported_target_kinds=("webhook_json",),
     ),
+    "external_api_call_v1": ExternalGatewayContract(
+        id="external_api_call_v1",
+        label="External API call v1",
+        description=(
+            "Approval- or policy-gated external API invocation boundary for "
+            "provider-backed marketplace and utility calls."
+        ),
+        request_fields=(
+            "request_id",
+            "job_id",
+            "provider_context",
+            "target",
+            "method",
+            "query_params",
+            "json_payload",
+            "request_headers",
+        ),
+        response_fields=(
+            "gateway_run_id",
+            "status_code",
+            "response_json",
+            "response_text",
+            "response_headers",
+            "usage",
+            "denial",
+        ),
+        default_policy_id="owner_api_call",
+        approval_required=False,
+        record_cost=True,
+        allow_network=True,
+        supported_target_kinds=("http_api",),
+    ),
 }
 
 _EXTERNAL_CAPABILITY_PROVIDERS: dict[str, ExternalCapabilityProvider] = {
@@ -450,15 +524,26 @@ _EXTERNAL_CAPABILITY_PROVIDERS: dict[str, ExternalCapabilityProvider] = {
         id="obolos.tech",
         label="obolos.tech",
         description=(
-            "External capability fabric for controlled delivery handoff and "
-            "future provider-backed execution modes."
+            "External capability fabric for controlled delivery handoff plus "
+            "documented marketplace and wallet-backed API access."
         ),
-        capability_ids=("review_handoff_v1", "build_delivery_v1"),
+        capability_ids=(
+            "review_handoff_v1",
+            "build_delivery_v1",
+            "marketplace_catalog_v1",
+            "wallet_balance_v1",
+            "marketplace_api_call_v1",
+        ),
         notes=(
             "Provider routes must resolve target URL and auth from runtime "
             "configuration or vault before execution.",
             "Gateway remains approval-gated and audit-recorded even when the "
             "provider route is configured.",
+            (
+                "Documented buyer-side marketplace calls use Obolos API routes "
+                "and wallet bearer auth, distinct from the older handoff-style "
+                "delivery adapter."
+            ),
         ),
     ),
 }
@@ -480,6 +565,10 @@ _EXTERNAL_CAPABILITY_ROUTES: dict[str, ExternalCapabilityRoute] = {
         receipt_fields=("delivery_id", "status"),
         estimated_cost_usd=0.02,
         priority=10,
+        notes=(
+            "Legacy compatibility route for delivery handoff semantics.",
+            "This route is not the documented public Obolos marketplace API.",
+        ),
     ),
     "obolos_review_handoff_backup": ExternalCapabilityRoute(
         route_id="obolos_review_handoff_backup",
@@ -497,6 +586,10 @@ _EXTERNAL_CAPABILITY_ROUTES: dict[str, ExternalCapabilityRoute] = {
         receipt_fields=("delivery_id", "status"),
         estimated_cost_usd=0.025,
         priority=20,
+        notes=(
+            "Legacy compatibility route for delivery handoff semantics.",
+            "This route is not the documented public Obolos marketplace API.",
+        ),
     ),
     "obolos_build_delivery_primary": ExternalCapabilityRoute(
         route_id="obolos_build_delivery_primary",
@@ -514,6 +607,10 @@ _EXTERNAL_CAPABILITY_ROUTES: dict[str, ExternalCapabilityRoute] = {
         receipt_fields=("delivery_id", "status"),
         estimated_cost_usd=0.05,
         priority=10,
+        notes=(
+            "Legacy compatibility route for delivery handoff semantics.",
+            "This route is not the documented public Obolos marketplace API.",
+        ),
     ),
     "obolos_build_delivery_backup": ExternalCapabilityRoute(
         route_id="obolos_build_delivery_backup",
@@ -531,6 +628,66 @@ _EXTERNAL_CAPABILITY_ROUTES: dict[str, ExternalCapabilityRoute] = {
         receipt_fields=("delivery_id", "status"),
         estimated_cost_usd=0.055,
         priority=20,
+        notes=(
+            "Legacy compatibility route for delivery handoff semantics.",
+            "This route is not the documented public Obolos marketplace API.",
+        ),
+    ),
+    "obolos_marketplace_catalog_primary": ExternalCapabilityRoute(
+        route_id="obolos_marketplace_catalog_primary",
+        provider_id="obolos.tech",
+        capability_id="marketplace_catalog_v1",
+        label="obolos.tech marketplace catalog",
+        description="Documented buyer-side marketplace catalog for available APIs.",
+        target_kind="http_api",
+        default_target_url="https://obolos.tech/api/marketplace/apis",
+        allowed_job_kinds=(JobKind.OPERATE,),
+        allowed_export_modes=("internal",),
+        gateway_contract_id="external_api_call_v1",
+        gateway_policy_id="owner_api_call_optional_auth",
+        request_mode="obolos_marketplace_catalog_v1",
+        response_mode="obolos_marketplace_catalog_v1",
+        estimated_cost_usd=0.0,
+        priority=10,
+    ),
+    "obolos_wallet_balance_primary": ExternalCapabilityRoute(
+        route_id="obolos_wallet_balance_primary",
+        provider_id="obolos.tech",
+        capability_id="wallet_balance_v1",
+        label="obolos.tech wallet balance",
+        description="Documented buyer-side wallet balance endpoint.",
+        target_kind="http_api",
+        default_target_url="https://obolos.tech/api/wallet/balance",
+        auth_token_env_var="AGENT_OBOLOS_WALLET_ADDRESS",  # noqa: S106
+        auth_token_secret_name="obolos.tech.wallet_address",  # noqa: S106
+        allowed_job_kinds=(JobKind.OPERATE,),
+        allowed_export_modes=("internal",),
+        gateway_contract_id="external_api_call_v1",
+        gateway_policy_id="owner_api_call",
+        request_mode="obolos_wallet_balance_v1",
+        response_mode="obolos_wallet_balance_v1",
+        estimated_cost_usd=0.0,
+        priority=10,
+    ),
+    "obolos_marketplace_api_primary": ExternalCapabilityRoute(
+        route_id="obolos_marketplace_api_primary",
+        provider_id="obolos.tech",
+        capability_id="marketplace_api_call_v1",
+        label="obolos.tech marketplace API call",
+        description="Documented buyer-side paid API invocation through Obolos slug routes.",
+        target_kind="http_api",
+        target_env_var="AGENT_OBOLOS_API_BASE_URL",
+        default_target_url="https://obolos.tech/api",
+        auth_token_env_var="AGENT_OBOLOS_WALLET_ADDRESS",  # noqa: S106
+        auth_token_secret_name="obolos.tech.wallet_address",  # noqa: S106
+        allowed_job_kinds=(JobKind.OPERATE,),
+        allowed_export_modes=("internal",),
+        gateway_contract_id="external_api_call_v1",
+        gateway_policy_id="owner_api_call",
+        request_mode="obolos_marketplace_api_call_v1",
+        response_mode="obolos_marketplace_api_call_v1",
+        estimated_cost_usd=0.0,
+        priority=10,
     ),
 }
 
@@ -854,6 +1011,8 @@ def get_job_persistence_policy(job_kind: JobKind | str) -> JobPersistencePolicy:
     normalized = job_kind if isinstance(job_kind, JobKind) else JobKind(str(job_kind))
     if normalized == JobKind.REVIEW:
         return _JOB_PERSISTENCE_POLICIES["review_persistent"]
+    if normalized == JobKind.OPERATE:
+        return _JOB_PERSISTENCE_POLICIES["operate_persistent"]
     return _JOB_PERSISTENCE_POLICIES["build_persistent"]
 
 

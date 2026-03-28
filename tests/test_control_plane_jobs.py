@@ -1495,6 +1495,8 @@ class TestRuntimeModel:
         assert gateway_policies == {
             "disabled_by_default",
             "approval_before_gateway",
+            "owner_api_call",
+            "owner_api_call_optional_auth",
         }
         approval_gateway_policy = next(
             item
@@ -1510,6 +1512,7 @@ class TestRuntimeModel:
         assert approval_gateway_policy["environment_profile_id"] == "external_gateway_send"
         gateway_contracts = {item["id"] for item in model["external_gateway_contracts"]}
         assert "external_capability_gateway_v1" in gateway_contracts
+        assert "external_api_call_v1" in gateway_contracts
         gateway_contract = next(
             item
             for item in model["external_gateway_contracts"]
@@ -1520,12 +1523,21 @@ class TestRuntimeModel:
         assert "target" in gateway_contract["request_fields"]
         assert "delivery_bundle" in gateway_contract["request_fields"]
         assert gateway_contract["supported_target_kinds"] == ["webhook_json"]
+        api_contract = next(
+            item
+            for item in model["external_gateway_contracts"]
+            if item["id"] == "external_api_call_v1"
+        )
+        assert api_contract["supported_target_kinds"] == ["http_api"]
         providers = {item["id"] for item in model["external_capability_providers"]}
         assert "obolos.tech" in providers
         routes = {item["route_id"] for item in model["external_capability_routes"]}
         assert {
             "obolos_review_handoff_primary",
             "obolos_build_delivery_primary",
+            "obolos_marketplace_catalog_primary",
+            "obolos_wallet_balance_primary",
+            "obolos_marketplace_api_primary",
         } <= routes
         review_route = next(
             item

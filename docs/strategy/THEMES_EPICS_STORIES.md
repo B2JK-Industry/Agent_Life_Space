@@ -11,7 +11,7 @@ Use it for:
 
 ## Current Progress Snapshot
 
-Assessment basis: after Phase 2 closure and release-readiness slice.
+Assessment basis: after the documented buyer-side Obolos API-call slice.
 
 Important:
 - this is a strategy progress snapshot, not a merge-state indicator
@@ -27,7 +27,7 @@ Important:
 | T4 Operator Product | `in_progress` | 96% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report/CLI surfaces, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware delivery reporting, and release-readiness traces now exist. | No live backend/UI and no richer active provider-specific operator workflow yet. |
 | T5 Security, Governance, And Policy | `in_progress` | 99% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, capability-scoped builder guardrails, explicit gateway defaults, provider-aware gateway routing decisions, provider receipt validation, provider-outcome classification, deterministic release-readiness thresholds, and structured denial payloads now exist across build/review/tool/web/social/finance-facing blocked flows. | Build execution and broader runtime action flow still sit outside one unified policy enforcement boundary. |
 | T6 Cost, Usage, And Observability | `in_progress` | 99% | UsageSummary, a durable per-job cost ledger, persisted job duration/retry/failure telemetry, runtime hard/soft/stop-loss budget posture, budget-aware escalation controls, durable plan/trace/delivery/gateway/release telemetry, shared runtime job/artifact/workspace queries, richer operator reporting, approval backlog plus retention posture summaries, review-eval smoke coverage, golden review cases, runtime quality telemetry with release labels, duration, and previous-baseline trend deltas, plus a CLI/CI release-readiness gate now exist. | No live operator UI or broader longitudinal dashboards yet. |
-| T7 External Capability Gateway | `in_progress` | 92% | Runtime model and policy layer now expose explicit gateway defaults, a planning-safe contract, a concrete `obolos.tech` provider catalog, readiness-aware capability routes, env/vault-backed auth resolution, provider-specific request payload shaping, parsed provider receipts, provider-outcome classification, and fallback-capable delivery sends with gateway traces and cost entries. | Only one provider exists so far, and broader downstream provider workflow still remains future scope. |
+| T7 External Capability Gateway | `in_progress` | 95% | Runtime model and policy layer now expose explicit gateway defaults, separate handoff and API-call contracts, a concrete `obolos.tech` provider catalog, readiness-aware capability routes, env/vault-backed auth resolution, documented buyer-side marketplace catalog or wallet or slug-call access, provider-specific request payload shaping, parsed provider receipts, persisted request/response artifacts, provider-outcome classification, and fallback-capable delivery sends with gateway traces and cost entries. | Only one provider exists so far, and seller publishing, x402 payment flow, file-upload calls, and broader downstream provider workflow still remain future scope. |
 | T8 Enterprise Hardening | `in_progress` | 97% | Shared control-plane layer, explicit runtime coexistence rules, direct review/build primitive reuse, persisted product-job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, deterministic review/build execution policy boundaries, explicit gateway runtime boundaries, provider configuration posture, and data-handling rules. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack. |
 
 ## Theme T1: Platform Foundation
@@ -491,18 +491,17 @@ Goal: integrate external capability providers cleanly and safely.
 
 ### Epic T7-E1: Gateway Foundation
 
-- approx_progress: 90%
+- approx_progress: 95%
 
 Stories:
 - T7-E1-S1: Define gateway contract for external capabilities.
   - status: `mostly_complete`
-  - current_state: Runtime model and policy now expose a first explicit
-    `external_capability_gateway_v1` contract with request/response, denial,
-    approval, and cost-record expectations layered on top of gateway policy
-    defaults.
-  - missing: The contract now governs provider routing too, but it still
-    remains webhook-shaped rather than a richer provider-specific payload
-    contract.
+  - current_state: Runtime model and policy now expose both
+    `external_capability_gateway_v1` for handoff-style delivery and
+    `external_api_call_v1` for documented provider-backed API invocation, with
+    explicit request/response, denial, approval, and cost-record expectations.
+  - missing: The contracts are stronger, but they are not yet multi-provider
+    or tied to richer operator workflow.
 - T7-E1-S2: Add auth, timeout, retry, and rate-limit policy.
   - status: `complete_for_phase`
   - current_state: External gateway policy now enforces auth, timeout, retry,
@@ -530,30 +529,35 @@ Stories:
 - T7-E2-S1: Represent obolos.tech capabilities through the gateway model.
   - status: `complete_for_phase`
   - current_state: `obolos.tech` now exists as an explicit provider inside the
-    gateway model with separate review and build delivery capabilities instead
-    of living only as a future placeholder in the masterplan.
-  - missing: Only one provider is modeled so far.
+    gateway model with both the older delivery-handoff compatibility routes and
+    the first documented buyer-side marketplace capabilities.
+  - missing: Only one provider is modeled so far, and seller-side publishing
+    remains future scope.
 - T7-E2-S2: Add capability catalog and routing logic.
   - status: `complete_for_phase`
   - current_state: The gateway now exposes a provider/capability/route
     catalog, surfaces route readiness through runtime/report/CLI, and resolves
     ordered candidate routes by provider, capability, job kind, and export
-    mode, now carrying provider-specific request and receipt modes.
+    mode, now carrying provider-specific request and receipt modes for both
+    delivery handoff and buyer-side API-call routes.
   - missing: Additional providers and broader operator workflow remain future
     scope.
 - T7-E2-S3: Add fallback and failure handling.
-  - status: `complete_for_phase`
+  - status: `mostly_complete`
   - current_state: Provider-backed sends now fall back across configured
     routes when one route is unavailable, returns retryable downstream
     failures, or returns an incomplete provider receipt, and those attempts
-    stay traceable through provider-aware gateway metadata.
-  - missing: Additional providers and richer downstream workflow still remain
-    future scope.
+    stay traceable through provider-aware gateway metadata. Buyer-side API
+    calls now also return structured denials for HTTP 402 payment-required
+    responses instead of surfacing only raw HTTP failures.
+  - missing: Additional providers, seller-side workflow, file uploads, and
+    richer downstream workflow still remain future scope.
 - T7-E2-S4: Add tests for gateway policy and error modes.
   - status: `complete_for_phase`
   - current_state: Targeted gateway tests now cover provider route readiness,
-    direct provider sends, fallback to backup routes, and missing-config
-    failures instead of stopping at the earlier generic boundary tests.
+    direct provider sends, fallback to backup routes, documented Obolos catalog
+    and wallet-backed API calls, and structured payment-required failures
+    instead of stopping at the earlier generic boundary tests.
   - missing: Additional providers and richer downstream error semantics remain
     future scope.
 

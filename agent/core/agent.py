@@ -1432,6 +1432,38 @@ class AgentOrchestrator:
             export_mode=export_mode,
         )
 
+    async def call_external_api(
+        self,
+        *,
+        provider_id: str,
+        capability_id: str,
+        resource: str = "",
+        method: str = "",
+        query_params: dict[str, Any] | None = None,
+        json_payload: dict[str, Any] | None = None,
+        route_id: str = "",
+        auth_token: str = "",
+        gateway_policy_id: str = "",
+        job_id: str = "",
+        requester: str = "operator",
+        title: str = "",
+    ) -> dict[str, Any]:
+        """Call a provider-backed API capability through the explicit gateway."""
+        return await self.gateway.call_api_via_capability(
+            provider_id=provider_id,
+            capability_id=capability_id,
+            resource=resource,
+            method=method,
+            query_params=query_params or {},
+            json_payload=json_payload or {},
+            route_id=route_id,
+            auth_token=auth_token,
+            gateway_policy_id=gateway_policy_id,
+            job_id=job_id,
+            requester=requester,
+            title=title,
+        )
+
     def get_product_job(
         self,
         job_id: str,
