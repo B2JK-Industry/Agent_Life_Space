@@ -43,7 +43,7 @@ Phase 2 closure and release-readiness release.
   of more Phase 2 cleanup slices
 
 ### Verification
-- Full release verification passed with `REPLACE_PYTEST_COUNT`
+- Full release verification passed with `1344 passed, 4 skipped`
 - Targeted builder/control-plane/gateway/quality regression coverage passed
   with `132 passed`
 - `ruff check .` and operator `npm run typecheck` both passed
