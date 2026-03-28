@@ -825,7 +825,11 @@ class TestOrchestratorEntryPoints:
         async def request_executor(**_: object) -> dict[str, object]:
             return {
                 "status_code": 202,
-                "response_json": {"accepted": True},
+                "response_json": {
+                    "accepted": True,
+                    "delivery_id": "report-receipt-1",
+                    "status": "accepted",
+                },
                 "response_text": "accepted",
             }
 
@@ -850,6 +854,7 @@ class TestOrchestratorEntryPoints:
         assert send_result["delivery_record"]["status"] == "handed_off"
         assert send_result["provider_id"] == "obolos.tech"
         assert send_result["route_id"] == "obolos_review_handoff_primary"
+        assert send_result["provider_receipt"]["delivery_id"] == "report-receipt-1"
         assert delivery is not None
         assert delivery["status"] == "handed_off"
         assert report["summary"]["recent_gateway_traces"] >= 1
@@ -996,6 +1001,43 @@ class TestUnifiedOperatorIntake:
             for assignment in preview["plan"]["capability_assignments"]
             if assignment["phase"] == "build"
         )
+
+    def test_preview_surfaces_builder_operation_mix_and_limits(self):
+        service = OperatorIntakeService()
+        intake = OperatorIntake(
+            repo_path="/tmp/repo",
+            work_type="build",
+            build_type="implementation",
+            description="Apply guarded builder plan",
+            target_files=["app.py"],
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.INSERT_AFTER_TEXT,
+                    path="app.py",
+                    match_text="def main():\n",
+                    content="    print('ok')\n",
+                ),
+                BuildOperation(
+                    operation_type=BuildOperationType.DELETE_TEXT,
+                    path="app.py",
+                    match_text="pass\n",
+                ),
+            ],
+        )
+
+        preview = service.preview(intake)
+        build_assignment = next(
+            assignment
+            for assignment in preview["plan"]["capability_assignments"]
+            if assignment["phase"] == "build"
+        )
+
+        assert build_assignment["metadata"]["operation_mix"] == {
+            "delete_text": 1,
+            "insert_after_text": 1,
+        }
+        assert build_assignment["metadata"]["max_operation_count"] == 20
+        assert "insert_after_text" in build_assignment["metadata"]["supported_operation_types"]
 
     def test_preview_uses_budget_policy_and_provider(self):
         service = OperatorIntakeService(
@@ -1413,6 +1455,14 @@ class TestRuntimeModel:
             "obolos_review_handoff_primary",
             "obolos_build_delivery_primary",
         } <= routes
+        review_route = next(
+            item
+            for item in model["external_capability_routes"]
+            if item["route_id"] == "obolos_review_handoff_primary"
+        )
+        assert review_route["request_mode"] == "obolos_handoff_v1"
+        assert review_route["response_mode"] == "obolos_receipt_v1"
+        assert review_route["receipt_fields"] == ["delivery_id", "status"]
         data_rules = {item["id"] for item in model["data_handling_rules"]}
         assert {
             "internal_operator_evidence_v1",

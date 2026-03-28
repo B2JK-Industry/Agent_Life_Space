@@ -5,46 +5,42 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Phase 2 Provider Gateway and Quality Trend slice."
+  assessed_state_note: "Snapshot after Phase 2 Builder Engine v2 and Provider Receipt slice."
   interpretation_date: "2026-03-28"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
     T2: { status: complete_for_phase, approx_progress: 96 }
-    T3: { status: in_progress, approx_progress: 97 }
+    T3: { status: in_progress, approx_progress: 98 }
     T4: { status: in_progress, approx_progress: 95 }
-    T5: { status: in_progress, approx_progress: 97 }
+    T5: { status: in_progress, approx_progress: 98 }
     T6: { status: in_progress, approx_progress: 98 }
-    T7: { status: in_progress, approx_progress: 82 }
+    T7: { status: in_progress, approx_progress: 90 }
     T8: { status: in_progress, approx_progress: 97 }
 next_execution_backlog:
   - priority: P0
     story_id: T3-E1-S5
-    title: "Deepen the bounded local implementation engine"
-    why_now: "The gateway and delivery path are now more production-shaped, so the biggest remaining honest Phase 2 gap is builder depth rather than more boundary scaffolding."
+    title: "Finish the bounded local implementation engine"
+    why_now: "The builder can now do richer deterministic mutations safely, so the remaining honest gap is moving from explicit structured plans toward a production-ready execution envelope."
   - priority: P0
-    story_id: T5-E1-S4
-    title: "Finish deterministic policy coverage across build/review/provider gateway"
-    why_now: "Provider routing now sits inside the gateway boundary, so the next architectural risk is drift between build, review, and provider-aware gateway policy rather than missing policy primitives."
-  - priority: P1
-    story_id: T7-E2-S2
-    title: "Deepen capability catalog and routing logic"
-    why_now: "A concrete provider now exists, but routing still ends in a webhook-shaped handoff instead of richer provider-specific request/response semantics."
-  - priority: P1
-    story_id: T7-E2-S3
-    title: "Deepen fallback and failure handling"
-    why_now: "Fallback now exists, so the next step is making downstream failure interpretation and retry/fallback policy more provider-aware."
-  - priority: P1
     story_id: T3-E3-S2
     title: "Deepen structured acceptance through execution and delivery"
-    why_now: "Builder can now deliver through provider-backed handoff, so the next product move is making acceptance semantics more meaningful than a deterministic checklist alone."
-  - priority: P2
+    why_now: "Builder execution and delivery are now stronger, so the next product move is making acceptance semantics more meaningful than a deterministic checklist alone."
+  - priority: P1
+    story_id: T5-E1-S4
+    title: "Finish deterministic policy coverage across build/review/provider gateway"
+    why_now: "Builder guardrails and provider receipts now exist, so the next architectural risk is drift between build, review, and gateway enforcement rather than missing policy primitives."
+  - priority: P1
     story_id: T6-E3-S4
     title: "Promote quality trends into stronger release gating"
-    why_now: "Release labels, latency, and regression deltas now exist, but they still need to drive more of the release and operator loop."
+    why_now: "Release labels, latency, regression deltas, and provider receipts now exist, but they still need to drive more of the release and operator loop."
+  - priority: P1
+    story_id: T4-E3-S4
+    title: "Promote provider-specific delivery outcomes into operator workflow"
+    why_now: "Gateway sends now return provider receipts, so operator handoff should understand provider outcomes instead of stopping at generic delivery state."
   - priority: P2
     story_id: T8-E2-S4
     title: "Add deployment documentation for controlled environments"
-    why_now: "Provider routing, vault-backed auth, and project-root discipline are now real runtime concerns, so production-oriented setup docs need to catch up before broader use."
+    why_now: "Provider routing, vault-backed auth, project-root discipline, and richer builder execution are now real runtime concerns, so production-oriented setup docs need to catch up before broader use."
 themes:
   - id: T1
     name: Platform Foundation
@@ -236,8 +232,8 @@ themes:
     name: Builder Product
     goal: Make implementation controlled, testable, and acceptance-driven.
     status: in_progress
-    approx_progress: 97
-    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, source-aware build execution policy gating, richer verification and acceptance delivery evidence, a bounded local implementation engine with structured workspace mutations, structured acceptance criteria flowing through CLI, unified intake, planning, runtime evaluation, and delivery metadata, plus an explicit gateway send path for approved build bundles.
+    approx_progress: 98
+    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, source-aware build execution policy gating, richer verification and acceptance delivery evidence, a bounded local implementation engine with richer insert/delete-safe workspace mutations plus capability guardrails, structured acceptance criteria flowing through CLI, unified intake, planning, runtime evaluation, and delivery metadata, plus an explicit gateway send path for approved build bundles.
     main_gap: No general code generation and no semantic requirement engine yet.
     epics:
       - id: T3-E1
@@ -269,7 +265,7 @@ themes:
           - id: T3-E1-S5
             name: Replace placeholder build step with a bounded local implementation engine
             status: mostly_complete
-            current_state: BuildService now executes structured workspace mutations (write_file, append_text, replace_text, json_set) through a bounded local engine, persists per-operation results, and exposes implementation mode plus execution summaries through job metadata, delivery bundles, CLI, and planning surfaces.
+            current_state: BuildService now executes structured workspace mutations (write_file, append_text, replace_text, insert_before_text, insert_after_text, delete_text, delete_file, json_set) through a bounded local engine, enforces deterministic operation-count plus target-scope guardrails, persists per-operation results, and exposes implementation mode plus execution summaries through job metadata, delivery bundles, CLI, and planning surfaces.
             missing: Execution still depends on an explicit structured plan; there is no freeform or LLM-backed code generation yet.
       - id: T3-E2
         name: Build Verification Loop
@@ -410,8 +406,8 @@ themes:
     name: Security, Governance, And Policy
     goal: Ensure all valuable workflows remain controlled and auditable.
     status: in_progress
-    approx_progress: 97
-    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, review-execution, and build-execution policy profiles, multi-step approval thresholds, provider-aware gateway routes and readiness checks, plus shared job-persistence, artifact-retention, gateway-default policies, runtime gateway access evaluation, and broader structured denial payloads across build, review, tool, web, social, and finance-facing blocked flows.
+    approx_progress: 98
+    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, review-execution, and build-execution policy profiles, multi-step approval thresholds, provider-aware gateway routes and readiness checks, provider receipt validation, builder capability guardrails, plus shared job-persistence, artifact-retention, gateway-default policies, runtime gateway access evaluation, and broader structured denial payloads across build, review, tool, web, social, and finance-facing blocked flows.
     main_gap: Build and broader runtime action flow still sit outside a single unified policy enforcement boundary.
     epics:
       - id: T5-E1
@@ -437,7 +433,7 @@ themes:
           - id: T5-E1-S4
             name: Ensure policy is deterministic and separately testable
             status: mostly_complete
-            current_state: Gateway provider catalogs, route selection, config readiness, and fallback behavior now sit on deterministic policy + catalog surfaces with targeted tests instead of living only in ad-hoc runtime branches.
+            current_state: Gateway provider catalogs, route selection, config readiness, provider receipt validation, builder capability guardrails, and fallback behavior now sit on deterministic policy + catalog surfaces with targeted tests instead of living only in ad-hoc runtime branches.
             missing: Build, review, tool, and gateway execution are still not governed by one unified enforcement engine.
           - id: T5-E1-S5
             name: Bring repository and diff analysis under shared execution and policy boundary
@@ -578,9 +574,9 @@ themes:
     name: External Capability Gateway
     goal: Integrate external capability providers cleanly and safely.
     status: in_progress
-    approx_progress: 82
-    current_state: Runtime model and policy layer now expose explicit gateway defaults plus a planning-safe external gateway contract, and the runtime now enforces approval-aware auth/timeout/retry/rate-limit delivery sends with gateway traces, cost entries, a concrete obolos.tech provider catalog, readiness-aware routes, and provider-backed delivery fallback.
-    main_gap: Only one provider exists so far, and delivery still targets webhook-shaped handoff rather than richer provider-specific request/response semantics.
+    approx_progress: 90
+    current_state: Runtime model and policy layer now expose explicit gateway defaults plus a planning-safe external gateway contract, and the runtime now enforces approval-aware auth/timeout/retry/rate-limit delivery sends with gateway traces, cost entries, a concrete obolos.tech provider catalog, readiness-aware routes, provider-specific request payload shaping, parsed provider receipts, and provider-backed delivery fallback.
+    main_gap: Only one provider exists so far, and broader downstream provider workflow still remains future scope.
     epics:
       - id: T7-E1
         name: Gateway Foundation
@@ -590,8 +586,8 @@ themes:
           - id: T7-E1-S1
             name: Define gateway contract for external capabilities
             status: mostly_complete
-            current_state: Runtime model and policy now expose a first explicit external_capability_gateway_v1 contract with request/response, denial, approval, and cost-record expectations layered on top of gateway policy defaults.
-            missing: The contract now governs provider routing too, but it still remains webhook-shaped rather than a richer provider-specific payload contract.
+            current_state: Runtime model and policy now expose a first explicit external_capability_gateway_v1 contract with request/response, denial, approval, and cost-record expectations layered on top of gateway policy defaults, and provider routes can now project richer provider-specific payload and receipt modes on top of that contract.
+            missing: The contract is stronger, but it is not yet multi-provider or tied to richer operator workflow.
           - id: T7-E1-S2
             name: Add auth, timeout, retry, and rate-limit policy
             status: complete_for_phase
@@ -618,14 +614,14 @@ themes:
             missing: Only one provider is modeled so far.
           - id: T7-E2-S2
             name: Add capability catalog and routing logic
-            status: mostly_complete
-            current_state: The gateway now exposes a provider/capability/route catalog, surfaces route readiness through runtime, reporting, and CLI, and resolves ordered candidate routes by provider, capability, job kind, and export mode.
-            missing: Routing still targets webhook-shaped handoff rather than richer provider-specific request/response contracts.
+            status: complete_for_phase
+            current_state: The gateway now exposes a provider/capability/route catalog, surfaces route readiness through runtime, reporting, and CLI, resolves ordered candidate routes by provider, capability, job kind, and export mode, and now carries provider-specific request and receipt modes.
+            missing: Additional providers and broader operator workflow remain future scope.
           - id: T7-E2-S3
             name: Add fallback and failure handling
-            status: mostly_complete
-            current_state: Provider-backed sends now fall back across configured routes when one route is unavailable or returns retryable downstream failures, and those attempts remain traceable through provider-aware gateway metadata.
-            missing: Downstream failure interpretation remains generic rather than provider-specific.
+            status: complete_for_phase
+            current_state: Provider-backed sends now fall back across configured routes when one route is unavailable, returns retryable downstream failures, or returns an incomplete provider receipt, and those attempts remain traceable through provider-aware gateway metadata.
+            missing: Additional providers and richer downstream workflow still remain future scope.
           - id: T7-E2-S4
             name: Add tests for gateway policy and error modes
             status: complete_for_phase

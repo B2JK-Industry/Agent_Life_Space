@@ -77,6 +77,10 @@ class BuildOperationType(str, Enum):
     WRITE_FILE = "write_file"
     APPEND_TEXT = "append_text"
     REPLACE_TEXT = "replace_text"
+    INSERT_BEFORE_TEXT = "insert_before_text"
+    INSERT_AFTER_TEXT = "insert_after_text"
+    DELETE_TEXT = "delete_text"
+    DELETE_FILE = "delete_file"
     JSON_SET = "json_set"
 
 
@@ -113,8 +117,15 @@ class BuildOperation:
             if ".." in candidate.parts:
                 errors.append("implementation_plan.path must not contain '..'")
 
-        if self.operation_type == BuildOperationType.REPLACE_TEXT and not self.match_text:
-            errors.append("replace_text operations require match_text")
+        if self.operation_type in {
+            BuildOperationType.REPLACE_TEXT,
+            BuildOperationType.INSERT_BEFORE_TEXT,
+            BuildOperationType.INSERT_AFTER_TEXT,
+            BuildOperationType.DELETE_TEXT,
+        } and not self.match_text:
+            errors.append(
+                f"{self.operation_type.value} operations require match_text"
+            )
         if self.operation_type == BuildOperationType.JSON_SET and not self.json_path:
             errors.append("json_set operations require json_path")
         return errors

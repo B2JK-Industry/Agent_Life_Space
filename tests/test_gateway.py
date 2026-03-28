@@ -117,7 +117,11 @@ class TestExternalGatewayService:
                 return {"status_code": 503, "response_json": {}, "response_text": "retry"}
             return {
                 "status_code": 202,
-                "response_json": {"accepted": True},
+                "response_json": {
+                    "accepted": True,
+                    "delivery_id": "receipt-build-backup",
+                    "status": "accepted",
+                },
                 "response_text": "accepted",
             }
 
@@ -251,6 +255,9 @@ class TestExternalGatewayService:
         assert primary["configured"] is True
         assert primary["target_source"] == "env"
         assert primary["auth_source"] == "vault"
+        assert primary["request_mode"] == "obolos_handoff_v1"
+        assert primary["response_mode"] == "obolos_receipt_v1"
+        assert primary["receipt_fields"] == ["delivery_id", "status"]
         assert backup["configured"] is False
         assert "AGENT_OBOLOS_REVIEW_WEBHOOK_URL_BACKUP" in backup["missing"]
 
@@ -265,7 +272,11 @@ class TestExternalGatewayService:
         async def executor(**_: object) -> dict[str, object]:
             return {
                 "status_code": 202,
-                "response_json": {"accepted": True},
+                "response_json": {
+                    "accepted": True,
+                    "delivery_id": "receipt-1",
+                    "status": "accepted",
+                },
                 "response_text": "accepted",
             }
 
@@ -293,6 +304,8 @@ class TestExternalGatewayService:
         assert result["route_id"] == "obolos_review_handoff_primary"
         assert result["fallback_used"] is False
         assert result["target_url"] == "https://obolos.example.test/review"
+        assert result["provider_receipt"]["delivery_id"] == "receipt-1"
+        assert result["provider_receipt"]["status"] == "accepted"
         assert result["attempted_routes"][0]["status"] == "sent"
         traces = control_plane.list_traces(trace_kind="gateway", job_id="review-1", limit=10)
         entries = control_plane.list_cost_entries(job_id="review-1", limit=10)
@@ -302,6 +315,62 @@ class TestExternalGatewayService:
             for trace in traces
         )
         assert entries[0].metadata["provider_context"]["provider_id"] == "obolos.tech"
+        assert entries[0].metadata["provider_receipt"]["delivery_id"] == "receipt-1"
+
+    @pytest.mark.asyncio
+    async def test_gateway_provider_send_falls_back_when_primary_receipt_is_incomplete(
+        self,
+        control_plane,
+    ):
+        queue = ApprovalQueue()
+        request_id = _approved_request(queue)
+
+        async def executor(**kwargs: object) -> dict[str, object]:
+            target_url = str(kwargs.get("target_url", ""))
+            if target_url.endswith("/primary"):
+                return {
+                    "status_code": 202,
+                    "response_json": {"accepted": True},
+                    "response_text": "accepted without receipt",
+                }
+            return {
+                "status_code": 202,
+                "response_json": {
+                    "accepted": True,
+                    "delivery_id": "receipt-backup",
+                    "status": "accepted",
+                },
+                "response_text": "accepted",
+            }
+
+        service = ExternalGatewayService(
+            control_plane_state=control_plane,
+            approval_queue=queue,
+            request_executor=executor,
+            environment={
+                "AGENT_OBOLOS_REVIEW_WEBHOOK_URL": "https://obolos.example.test/primary",
+                "AGENT_OBOLOS_REVIEW_WEBHOOK_URL_BACKUP": "https://obolos.example.test/backup",
+                "AGENT_OBOLOS_AUTH_TOKEN": "env-token",
+            },
+        )
+
+        result = await service.send_delivery_via_capability(
+            bundle=_bundle(job_id="review-1", bundle_id="review-bundle-1"),
+            job_kind=JobKind.REVIEW,
+            provider_id="obolos.tech",
+            capability_id="review_handoff_v1",
+            approval_request_id=request_id,
+            export_mode="client_safe",
+        )
+
+        assert result["ok"] is True
+        assert result["route_id"] == "obolos_review_handoff_backup"
+        assert result["fallback_used"] is True
+        assert [attempt["status"] for attempt in result["attempted_routes"]] == [
+            "failed",
+            "sent",
+        ]
+        assert result["provider_receipt"]["delivery_id"] == "receipt-backup"
 
     @pytest.mark.asyncio
     async def test_gateway_provider_send_falls_back_to_backup_route(
@@ -321,7 +390,11 @@ class TestExternalGatewayService:
                 }
             return {
                 "status_code": 202,
-                "response_json": {"accepted": True},
+                "response_json": {
+                    "accepted": True,
+                    "delivery_id": "receipt-build-backup",
+                    "status": "accepted",
+                },
                 "response_text": "accepted",
             }
 

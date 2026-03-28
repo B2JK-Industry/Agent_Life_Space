@@ -167,6 +167,9 @@ class ExternalCapabilityRoute:
     allowed_export_modes: tuple[str, ...] = ("internal", "client_safe")
     gateway_contract_id: str = "external_capability_gateway_v1"
     gateway_policy_id: str = "approval_before_gateway"
+    request_mode: str = "gateway_request_v1"
+    response_mode: str = "http_json_v1"
+    receipt_fields: tuple[str, ...] = ()
     estimated_cost_usd: float = 0.0
     priority: int = 100
     notes: tuple[str, ...] = ()
@@ -452,6 +455,9 @@ _EXTERNAL_CAPABILITY_ROUTES: dict[str, ExternalCapabilityRoute] = {
         auth_token_secret_name="obolos.tech.auth_token",  # noqa: S106
         allowed_job_kinds=(JobKind.REVIEW,),
         allowed_export_modes=("client_safe",),
+        request_mode="obolos_handoff_v1",
+        response_mode="obolos_receipt_v1",
+        receipt_fields=("delivery_id", "status"),
         estimated_cost_usd=0.02,
         priority=10,
     ),
@@ -466,6 +472,9 @@ _EXTERNAL_CAPABILITY_ROUTES: dict[str, ExternalCapabilityRoute] = {
         auth_token_secret_name="obolos.tech.auth_token",  # noqa: S106
         allowed_job_kinds=(JobKind.REVIEW,),
         allowed_export_modes=("client_safe",),
+        request_mode="obolos_handoff_v1",
+        response_mode="obolos_receipt_v1",
+        receipt_fields=("delivery_id", "status"),
         estimated_cost_usd=0.025,
         priority=20,
     ),
@@ -480,6 +489,9 @@ _EXTERNAL_CAPABILITY_ROUTES: dict[str, ExternalCapabilityRoute] = {
         auth_token_secret_name="obolos.tech.auth_token",  # noqa: S106
         allowed_job_kinds=(JobKind.BUILD,),
         allowed_export_modes=("internal",),
+        request_mode="obolos_handoff_v1",
+        response_mode="obolos_receipt_v1",
+        receipt_fields=("delivery_id", "status"),
         estimated_cost_usd=0.05,
         priority=10,
     ),
@@ -494,6 +506,9 @@ _EXTERNAL_CAPABILITY_ROUTES: dict[str, ExternalCapabilityRoute] = {
         auth_token_secret_name="obolos.tech.auth_token",  # noqa: S106
         allowed_job_kinds=(JobKind.BUILD,),
         allowed_export_modes=("internal",),
+        request_mode="obolos_handoff_v1",
+        response_mode="obolos_receipt_v1",
+        receipt_fields=("delivery_id", "status"),
         estimated_cost_usd=0.055,
         priority=20,
     ),
