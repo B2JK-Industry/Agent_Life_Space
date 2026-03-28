@@ -91,6 +91,32 @@ class ExternalGatewayPolicy:
     allow_network: bool = False
 
 
+@dataclass(frozen=True)
+class EnvironmentProfile:
+    """Deterministic execution environment profile."""
+
+    id: str
+    label: str
+    description: str
+    execution_mode: str
+    workspace_required: bool = False
+    host_read_only: bool = False
+    allow_network: bool = False
+    acquisition_allowed: bool = False
+
+
+@dataclass(frozen=True)
+class EscalationBudgetPolicy:
+    """Deterministic rule for when response/model escalation is allowed."""
+
+    id: str
+    label: str
+    block_on_hard_cap: bool = True
+    block_on_stop_loss: bool = True
+    block_on_soft_cap: bool = True
+    block_on_requires_approval: bool = True
+
+
 _REVIEW_GATE_POLICIES: dict[str, ReviewGatePolicy] = {
     "critical_findings": ReviewGatePolicy(
         id="critical_findings",
@@ -223,6 +249,60 @@ _EXTERNAL_GATEWAY_POLICIES: dict[str, ExternalGatewayPolicy] = {
         record_cost=True,
         allow_network=False,
     ),
+}
+
+_ENVIRONMENT_PROFILES: dict[str, EnvironmentProfile] = {
+    "review_host_read_only": EnvironmentProfile(
+        id="review_host_read_only",
+        label="Review host read-only",
+        description="Read-only host access for repository analysis without mutable execution.",
+        execution_mode="read_only_host",
+        workspace_required=False,
+        host_read_only=True,
+        allow_network=False,
+        acquisition_allowed=False,
+    ),
+    "build_workspace_local": EnvironmentProfile(
+        id="build_workspace_local",
+        label="Build workspace local",
+        description="Workspace-bound mutable execution for builder flows.",
+        execution_mode="workspace_bound",
+        workspace_required=True,
+        host_read_only=False,
+        allow_network=False,
+        acquisition_allowed=False,
+    ),
+    "repo_import_mirror": EnvironmentProfile(
+        id="repo_import_mirror",
+        label="Repo import mirror",
+        description="Acquire a supported git source into a managed local mirror before routing.",
+        execution_mode="read_only_host",
+        workspace_required=False,
+        host_read_only=True,
+        allow_network=False,
+        acquisition_allowed=True,
+    ),
+    "delivery_export_only": EnvironmentProfile(
+        id="delivery_export_only",
+        label="Delivery export only",
+        description="Assemble export/evidence packages without performing external send.",
+        execution_mode="read_only_host",
+        workspace_required=False,
+        host_read_only=True,
+        allow_network=False,
+        acquisition_allowed=False,
+    ),
+}
+
+_ESCALATION_BUDGET_POLICIES: dict[str, EscalationBudgetPolicy] = {
+    "cost_guarded": EscalationBudgetPolicy(
+        id="cost_guarded",
+        label="Cost-guarded escalation",
+        block_on_hard_cap=True,
+        block_on_stop_loss=True,
+        block_on_soft_cap=True,
+        block_on_requires_approval=True,
+    )
 }
 
 
@@ -374,3 +454,47 @@ def get_external_gateway_policy(
 def list_external_gateway_policies() -> list[ExternalGatewayPolicy]:
     """Return known external gateway policy profiles."""
     return list(_EXTERNAL_GATEWAY_POLICIES.values())
+
+
+def get_environment_profile(
+    profile_id: str = "review_host_read_only",
+) -> EnvironmentProfile:
+    """Resolve an execution environment profile."""
+    return _ENVIRONMENT_PROFILES.get(
+        profile_id,
+        _ENVIRONMENT_PROFILES["review_host_read_only"],
+    )
+
+
+def list_environment_profiles() -> list[EnvironmentProfile]:
+    """Return known execution environment profiles."""
+    return list(_ENVIRONMENT_PROFILES.values())
+
+
+def get_escalation_budget_policy(
+    policy_id: str = "cost_guarded",
+) -> EscalationBudgetPolicy:
+    """Resolve the budget posture policy for response escalation."""
+    return _ESCALATION_BUDGET_POLICIES.get(
+        policy_id,
+        _ESCALATION_BUDGET_POLICIES["cost_guarded"],
+    )
+
+
+def allow_budget_escalation(
+    budget_status: dict[str, object] | None,
+    *,
+    policy_id: str = "cost_guarded",
+) -> tuple[bool, str]:
+    """Return whether model escalation is allowed under the current budget posture."""
+    policy = get_escalation_budget_policy(policy_id)
+    status = budget_status or {}
+    if policy.block_on_hard_cap and bool(status.get("hard_cap_hit")):
+        return False, "Budget hard cap blocks model escalation."
+    if policy.block_on_stop_loss and bool(status.get("stop_loss_hit")):
+        return False, "Budget stop-loss blocks model escalation."
+    if policy.block_on_requires_approval and bool(status.get("requires_approval")):
+        return False, "Budget approval requirement blocks model escalation."
+    if policy.block_on_soft_cap and bool(status.get("soft_cap_hit")):
+        return False, "Budget soft cap blocks model escalation."
+    return True, ""

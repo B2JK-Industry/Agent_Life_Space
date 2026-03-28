@@ -27,11 +27,15 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Persisted product jobs** — shared control-plane record of build/review job metadata, status, usage, and artifacts
 - **Per-job cost ledger** — durable usage/token/cost entries with report and CLI inspection
 - **Runtime budget governance** — hard-cap, stop-loss, and approval-gated intake execution
+- **Managed repo acquisition** — supported `git_url` intake can clone/import into a controlled local mirror before runtime routing
+- **Evidence export** — `--export-evidence-job` assembles compliance-friendly packages with artifacts, traces, retention, and traceability
+- **Environment profiles** — explicit review/build/acquisition/export execution profiles exposed through the runtime model
+- **Multi-step approvals** — risky intake and delivery paths can require more than one approval deterministically
 - **Shared policy registry** — deterministic job persistence, artifact retention, delivery, review-gate, and gateway defaults
 - **Control-plane queries** — shared inspection across build, review, task, job-runner, agent-loop, artifact, plan, delivery, and workspace state
 - **Runtime model** — explicit coexistence rules for product jobs, planning tasks, infrastructure jobs, and conversational queue items
-- **Operator CLI surfaces** — `--report`, `--runtime-model`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, `--list-persisted-jobs`, `--list-retained-artifacts`, `--list-cost-ledger`, unified `--intake-*`, and explicit build delivery handoff
-- **1273+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **Operator CLI surfaces** — `--report`, `--runtime-model`, `--export-evidence-job`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, `--list-persisted-jobs`, `--list-retained-artifacts`, `--list-cost-ledger`, unified `--intake-*`, and explicit build delivery handoff
+- **1276+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -104,7 +108,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 1273+ passed, ~22s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1276+ passed, ~22s, $0.00
 ```
 
 | Layer | Tests | What |

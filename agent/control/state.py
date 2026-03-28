@@ -371,6 +371,9 @@ class ControlPlaneStateService:
         artifact_ids: list[str] | None = None,
         created_at: str = "",
         completed_at: str = "",
+        duration_ms: float | None = None,
+        retry_count: int = 0,
+        failure_count: int = 0,
         usage: UsageSummary | dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> ProductJobRecord:
@@ -395,6 +398,9 @@ class ControlPlaneStateService:
             created_at=existing.created_at if existing is not None else (created_at or now),
             updated_at=now,
             completed_at=completed_at,
+            duration_ms=duration_ms,
+            retry_count=retry_count,
+            failure_count=failure_count,
             usage=self._coerce_usage(usage),
             metadata={
                 **(existing.metadata if existing is not None else {}),

@@ -33,8 +33,10 @@ from typing import Any
 import structlog
 
 from agent.brain.decision_engine import DecisionEngine
+from agent.control.acquisition import RepoAcquisitionService
 from agent.control.artifact_queries import ArtifactQueryService
-from agent.control.intake import OperatorIntakeService, OperatorWorkType
+from agent.control.evidence_export import EvidenceExportService
+from agent.control.intake import OperatorIntake, OperatorIntakeService, OperatorWorkType
 from agent.control.job_queries import JobQueryService
 from agent.control.models import JobKind, PlanRecordStatus, TraceRecordKind
 from agent.control.reporting import OperatorReportService
@@ -158,6 +160,9 @@ class AgentOrchestrator:
             budget_status_provider=self.finance.check_budget,
         )
         self.runtime_model = RuntimeModelService()
+        self.repo_acquisition = RepoAcquisitionService(
+            root_path=str(self._data_dir / "control" / "acquired_repos")
+        )
         self.workspace_queries = WorkspaceQueryService(
             workspace_manager=self.workspaces,
             build_service=self.build,
@@ -173,6 +178,14 @@ class AgentOrchestrator:
             status_provider=self.get_status,
             control_plane_state=self.control_plane,
             workspace_queries=self.workspace_queries,
+        )
+        self.evidence_exports = EvidenceExportService(
+            job_queries=self.jobs,
+            artifact_queries=self.artifacts,
+            control_plane_state=self.control_plane,
+            workspace_queries=self.workspace_queries,
+            approval_queue=self.approval_queue,
+            runtime_model=self.runtime_model,
         )
 
         # Background tasks
@@ -596,6 +609,31 @@ class AgentOrchestrator:
             result["error"] = approval["reason"]
             return result
 
+        effective_intake = intake
+        if getattr(intake, "git_url", "") and not getattr(intake, "repo_path", ""):
+            effective_intake = OperatorIntake(**intake.to_dict())
+            acquisition = self.repo_acquisition.acquire(intake.git_url)
+            self.control_plane.record_trace(
+                trace_kind=TraceRecordKind.EXECUTION,
+                title="Repository acquisition",
+                detail=(
+                    f"git_url acquisition {'succeeded' if acquisition.acquired else 'failed'} "
+                    f"for {intake.git_url}"
+                ),
+                plan_id=plan_record.plan_id,
+                metadata=acquisition.to_dict(),
+            )
+            result["acquisition"] = acquisition.to_dict()
+            if not acquisition.acquired:
+                self.control_plane.update_plan_status(
+                    plan_record.plan_id,
+                    status=self._plan_status("blocked"),
+                )
+                result["status"] = "blocked"
+                result["error"] = acquisition.error or "Repository acquisition failed."
+                return result
+            effective_intake.repo_path = acquisition.repo_path
+
         self.control_plane.update_plan_status(
             plan_record.plan_id,
             status=self._plan_status("executing"),
@@ -612,11 +650,13 @@ class AgentOrchestrator:
                 "resolved_work_type": qualification.resolved_work_type.value,
                 "risk_level": qualification.risk_level,
                 "budget": budget.to_dict(),
+                "git_url": getattr(intake, "git_url", ""),
+                "effective_repo_path": getattr(effective_intake, "repo_path", ""),
             },
         )
 
         if qualification.resolved_work_type == OperatorWorkType.BUILD:
-            job = await self.run_build_job(self.intake_router.to_build_intake(intake))
+            job = await self.run_build_job(self.intake_router.to_build_intake(effective_intake))
             plan_status = (
                 "completed"
                 if job.status.value == "completed"
@@ -646,7 +686,7 @@ class AgentOrchestrator:
             )
             return result
 
-        job = await self.run_review_job(self.intake_router.to_review_intake(intake))
+        job = await self.run_review_job(self.intake_router.to_review_intake(effective_intake))
         plan_status = (
             "completed"
             if job.status.value == "completed"
@@ -718,6 +758,15 @@ class AgentOrchestrator:
         if category is None:
             return None
 
+        required_approvals = 2 if (
+            qualification.risk_level == "high"
+            or getattr(intake, "git_url", "")
+            or (
+                plan.budget.requires_approval
+                and plan.budget.estimated_cost_usd >= plan.budget.single_tx_approval_cap_usd
+            )
+        ) else 1
+
         approval = self.approval_queue.propose(
             category=category,
             description=description,
@@ -733,6 +782,7 @@ class AgentOrchestrator:
                 "risk_level": qualification.risk_level,
                 "risk_factors": list(qualification.risk_factors),
             },
+            required_approvals=required_approvals,
         )
         return {
             "approval_request_id": approval.id,
@@ -740,6 +790,7 @@ class AgentOrchestrator:
             "category": approval.category.value,
             "description": approval.description,
             "reason": approval.reason,
+            "required_approvals": approval.required_approvals,
         }
 
     def list_operator_plans(
@@ -893,6 +944,18 @@ class AgentOrchestrator:
                 limit=limit,
             )
         ]
+
+    def export_job_evidence(
+        self,
+        job_id: str,
+        *,
+        kind: str | None = None,
+        export_format: str = "json",
+    ) -> dict[str, Any] | str:
+        """Export a compliance-friendly evidence package for one job."""
+        if export_format == "markdown":
+            return self.evidence_exports.export_job_markdown(job_id, kind=kind)
+        return self.evidence_exports.export_job(job_id, kind=kind)
 
     def list_approval_requests(
         self,

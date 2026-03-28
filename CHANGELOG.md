@@ -10,6 +10,39 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-03-28
+
+Phase 1 closure hardening release.
+
+### Operator / Intake
+- Unified operator intake now supports a managed acquisition/import path for
+  supported git sources, including local `file://` repositories that are cloned
+  into a controlled mirror before review/build routing
+- Runtime approval requests can now require multi-step approval when budget,
+  risk, review severity, or delivery scope crosses deterministic thresholds
+
+### Control Plane / Compliance
+- Added a dedicated evidence export surface via
+  `python -m agent --export-evidence-job ...`, assembling persisted product
+  jobs, artifacts, retention records, traces, cost entries, runtime model data,
+  and artifact traceability links into one package
+- Persisted product-job records now carry duration, retry count, and failure
+  count telemetry, and the operator report now summarizes those signals
+- Runtime model now exposes explicit environment profiles for review, build,
+  acquisition/import, and export-only flows
+
+### Budget / Governance
+- Brain-side learning overrides and post-routing model escalation are now
+  budget-aware and can be blocked by runtime budget posture
+- Operator report now exposes richer cost posture, including the
+  single-transaction approval cap and product-job attention entries for failed
+  persisted jobs
+
+### Verification
+- Local release verification passed with `1276 passed, 4 skipped`
+- Additional smoke coverage passed for `--intake-git-url`, `--runtime-model`,
+  `--report`, `--list-persisted-jobs`, and `--export-evidence-job`
+
 ## [1.7.0] — 2026-03-27
 
 Review entrypoint convergence and runtime budget governance release.

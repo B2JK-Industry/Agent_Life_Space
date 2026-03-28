@@ -14,6 +14,7 @@ from typing import Any
 
 from agent.build.capabilities import get_capability
 from agent.build.models import AcceptanceCriterion, BuildIntake, BuildJobType
+from agent.control.acquisition import inspect_git_url
 from agent.control.policy import get_delivery_policy, get_review_gate_policy
 from agent.finance.budget_policy import BudgetPolicy
 from agent.review.models import ReviewIntake, ReviewJobType
@@ -201,6 +202,7 @@ class JobPlanBudgetEnvelope:
     monthly_soft_remaining_usd: float = 0.0
     daily_stop_loss_remaining_usd: float = 0.0
     monthly_stop_loss_remaining_usd: float = 0.0
+    single_tx_approval_cap_usd: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -220,6 +222,7 @@ class JobPlanBudgetEnvelope:
             "monthly_soft_remaining_usd": self.monthly_soft_remaining_usd,
             "daily_stop_loss_remaining_usd": self.daily_stop_loss_remaining_usd,
             "monthly_stop_loss_remaining_usd": self.monthly_stop_loss_remaining_usd,
+            "single_tx_approval_cap_usd": self.single_tx_approval_cap_usd,
         }
 
 
@@ -337,12 +340,13 @@ class OperatorIntakeService:
             )
 
         if intake.source_kind == IntakeSourceKind.GIT_URL and not intake.repo_path:
-            qualification.supported = False
-            qualification.blockers.append(
-                "git_url intake is modeled, but clone-and-route execution is not implemented yet."
-            )
-            qualification.risk_level = "medium"
-            return qualification
+            preview = inspect_git_url(intake.git_url)
+            qualification.supported = preview.supported
+            qualification.warnings.extend(preview.warnings)
+            qualification.blockers.extend(preview.blockers)
+            qualification.risk_level = preview.risk_level
+            if not preview.supported:
+                return qualification
 
         if qualification.blockers:
             qualification.supported = False
@@ -498,6 +502,8 @@ class OperatorIntakeService:
             reasons.append(
                 f"acceptance_criteria present ({len(intake.acceptance_criteria)}), so build routing is meaningful."
             )
+        if intake.git_url and not intake.repo_path:
+            reasons.append("git_url can be acquired into a managed local mirror before runtime execution.")
         if resolved == OperatorWorkType.BUILD and intake.run_post_build_review:
             reasons.append("build route will request deterministic post-build review.")
         if not reasons:
@@ -763,6 +769,8 @@ class OperatorIntakeService:
         parts = []
         if intake.repo_path:
             parts.append(f"repo={Path(intake.repo_path).resolve()}")
+        elif intake.git_url:
+            parts.append(f"git_url={intake.git_url}")
         if intake.diff_spec:
             parts.append(f"diff={intake.diff_spec}")
         if intake.target_files:
@@ -784,6 +792,9 @@ class OperatorIntakeService:
         signals: list[str] = []
         if intake.repo_path:
             signals.append("local repository path provided")
+        elif intake.git_url:
+            signals.append("git_url source provided for managed acquisition")
+            score += 1
         if intake.diff_spec:
             signals.append("explicit diff scope provided")
             score += 2
@@ -878,6 +889,8 @@ class OperatorIntakeService:
         ]
         if intake.run_post_build_review and qualification.resolved_work_type == OperatorWorkType.BUILD:
             rationale.append("post_build_review=true")
+        if intake.git_url and not intake.repo_path:
+            rationale.append("git_url_acquisition=true")
         within_budget = bool(
             budget_status.get("within_budget", True)
             and policy_result.allowed
@@ -902,6 +915,10 @@ class OperatorIntakeService:
             ),
             monthly_stop_loss_remaining_usd=round(
                 float(forecast["monthly"]["stop_loss_remaining"]),
+                2,
+            ),
+            single_tx_approval_cap_usd=round(
+                float(forecast.get("single_tx_approval_cap", 0.0)),
                 2,
             ),
         )
@@ -958,6 +975,17 @@ class OperatorIntakeService:
                 reason="Qualification always passes through the unified intake router.",
             )
         ]
+        if intake.git_url and not intake.repo_path:
+            assignments.append(
+                JobPlanCapability(
+                    phase=PlanPhase.QUALIFY,
+                    capability_id="repo_import_mirror",
+                    label="Repo Import Mirror",
+                    source="environment_profile",
+                    reason="Acquire the supported git_url into a managed local mirror before runtime routing.",
+                    metadata={"git_url": intake.git_url, "environment_profile_id": "repo_import_mirror"},
+                )
+            )
         if qualification.resolved_work_type == OperatorWorkType.BUILD:
             build_capability = self._build_phase_capability(intake)
             assignments.append(build_capability)
@@ -1002,6 +1030,7 @@ class OperatorIntakeService:
                         metadata={
                             "policy_id": review_policy.id,
                             "description": review_policy.description,
+                            "environment_profile_id": "review_host_read_only",
                         },
                     )
                 )
@@ -1017,6 +1046,7 @@ class OperatorIntakeService:
                         "approval_required": delivery_policy.approval_required,
                         "allow_external_send": delivery_policy.allow_external_send,
                         "gateway_required": delivery_policy.gateway_required,
+                        "environment_profile_id": "delivery_export_only",
                     },
                 )
             )
@@ -1035,6 +1065,7 @@ class OperatorIntakeService:
                         if intake.diff_spec
                         else "Repository-wide review selected."
                     ),
+                    metadata={"environment_profile_id": "review_host_read_only"},
                 ),
                 JobPlanCapability(
                     phase=PlanPhase.VERIFY,
@@ -1042,6 +1073,7 @@ class OperatorIntakeService:
                     label="Review Verifier",
                     source="planner_profile",
                     reason="Review output should be verified before operator handoff.",
+                    metadata={"environment_profile_id": "delivery_export_only"},
                 ),
                 JobPlanCapability(
                     phase=PlanPhase.DELIVER,
@@ -1049,6 +1081,7 @@ class OperatorIntakeService:
                     label="Review Handoff Bundle",
                     source="planner_profile",
                     reason="Prepare recovery-safe review artifacts for operator consumption.",
+                    metadata={"environment_profile_id": "delivery_export_only"},
                 ),
             ]
         )
@@ -1071,6 +1104,7 @@ class OperatorIntakeService:
                 "verification_defaults": [
                     item.value for item in capability.verification_defaults
                 ],
+                "environment_profile_id": "build_workspace_local",
             },
         )
 
@@ -1126,6 +1160,8 @@ class OperatorIntakeService:
             return "Reduce scope or budget exposure before submitting this intake."
         if budget.requires_approval:
             return "Request budget approval before submitting this intake for execution."
+        if qualification.source_kind == IntakeSourceKind.GIT_URL:
+            return "Submit the intake to acquire the repository into a managed mirror and then route the requested work."
         if resolved == OperatorWorkType.BUILD:
             return (
                 "Submit the intake to create a build job with phase-aware planning, verification, and artifact capture."

@@ -559,6 +559,9 @@ class ProductJobRecord:
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     completed_at: str = ""
+    duration_ms: float | None = None
+    retry_count: int = 0
+    failure_count: int = 0
     usage: UsageSummary = field(default_factory=lambda: UsageSummary())
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -580,6 +583,9 @@ class ProductJobRecord:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "completed_at": self.completed_at,
+            "duration_ms": self.duration_ms,
+            "retry_count": self.retry_count,
+            "failure_count": self.failure_count,
             "usage": self.usage.to_dict(),
             "metadata": dict(self.metadata),
         }
@@ -603,6 +609,9 @@ class ProductJobRecord:
             created_at=data.get("created_at", ""),
             updated_at=data.get("updated_at", ""),
             completed_at=data.get("completed_at", ""),
+            duration_ms=data.get("duration_ms"),
+            retry_count=int(data.get("retry_count", 0)),
+            failure_count=int(data.get("failure_count", 0)),
             usage=UsageSummary.from_dict(data.get("usage", {})),
             metadata=dict(data.get("metadata", {})),
         )

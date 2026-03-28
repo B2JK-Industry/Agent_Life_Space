@@ -5,138 +5,76 @@ This file is the near-term execution backlog derived from the current state of
 
 Assessment basis:
 - branch: `main`
-- interpretation date: `2026-03-27`
-- baseline: after Review Runtime Convergence + Budget Governance slice
+- interpretation date: `2026-03-28`
+- baseline: after Phase 1 Closure Hardening slice
 
 ## Ready Now
 
 ### P0
 
-1. `T8-E3-S1` Improve audit export and artifact traceability.
-   Why now: retained artifacts, delivery bundles, and policy traces now exist,
-   but there is still no evidence package/export surface on top of them.
+1. `T4-E3-S2` Assemble artifacts, reports, and acceptance results into delivery bundles.
+   Why now: builder delivery and evidence export are stronger, but review
+   delivery still has not migrated onto the shared lifecycle/bundle path.
 
-2. `T6-E2-S1` Track job status, failures, retries, and durations.
-   Why now: persisted product-job records and runtime traces exist, but
-   failure/retry telemetry is still thinner than the shared query and reporting
-   surfaces around them.
+2. `T1-E2-S4` Add artifact retention and recovery rules.
+   Why now: retention metadata and evidence export now exist, but pruning,
+   archival, and policy-driven deletion workflows are still missing.
 
-3. `T6-E1-S3` Make escalation budget-aware.
-   Why now: budget posture now blocks or gates runtime intake execution, so
-   escalation policy is the next honest control-plane layer to align.
+3. `T5-E1-S2` Keep policy deny-by-default across execution modes.
+   Why now: review execution, intake gating, approvals, and evidence export now
+   have clearer boundaries, but build/runtime actions are still not governed by
+   one shared deny-by-default enforcement layer.
 
 ### P1
 
-4. `T4-E1-S4` Add supported repo acquisition/import path behind honest gating.
-   Why now: unsupported work is now rejected honestly, but there is still no
-   safe acquisition path for supported remote import.
+4. `T8-E3-S3` Support client-safe evidence packaging.
+   Why now: evidence export now exists, so the next gap is packaging it for
+   safer external/operator-facing consumption without leaking internal detail.
 
-5. `T5-E2-S3` Support multi-step approvals where needed.
-   Why now: unified intake and delivery now both create approval requests,
-   making richer approval workflows the clearest next governance gap.
+5. `T8-E2-S1` Define local, operator, and enterprise environment profiles.
+   Why now: flow-level environment profiles now exist, so the next step is a
+   higher-level deployment/operating profile matrix.
 
-6. `T1-E3-S4` Add environment profiles for safe execution modes.
-   Why now: review execution policy and runtime budget gating now exist, so
-   environment-sensitive behavior can be formalized more explicitly.
+6. `T6-E2-S3` Track approval backlog and blocked reasons.
+   Why now: approvals are persistent and multi-step, but approval observability
+   is still thinner than the rest of the operator report.
 
-7. `T6-E1-S4` Deepen operator cost posture and margin hints.
-   Why now: budget posture is visible now, but escalation and delivery still
-   lack richer operator-facing cost context.
+7. `T3-E2-S4` Capture all verification artifacts and verdicts.
+   Why now: builder verification is repo-aware, but delivery/evidence still
+   benefits from richer first-class verification artifacts.
 
 ### P2
 
 8. `T7-E1-S1` Define gateway contract for external capabilities.
-   Why now: policy, retention, approval, and cost foundations are stronger now,
-   making gateway definition the next clean boundary rather than premature
-   plumbing.
+   Why now: policy, retention, approval, environment profile, and cost
+   foundations are stronger now, making gateway definition the next clean
+   boundary rather than premature plumbing.
 
 ## What Closed In This Cycle
 
-- `T4-E1-S3` Planner output is now persisted as a first-class handoff record
-  with queryable plan IDs, orchestrator methods, and CLI list/get surfaces.
-- `T4-E2-S4` Planner decisions now emit durable qualification, budget,
-  capability, and delivery traces through the shared control-plane store.
-- `T4-E3-S4` Builder delivery now records prepared/awaiting_approval/approved/
-  rejected/handed_off lifecycle state plus audit events and report-visible
-  delivery inbox entries.
-- `T1-E3-S3` Workspace records are now queryable as shared control-plane joins
-  over jobs, artifacts, approvals, and delivery bundles.
-- `T3-E2-S1` Build verification now performs repo-aware discovery for test,
-  lint, and typecheck surfaces instead of relying only on static defaults.
-- `T3-E2-S2` Post-build review thresholds are now policy-driven via explicit
-  review-gate profiles rather than only a hard-coded fail/critical rule.
-- `T1-E1-S1` `ReviewJob` migrated onto shared control-plane primitives.
-- `T1-E1-S4` Shared job queries now cover build, review, task, job-runner, and
-  agent-loop records.
-- `T1-E1-S5` Runtime coexistence rules are now explicit through
-  `RuntimeModelService` and `python -m agent --runtime-model`.
-- `T1-E2-S5` Shared artifact query/recovery now spans build and review through
-  `ArtifactQueryService`, orchestrator list/get methods, and CLI artifact
-  inspection.
-- `T5-E2-S1` Approval requests are now persistent and queryable with
-  job/artifact filters.
-- `T6-E2-S4` Operator-facing report/inbox surface exists in runtime, CLI, and
-  TS contracts.
-- `T3-E1-S1` Builder capability catalog exists and is surfaced in runtime
-  status/query metadata.
-- `T3-E1-S4` Builder execution now supports resumable checkpoints and CLI
-  resume.
-- `T4-E1-S1` Unified operator intake now exists for review/build routing, with
-  honest rejection of unsupported git-only execution.
-- `T4-E1-S2` Qualification now resolves scope signals, risk factors, and a
-  policy-backed budget envelope instead of only a heuristic tier.
-- `T4-E2-S1` `JobPlan` now exists and is surfaced through intake preview and
-  submission outputs.
-- `T4-E2-S2` `JobPlan` now models explicit qualify/review/build/verify/deliver
-  phases.
-- `T4-E2-S3` Planner output now assigns concrete build catalog capabilities plus
-  planner profiles and structured budget metadata.
-- `T3-E1-S3` Builder now captures deterministic patch + diff artifacts instead
-  of relying on placeholder workspace diff metadata.
-- `T3-E3-S3` Acceptance now supports richer domain-aware evaluators for
-  post-build review, documentation changes, and target-file changes.
-- `T6-E2-S2` Operator report now exposes workspace health and worker execution
-  summaries.
-- `T5-E2-S4` Approval linkage now covers workspace and delivery bundle records
-  in addition to jobs and artifacts.
-- `T4-E3-S1` Shared `DeliveryPackage` model now exists in the control-plane
-  foundation.
-- `T4-E3-S2` Builder now assembles artifacts, acceptance results, and review
-  output into a build delivery package preview.
-- `T4-E3-S3` Build delivery now uses the shared approval gate instead of
-  reviewer-only delivery approval.
-- `T1-E2-S4` Retained artifact records now define recovery/expiry rules across
-  build, review, trace, and delivery-bundle outputs, and those rules are
-  surfaced through artifact queries and operator reporting.
-- `T5-E1-S1` Shared policy now covers job persistence, artifact retention, and
-  external gateway defaults in addition to delivery/review gating profiles.
-- `T1-E1-S3` Build and review jobs now persist shared `ProductJobRecord`
-  metadata, artifact references, and policy context in the control plane.
-- `T6-E1-S1` Per-job usage, token, and cost data now land in a durable
-  control-plane ledger with CLI and report visibility.
-- `T2-E4-S5` Telegram `/review` and structured `/api/review` now converge
-  through the shared review runtime, and review intake preserves channel source
-  through recovery-safe persistence.
-- `T5-E1-S5` Review-side repository and diff access now runs under explicit
-  deterministic review execution policies with durable control-plane traces and
-  persisted product-job metadata.
-- `T6-E1-S2` Unified intake now enforces hard-cap and stop-loss budget blocks
-  at runtime instead of treating budgets as preview-only metadata.
-- `T6-E1-S4` Finance budget state and the operator report now surface explicit
-  budget posture, warnings, and budget-attention inbox items.
-- `T5-E2-S2` Unified intake can now request finance or tool approval before
-  execution for budget-sensitive or high-risk work.
-- `T4-E1-S4` Runtime intake now reports honest `blocked` and
-  `awaiting_approval` states instead of pretending unsupported or policy-blocked
-  work started.
+- `T8-E3-S1` Evidence export now assembles persisted jobs, artifacts, retained
+  records, traces, costs, runtime model metadata, and artifact traceability
+  through a dedicated CLI/runtime surface.
+- `T6-E2-S1` Persisted product-job records now track duration, retry count, and
+  failure count, and the operator report summarizes those signals directly.
+- `T6-E1-S3` Brain-side learning overrides and post-routing quality escalation
+  are now budget-aware instead of living outside runtime budget posture.
+- `T4-E1-S4` Unified intake can now acquire supported git sources into a
+  managed mirror before review/build routing while still rejecting unsupported
+  inputs honestly.
+- `T5-E2-S3` Intake and delivery approval requests can now require multi-step
+  approval where deterministic thresholds demand it.
+- `T1-E3-S4` Runtime model now exposes explicit environment profiles for
+  review, build, acquisition/import, and export-only flows.
+- `T6-E1-S4` Operator report now surfaces single-transaction approval caps and
+  richer persisted product-job attention signals alongside budget posture.
 
 ## Exit Criteria For The Next Backlog Slice
 
 The next slice should be considered successful when:
-- retained artifacts, traces, and delivery bundles can be assembled into a
-  compliance-friendly evidence export
-- product-job records surface clearer failure, retry, and duration telemetry
-- escalation logic becomes budget-aware instead of living outside runtime cost
-  posture
-- operator/runtime surfaces can distinguish safe acquisition paths from
-  unsupported remote work
+- review delivery starts converging on the same shared delivery lifecycle as
+  builder delivery
+- retained artifacts move beyond inspectable metadata into actual pruning or
+  archival workflows
+- shared deny-by-default policy reaches deeper into build/runtime execution
+- evidence export gains a safer client/operator-facing packaging story

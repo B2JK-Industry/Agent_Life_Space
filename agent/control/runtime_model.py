@@ -8,6 +8,8 @@ infrastructure jobs, and conversational loop items visible.
 
 from __future__ import annotations
 
+from agent.control.policy import list_environment_profiles
+
 
 class RuntimeModelService:
     """Describe the canonical role of each runtime surface."""
@@ -109,12 +111,26 @@ class RuntimeModelService:
         return {
             "source_of_truth": "agent/control/runtime_model.py",
             "status": "explicit_for_current_phase",
+            "environment_profiles": [
+                {
+                    "id": profile.id,
+                    "label": profile.label,
+                    "description": profile.description,
+                    "execution_mode": profile.execution_mode,
+                    "workspace_required": profile.workspace_required,
+                    "host_read_only": profile.host_read_only,
+                    "allow_network": profile.allow_network,
+                    "acquisition_allowed": profile.acquisition_allowed,
+                }
+                for profile in list_environment_profiles()
+            ],
             "surfaces": surfaces,
             "global_rules": [
                 "External operator-facing execution must converge on BuildJob or ReviewJob.",
                 "Task remains the planning/dependency layer, not a substitute for product job state.",
                 "JobRunner remains infrastructure-only and should not become a parallel product job model.",
                 "AgentLoop remains an ephemeral queue and must hand off durable work to Task or product jobs.",
+                "Environment profiles define the safe execution boundary for review, build, acquisition, and export flows.",
             ],
             "convergence_plan": [
                 "Keep BuildJob and ReviewJob as canonical product records.",

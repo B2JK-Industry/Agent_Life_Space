@@ -36,26 +36,28 @@ python -m agent --status     # Stav
 python -m agent --health     # Zdravie
 python -m agent --report     # Operator report / inbox
 python -m agent --runtime-model   # Explicitný runtime model
+python -m agent --export-evidence-job <job_id>
 python -m agent --list-artifacts  # Shared artifact query surface
 python -m agent --list-persisted-jobs
 python -m agent --list-retained-artifacts
 python -m agent --list-cost-ledger
+python -m agent --intake-git-url file:///path/to/repo --intake-work-type review --intake-description "Imported review"
 python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-preview
 python -m agent --list-plans
 python -m agent --list-deliveries
-python -m pytest tests/ -q   # Testy (1273+ testov)
+python -m pytest tests/ -q   # Testy (1276+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.7.0** — review entrypoint convergence and runtime budget governance release.
+Aktuálna: **v1.8.0** — phase 1 closure hardening release.
 
-Nové v `v1.7.0`:
-- Telegram `/review` aj nový `POST /api/review` teraz idú cez shared review runtime
-- review-side repo/diff access má explicitné deterministic execution policy profily a control-plane traces
-- unified intake teraz vie runtime-hard budget block na hard-cap a stop-loss stave
-- intake vie vytvoriť finance/tool approval request ešte pred štartom risky execution
-- operator report teraz ukazuje budget posture, warnings a budget attention inbox položky
-- builder verification teraz preferuje repo-local `.venv` toolchain a build bez explicitných acceptance kritérií používa verification outcome ako acceptance proxy
+Nové v `v1.8.0`:
+- unified intake vie zobrať podporovaný `git_url` a najprv ho získať do managed local mirroru
+- pribudol evidence export cez `python -m agent --export-evidence-job <job_id>`
+- persisted product jobs teraz nesú `duration`, `retry_count` a `failure_count`
+- runtime model má explicitné environment profiles pre review/build/acquisition/export
+- risky intake a delivery approval flow vie žiadať multi-step approval
+- budget posture teraz ovplyvňuje aj brain-side escalation, nielen intake gating
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.
