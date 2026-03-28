@@ -13,6 +13,7 @@ from agent.build.models import (
     BuildIntake,
     BuildJob,
     BuildJobType,
+    CriterionEvaluator,
     CriterionKind,
     CriterionStatus,
     VerificationKind,
@@ -58,13 +59,30 @@ class TestAcceptanceCriteria:
         assert c.status == CriterionStatus.SKIPPED
 
     def test_criterion_roundtrip(self):
-        c = AcceptanceCriterion(description="Tests pass", kind=CriterionKind.SECURITY)
+        c = AcceptanceCriterion(
+            description="Tests pass",
+            kind=CriterionKind.SECURITY,
+            required=False,
+            evaluator=CriterionEvaluator.REVIEW,
+        )
         c.meet("passed")
         d = c.to_dict()
         c2 = AcceptanceCriterion.from_dict(d)
         assert c2.description == "Tests pass"
         assert c2.kind == CriterionKind.SECURITY
+        assert c2.required is False
+        assert c2.evaluator == CriterionEvaluator.REVIEW
         assert c2.status == CriterionStatus.MET
+
+    def test_criterion_from_text_parses_tags(self):
+        criterion = AcceptanceCriterion.from_text(
+            "optional: quality: Verify: python -m pytest -q"
+        )
+
+        assert criterion.required is False
+        assert criterion.kind == CriterionKind.QUALITY
+        assert criterion.evaluator == CriterionEvaluator.VERIFY_COMMAND
+        assert criterion.description.startswith("verify:")
 
 
 class TestAcceptanceVerdict:
@@ -113,6 +131,18 @@ class TestAcceptanceVerdict:
         v.criteria[0].skip("skip")
         v.evaluate()
         assert v.accepted is False
+
+    def test_optional_unmet_does_not_reject_required_success(self):
+        v = AcceptanceVerdict(criteria=[
+            AcceptanceCriterion(description="Tests pass"),
+            AcceptanceCriterion(description="Docs updated", required=False),
+        ])
+        v.criteria[0].meet("ok")
+        v.criteria[1].fail("docs missing")
+        v.evaluate()
+        assert v.accepted is True
+        assert v.required_unmet_count == 0
+        assert v.optional_unmet_count == 1
 
     def test_verdict_roundtrip(self):
         v = AcceptanceVerdict(criteria=[
@@ -651,6 +681,42 @@ class TestBuildService:
         assert job.status == JobStatus.FAILED
         assert job.acceptance.criteria[0].status == CriterionStatus.UNMET
         assert "No evaluator available" in job.acceptance.criteria[0].evidence
+        assert job.denial["code"] == "build_acceptance_unmet"
+        assert "Ship to production" in job.error
+
+    async def test_optional_acceptance_failure_does_not_fail_build(
+        self, service, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                )
+            ],
+        )
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Build with optional docs criterion",
+            acceptance_criteria=[
+                AcceptanceCriterion(description="Tests pass"),
+                AcceptanceCriterion(
+                    description="Documentation updated",
+                    required=False,
+                ),
+            ],
+        )
+
+        job = await service.run_build(intake)
+
+        assert job.status == JobStatus.COMPLETED
+        assert job.acceptance.accepted is True
+        assert job.acceptance.required_unmet_count == 0
+        assert job.acceptance.optional_unmet_count == 1
+        assert job.acceptance.criteria[1].status == CriterionStatus.UNMET
 
     async def test_verify_acceptance_runs_inside_workspace(
         self, service, monkeypatch
@@ -1157,6 +1223,7 @@ class TestBuildService:
         assert len(bundle["payload"]["verification_artifact_ids"]) == 3
         assert len(bundle["payload"]["verification_artifacts"]) == 3
         assert bundle["payload"]["acceptance_summary"]["accepted"] is True
+        assert bundle["payload"]["acceptance_summary"]["required_total"] == 1
         assert bundle["payload"]["patch"]["metadata"]["files_changed"] >= 1
         assert approval["bundle_id"] == bundle["bundle_id"]
         assert approval["required_approvals"] == 1

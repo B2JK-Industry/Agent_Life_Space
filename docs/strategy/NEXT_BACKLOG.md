@@ -6,7 +6,7 @@ This file is the near-term execution backlog derived from the current state of
 Assessment basis:
 - branch: `main`
 - interpretation date: `2026-03-28`
-- baseline: after Phase 2 Kickoff slice
+- baseline: after Phase 2 Acceptance Clarity slice
 
 ## Ready Now
 
@@ -29,15 +29,15 @@ Assessment basis:
 
 ### P1
 
-4. `T3-E2-S3` Fail jobs clearly when acceptance criteria are not met.
-   Why now: delivery payloads now surface richer verification and acceptance
-   evidence, but acceptance failures still need clearer operator-facing
-   semantics and deterministic failure reasons.
+4. `T3-E3-S3` Deepen deterministic acceptance evaluators.
+   Why now: the acceptance model now has explicit required/optional semantics
+   and clearer failure payloads, so the next builder step is expanding
+   deterministic evaluator coverage before semantic matching.
 
-5. `T3-E3-S1` Define acceptance criteria object model.
-   Why now: acceptance handoff is now first-class in delivery, so the criteria
-   model itself needs stronger structure before semantic matching can grow
-   honestly.
+5. `T3-E3-S2` Carry richer acceptance structure through intake and planning.
+   Why now: the builder object model is stronger now, but planner/intake
+   surfaces still mostly originate from plain strings and do not yet expose the
+   richer criterion structure explicitly.
 
 6. `T7-E1-S1` Define gateway contract for external capabilities.
    Why now: execution policy, operating profiles, approval, retention, and
@@ -61,6 +61,12 @@ Assessment basis:
   bundle.
 - `T3-E3-S4` Acceptance reports now carry delivery-usable summaries and flow
   into build delivery packaging as first-class operator handoff material.
+- `T3-E2-S3` Acceptance failures now emit structured denial payloads and
+  detailed unmet-required-criterion summaries instead of generic count-only
+  rejection strings.
+- `T3-E3-S1` Acceptance criteria now have explicit required/optional semantics
+  and evaluator hints, with lightweight parsing from operator/CLI strings into
+  the richer builder object model.
 
 ## Exit Criteria For The Next Backlog Slice
 
@@ -68,5 +74,6 @@ The next slice should be considered successful when:
 - structured denials cover the remaining major finance/social/adapter edges
 - reviewer quality regression moves from smoke checks toward durable golden cases
 - enterprise data-handling rules are explicit enough to guide future client/operator packaging
-- builder acceptance failure states become clearer and more operator-usable
+- builder acceptance evaluator coverage grows beyond the current heuristic set
+- richer acceptance structure is visible earlier in intake/planning, not only inside the build service
 - the first external gateway contract is explicit enough to plan against safely

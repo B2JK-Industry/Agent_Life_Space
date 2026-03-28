@@ -42,6 +42,7 @@ from agent.build.models import (
     BuildJob,
     BuildJobType,
     BuildPhase,
+    CriterionEvaluator,
     CriterionKind,
     CriterionStatus,
     VerificationKind,
@@ -931,12 +932,28 @@ class BuildService:
             "criteria_by_status": criteria_by_status,
             "met_criteria": criteria_by_status["met"],
             "unmet_criteria": criteria_by_status["unmet"],
+            "blocking_unmet_criteria": [
+                criterion.to_dict()
+                for criterion in job.acceptance.criteria
+                if criterion.required and criterion.status == CriterionStatus.UNMET
+            ],
+            "optional_unmet_criteria": [
+                criterion.to_dict()
+                for criterion in job.acceptance.criteria
+                if not criterion.required and criterion.status == CriterionStatus.UNMET
+            ],
             "delivery_summary": {
                 "accepted": job.acceptance.accepted,
                 "summary": job.acceptance.summary,
                 "met_count": job.acceptance.met_count,
                 "unmet_count": job.acceptance.unmet_count,
                 "total": job.acceptance.total,
+                "required_total": job.acceptance.required_total,
+                "required_met_count": job.acceptance.required_met_count,
+                "required_unmet_count": job.acceptance.required_unmet_count,
+                "optional_total": job.acceptance.optional_total,
+                "optional_met_count": job.acceptance.optional_met_count,
+                "optional_unmet_count": job.acceptance.optional_unmet_count,
             },
         }
 
@@ -1032,6 +1049,43 @@ class BuildService:
             description = criterion.description.strip()
             normalized = description.lower()
 
+            if criterion.evaluator == CriterionEvaluator.VERIFY_COMMAND:
+                self._evaluate_verify_command(
+                    job=job,
+                    criterion=criterion,
+                    workspace_path=workspace_path,
+                )
+                continue
+
+            if criterion.evaluator == CriterionEvaluator.VERIFICATION:
+                self._evaluate_explicit_verification_criterion(
+                    job=job,
+                    criterion=criterion,
+                    normalized=normalized,
+                )
+                continue
+
+            if criterion.evaluator == CriterionEvaluator.REVIEW:
+                self._evaluate_review_backed_criterion(
+                    job=job,
+                    criterion=criterion,
+                    normalized=normalized,
+                )
+                continue
+
+            if criterion.evaluator == CriterionEvaluator.CHANGE_SET:
+                self._evaluate_change_backed_criterion(
+                    job=job,
+                    criterion=criterion,
+                    normalized=normalized,
+                    change_set=change_set,
+                )
+                continue
+
+            if criterion.evaluator == CriterionEvaluator.WORKSPACE:
+                criterion.meet("Workspace synchronized and build step completed")
+                continue
+
             if normalized.startswith("verify:"):
                 self._evaluate_verify_command(
                     job=job,
@@ -1111,6 +1165,36 @@ class BuildService:
                 continue
 
             criterion.fail(f"No evaluator available for criterion: {description}")
+
+    def _evaluate_explicit_verification_criterion(
+        self,
+        *,
+        job: BuildJob,
+        criterion,
+        normalized: str,
+    ) -> None:
+        if "typecheck" in normalized or "type check" in normalized or "mypy" in normalized:
+            self._evaluate_verification_backed_criterion(
+                criterion=criterion,
+                result=self._find_verification_result(job, VerificationKind.TYPECHECK),
+                label="Typecheck",
+            )
+            return
+        if "lint" in normalized or "ruff" in normalized:
+            self._evaluate_verification_backed_criterion(
+                criterion=criterion,
+                result=self._find_verification_result(job, VerificationKind.LINT),
+                label="Lint",
+            )
+            return
+        if "test" in normalized or "pytest" in normalized:
+            self._evaluate_verification_backed_criterion(
+                criterion=criterion,
+                result=self._find_verification_result(job, VerificationKind.TEST),
+                label="Tests",
+            )
+            return
+        self._evaluate_quality_backed_criterion(job=job, criterion=criterion)
 
     def _sync_repo_into_workspace(
         self,
@@ -1800,11 +1884,20 @@ class BuildService:
                 job.status = JobStatus.COMPLETED
             else:
                 job.status = JobStatus.FAILED
-                if not job.error:
-                    job.error = (
-                        f"Acceptance criteria not met: "
-                        f"{job.acceptance.unmet_count} unmet"
-                    )
+                detail = self._acceptance_failure_detail(job)
+                job.error = detail
+                job.denial = make_denial(
+                    code="build_acceptance_unmet",
+                    summary="Build failed acceptance evaluation",
+                    detail=detail,
+                    scope=job.id,
+                    policy_id=job.intake.delivery_policy_id,
+                    environment_profile_id=self._build_environment_profile_id(job),
+                    suggested_action=(
+                        "Adjust the workspace changes or acceptance criteria and rerun the build."
+                    ),
+                    metadata=self._acceptance_failure_metadata(job),
+                ).to_dict()
 
         job.timing.mark_completed()
         self._record_checkpoint(
@@ -1864,6 +1957,24 @@ class BuildService:
             "met_count": delivery_summary.get("met_count", job.acceptance.met_count),
             "unmet_count": delivery_summary.get("unmet_count", job.acceptance.unmet_count),
             "total": delivery_summary.get("total", job.acceptance.total),
+            "required_total": delivery_summary.get("required_total", job.acceptance.required_total),
+            "required_met_count": delivery_summary.get(
+                "required_met_count",
+                job.acceptance.required_met_count,
+            ),
+            "required_unmet_count": delivery_summary.get(
+                "required_unmet_count",
+                job.acceptance.required_unmet_count,
+            ),
+            "optional_total": delivery_summary.get("optional_total", job.acceptance.optional_total),
+            "optional_met_count": delivery_summary.get(
+                "optional_met_count",
+                job.acceptance.optional_met_count,
+            ),
+            "optional_unmet_count": delivery_summary.get(
+                "optional_unmet_count",
+                job.acceptance.optional_unmet_count,
+            ),
             "verification_passed": acceptance_payload.get(
                 "verification_passed",
                 job.verification_passed,
@@ -1873,6 +1984,48 @@ class BuildService:
                 job.post_build_review_verdict or "not_requested",
             ),
             "criteria_by_status": criteria_by_status,
+            "blocking_unmet_criteria": acceptance_payload.get(
+                "blocking_unmet_criteria",
+                [],
+            ),
+            "optional_unmet_criteria": acceptance_payload.get(
+                "optional_unmet_criteria",
+                [],
+            ),
+        }
+
+    def _acceptance_failure_detail(self, job: BuildJob) -> str:
+        blocking_unmet = [
+            criterion
+            for criterion in job.acceptance.criteria
+            if criterion.required and criterion.status == CriterionStatus.UNMET
+        ]
+        if not blocking_unmet:
+            return job.acceptance.summary
+
+        details: list[str] = []
+        for criterion in blocking_unmet[:3]:
+            evidence = criterion.evidence or "no evidence captured"
+            details.append(f"{criterion.description} ({evidence})")
+        if len(blocking_unmet) > 3:
+            details.append(f"+{len(blocking_unmet) - 3} more unmet required criteria")
+        return "Required acceptance criteria unmet: " + "; ".join(details)
+
+    def _acceptance_failure_metadata(self, job: BuildJob) -> dict[str, Any]:
+        return {
+            "required_unmet_count": job.acceptance.required_unmet_count,
+            "optional_unmet_count": job.acceptance.optional_unmet_count,
+            "criteria": [criterion.to_dict() for criterion in job.acceptance.criteria],
+            "blocking_unmet_criteria": [
+                criterion.to_dict()
+                for criterion in job.acceptance.criteria
+                if criterion.required and criterion.status == CriterionStatus.UNMET
+            ],
+            "optional_unmet_criteria": [
+                criterion.to_dict()
+                for criterion in job.acceptance.criteria
+                if not criterion.required and criterion.status == CriterionStatus.UNMET
+            ],
         }
 
     def get_delivery_bundle(self, job_id: str) -> dict[str, Any] | None:

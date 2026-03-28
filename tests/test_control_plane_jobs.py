@@ -866,6 +866,24 @@ class TestUnifiedOperatorIntake:
 
         assert build_intake.capability_id == "devops_safe"
 
+    def test_to_build_intake_parses_structured_acceptance_tags(self):
+        service = OperatorIntakeService()
+        intake = OperatorIntake(
+            repo_path="/tmp/repo",
+            work_type="build",
+            description="Implement endpoint",
+            acceptance_criteria=[
+                "optional: docs updated",
+                "security: no critical findings",
+            ],
+        )
+
+        build_intake = service.to_build_intake(intake)
+
+        assert build_intake.acceptance_criteria[0].required is False
+        assert build_intake.acceptance_criteria[0].description == "docs updated"
+        assert build_intake.acceptance_criteria[1].kind.value == "security"
+
     @pytest.mark.asyncio
     async def test_orchestrator_submit_operator_intake_routes_to_build(
         self, monkeypatch

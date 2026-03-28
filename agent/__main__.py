@@ -654,7 +654,7 @@ async def run_build_command(
         description=description,
         target_files=target_files or [],
         acceptance_criteria=[
-            AcceptanceCriterion(description=item)
+            AcceptanceCriterion.from_text(item)
             for item in (acceptance_criteria or [])
         ],
         run_post_build_review=not skip_review,

@@ -10,6 +10,34 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.9.1] — 2026-03-28
+
+Phase 2 acceptance clarity release.
+
+### Builder / Acceptance
+- Acceptance criteria now support explicit required-vs-optional semantics and
+  evaluator hints, with lightweight parsing from operator/CLI strings into a
+  richer builder-facing object model
+- Builder can now succeed with unmet optional criteria while failing clearly
+  on unmet required criteria, instead of flattening all acceptance items into
+  the same blocking behavior
+- Build acceptance failures now emit structured denial payloads with detailed
+  unmet-required-criterion summaries for operator-facing triage
+
+### Builder / Delivery
+- Acceptance reports and delivery summaries now expose required/optional
+  counts plus blocking-vs-optional unmet criteria alongside the existing
+  verification and review evidence
+
+### Strategy / Planning
+- Strategy docs now mark this slice as a Phase 2 acceptance-clarity step and
+  move the next builder-facing backlog toward richer deterministic evaluators
+  and acceptance structure earlier in intake/planning
+
+### Verification
+- Local release verification passed with `1290 passed, 4 skipped`
+- Targeted builder/control-plane regression coverage passed with `90 passed`
+
 ## [1.9.0] — 2026-03-28
 
 Phase 2 kickoff release.

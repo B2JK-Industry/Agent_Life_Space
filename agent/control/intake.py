@@ -413,7 +413,7 @@ class OperatorIntakeService:
             description=intake.description,
             target_files=list(intake.target_files),
             acceptance_criteria=[
-                AcceptanceCriterion(description=item)
+                AcceptanceCriterion.from_text(item)
                 for item in intake.acceptance_criteria
             ],
             run_post_build_review=intake.run_post_build_review,

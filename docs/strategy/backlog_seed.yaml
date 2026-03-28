@@ -5,12 +5,12 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Phase 2 Kickoff slice."
+  assessed_state_note: "Snapshot after Phase 2 Acceptance Clarity slice."
   interpretation_date: "2026-03-28"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
     T2: { status: complete_for_phase, approx_progress: 96 }
-    T3: { status: in_progress, approx_progress: 85 }
+    T3: { status: in_progress, approx_progress: 88 }
     T4: { status: in_progress, approx_progress: 92 }
     T5: { status: in_progress, approx_progress: 92 }
     T6: { status: in_progress, approx_progress: 91 }
@@ -30,13 +30,13 @@ next_execution_backlog:
     title: "Prepare data-handling rules for future enterprise requirements"
     why_now: "Enterprise-facing operating profiles and client-safe evidence export now exist, so formalizing retention, redaction, and handoff rules is the next honest hardening step."
   - priority: P1
-    story_id: T3-E2-S3
-    title: "Fail jobs clearly when acceptance criteria are not met"
-    why_now: "Delivery payloads now surface richer verification and acceptance evidence, but acceptance failures still need clearer operator-facing semantics and deterministic failure reasons."
+    story_id: T3-E3-S3
+    title: "Deepen deterministic acceptance evaluators"
+    why_now: "The acceptance model now has explicit required/optional semantics and clearer failure payloads, so the next builder step is expanding deterministic evaluator coverage before semantic matching."
   - priority: P1
-    story_id: T3-E3-S1
-    title: "Define acceptance criteria object model"
-    why_now: "Acceptance handoff is now first-class in delivery, so the criteria model itself needs stronger structure before semantic matching can grow honestly."
+    story_id: T3-E3-S2
+    title: "Carry richer acceptance structure through intake and planning"
+    why_now: "The builder object model is stronger now, but planner/intake surfaces still mostly originate from plain strings and do not yet expose the richer criterion structure explicitly."
   - priority: P1
     story_id: T7-E1-S1
     title: "Define gateway contract for external capabilities"
@@ -236,8 +236,8 @@ themes:
     name: Builder Product
     goal: Make implementation controlled, testable, and acceptance-driven.
     status: in_progress
-    approx_progress: 85
-    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, acceptance criteria engine, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, source-aware build execution policy gating, richer verification/acceptance delivery evidence, policy-driven post-build review gate, and deterministic patch/diff plus delivery-lifecycle output.
+    approx_progress: 88
+    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, acceptance criteria engine, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, source-aware build execution policy gating, richer verification/acceptance delivery evidence, explicit required/optional acceptance semantics, clearer failure payloads, policy-driven post-build review gate, and deterministic patch/diff plus delivery-lifecycle output.
     main_gap: No LLM implementation, no real code generation, and no external delivery send path yet.
     epics:
       - id: T3-E1
@@ -269,7 +269,7 @@ themes:
       - id: T3-E2
         name: Build Verification Loop
         status: in_progress
-        approx_progress: 90
+        approx_progress: 93
         stories:
           - id: T3-E2-S1
             name: Add test, lint, and type-check loop for implementation jobs
@@ -283,9 +283,9 @@ themes:
             missing: Reviewer still operates in READ_ONLY_HOST mode over the built workspace path, and policy is not yet unified with the wider execution boundary.
           - id: T3-E2-S3
             name: Fail jobs clearly when acceptance criteria are not met
-            status: in_progress
-            current_state: BuildService fails jobs when acceptance criteria are unmet.
-            missing: Acceptance evaluation is still rule-based and limited.
+            status: complete_for_phase
+            current_state: BuildService now fails builds with structured denial payloads and detailed unmet-required-criterion summaries instead of generic count-only rejection strings, while delivery summaries expose the same blocking-vs-optional acceptance state.
+            missing: The acceptance engine is still deterministic and rule-based; there is no semantic requirement model yet.
           - id: T3-E2-S4
             name: Capture all verification artifacts and verdicts
             status: complete_for_phase
@@ -294,13 +294,13 @@ themes:
       - id: T3-E3
         name: Acceptance Criteria Engine
         status: in_progress
-        approx_progress: 78
+        approx_progress: 84
         stories:
           - id: T3-E3-S1
             name: Define acceptance criteria object model
-            status: in_progress
-            current_state: AcceptanceCriterion supports typed criterion kinds and statuses with meet, fail, and skip transitions.
-            missing: No semantic evaluation beyond rule-based checks yet.
+            status: complete_for_phase
+            current_state: AcceptanceCriterion now has explicit kind, required-vs-optional semantics, evaluator hints, typed status transitions, and lightweight parsing from operator/CLI strings into a more structured builder-facing object model.
+            missing: The object model is stronger, but semantic requirement matching is still outside the current deterministic evaluator set.
           - id: T3-E3-S2
             name: Attach acceptance criteria to jobs
             status: in_progress
