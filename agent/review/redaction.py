@@ -80,6 +80,8 @@ def redact_finding(finding: dict[str, Any]) -> dict[str, Any]:
         # Keep relative paths, redact absolute
         if f["file_path"].startswith("/") or f["file_path"].startswith("\\"):
             f["file_path"] = redact_paths(f["file_path"])
+    if f.get("location"):
+        f["location"] = apply_client_redaction(str(f["location"]))
     # All client-facing text fields through full redaction pipeline
     for text_field in ("description", "impact", "recommendation"):
         if f.get(text_field):
@@ -94,6 +96,14 @@ def redact_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
     # Redact markdown report
     if result.get("markdown_report"):
         result["markdown_report"] = apply_client_redaction(result["markdown_report"])
+    if result.get("operator_summary_markdown"):
+        result["operator_summary_markdown"] = apply_client_redaction(
+            result["operator_summary_markdown"]
+        )
+    if result.get("pr_comment_markdown"):
+        result["pr_comment_markdown"] = apply_client_redaction(
+            result["pr_comment_markdown"]
+        )
 
     # Redact findings
     if result.get("findings_only"):
@@ -110,6 +120,23 @@ def redact_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
         if jr.get("findings"):
             jr["findings"] = [redact_finding(f) for f in jr["findings"]]
         result["json_report"] = jr
+
+    summary_pack = result.get("summary_pack", {})
+    if summary_pack:
+        redacted_pack = dict(summary_pack)
+        for key in ("operator_summary_markdown", "pr_comment_markdown", "scope_description"):
+            if redacted_pack.get(key):
+                redacted_pack[key] = apply_client_redaction(redacted_pack[key])
+        if redacted_pack.get("top_findings"):
+            redacted_pack["top_findings"] = [
+                redact_finding(finding) for finding in redacted_pack["top_findings"]
+            ]
+        if redacted_pack.get("open_questions"):
+            redacted_pack["open_questions"] = [
+                apply_client_redaction(str(item))
+                for item in redacted_pack["open_questions"]
+            ]
+        result["summary_pack"] = redacted_pack
 
     # Strip internal-only fields
     result.pop("execution_trace", None)

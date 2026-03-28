@@ -18,6 +18,7 @@ from typing import Any
 
 import structlog
 
+from agent.control.denials import make_denial
 from agent.core.action import ActionEnvelope, ActionLog, ActionPhase
 from agent.core.agent import AgentOrchestrator
 from agent.core.sandbox_executor import SandboxExecutor
@@ -92,14 +93,22 @@ class ToolExecutor:
         if self._operator and self._operator.is_disabled(tool_name):
             self._blocked_count += 1
             reason = self._operator.get_disabled_reason(tool_name)
+            denial = make_denial(
+                code="tool_operator_disabled",
+                summary="Tool execution blocked by operator",
+                detail=reason,
+                scope=tool_name,
+                suggested_action="Re-enable the tool through operator controls before retrying.",
+            )
             action.phase = ActionPhase.BLOCKED
-            action.error = f"Operator disabled: {reason}"
+            action.error = denial.message
             action.completed_at = time.time()
             self._action_log.record(action)
             return {
-                "error": f"Tool '{tool_name}' is disabled by operator: {reason}",
+                "error": denial.message,
                 "blocked": True,
                 "operator_disabled": True,
+                "denial": denial.to_dict(),
             }
 
         # ── Step 2: POLICY (before handler lookup — policy may deny unknown tools) ──
@@ -124,6 +133,22 @@ class ToolExecutor:
                 "risk_level": decision.risk_level.value,
                 "side_effect": decision.side_effect.value,
                 "audit_label": decision.audit_label,
+                "denial": make_denial(
+                    code=(
+                        decision.denial_code.value
+                        if decision.denial_code is not None
+                        else "tool_policy_blocked"
+                    ),
+                    summary="Tool execution denied by policy",
+                    detail=decision.reason,
+                    scope=tool_name,
+                    suggested_action="Use an allowed tool context or request approval where required.",
+                    metadata={
+                        "audit_label": decision.audit_label,
+                        "risk_level": decision.risk_level.value,
+                        "side_effect": decision.side_effect.value,
+                    },
+                ).to_dict(),
             }
 
             # If denial is APPROVAL_REQUIRED, create a request in the approval queue

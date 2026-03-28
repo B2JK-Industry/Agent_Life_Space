@@ -35,6 +35,7 @@ import structlog
 from agent.brain.decision_engine import DecisionEngine
 from agent.control.acquisition import RepoAcquisitionService
 from agent.control.artifact_queries import ArtifactQueryService
+from agent.control.denials import make_denial
 from agent.control.evidence_export import EvidenceExportService
 from agent.control.intake import OperatorIntake, OperatorIntakeService, OperatorWorkType
 from agent.control.job_queries import JobQueryService
@@ -566,7 +567,15 @@ class AgentOrchestrator:
         result["plan_record"] = plan_record.to_dict()
         result["plan_traces"] = [trace.to_dict() for trace in traces]
         if not qualification.supported:
-            result["error"] = "; ".join(qualification.blockers)
+            denial = make_denial(
+                code="operator_intake_blocked",
+                summary="Operator intake blocked",
+                detail="; ".join(qualification.blockers),
+                scope=getattr(intake, "repo_path", "") or getattr(intake, "git_url", ""),
+                suggested_action="Resolve the intake blockers and rerun preview or submit.",
+            )
+            result["error"] = denial.message
+            result["denial"] = denial.to_dict()
             return result
 
         budget = plan.budget
@@ -584,7 +593,16 @@ class AgentOrchestrator:
                 metadata=budget.to_dict(),
             )
             result["status"] = "blocked"
-            result["error"] = detail
+            denial = make_denial(
+                code="budget_blocked",
+                summary="Runtime execution blocked by budget policy",
+                detail=detail,
+                scope=plan_record.plan_id,
+                policy_id="budget_policy",
+                suggested_action="Reduce scope, wait for budget reset, or request explicit approval.",
+            )
+            result["error"] = denial.message
+            result["denial"] = denial.to_dict()
             return result
 
         approval = self._build_runtime_approval(
@@ -608,6 +626,14 @@ class AgentOrchestrator:
             result["status"] = "awaiting_approval"
             result["approval_request"] = approval
             result["error"] = approval["reason"]
+            result["denial"] = make_denial(
+                code="approval_required",
+                summary="Runtime execution paused for approval",
+                detail=approval["reason"],
+                scope=plan_record.plan_id,
+                suggested_action="Approve the request before execution can continue.",
+                metadata={"approval_request_id": approval["approval_request_id"]},
+            ).to_dict()
             return result
 
         effective_intake = intake
@@ -631,7 +657,16 @@ class AgentOrchestrator:
                     status=self._plan_status("blocked"),
                 )
                 result["status"] = "blocked"
-                result["error"] = acquisition.error or "Repository acquisition failed."
+                denial = make_denial(
+                    code="repository_acquisition_failed",
+                    summary="Repository acquisition blocked",
+                    detail=acquisition.error or "Repository acquisition failed.",
+                    scope=getattr(intake, "git_url", ""),
+                    environment_profile_id="repo_import_mirror",
+                    suggested_action="Use a supported git_url source or fix host git/network availability.",
+                )
+                result["error"] = denial.message
+                result["denial"] = denial.to_dict()
                 return result
             effective_intake.repo_path = acquisition.repo_path
 

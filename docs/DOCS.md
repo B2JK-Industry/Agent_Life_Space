@@ -47,17 +47,17 @@ python -m agent --intake-git-url file:///path/to/repo --intake-work-type review 
 python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-preview
 python -m agent --list-plans
 python -m agent --list-deliveries
-python -m pytest tests/ -q   # Testy (1280+ testov)
+python -m pytest tests/ -q   # Testy (1285+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.8.1** — phase 1 delivery closure release.
+Aktuálna: **v1.8.2** — phase 1 final closure release.
 
-Nové v `v1.8.1`:
-- review delivery sa presunul na shared delivery lifecycle s approval linkage a handoff audit stavom
-- evidence export vie aj client-safe review packaging cez `--export-evidence-mode client_safe`
-- retained artifacts sa dajú reálne prune-núť cez `--prune-expired-retained-artifacts`
-- operator report ukazuje approval backlog, blocked reasons a retention posture
+Nové v `v1.8.2`:
+- review delivery teraz vytvára operator summary a copy-paste-ready PR comment artifacts
+- client-safe evidence export znovu používa tieto handoff summary artefakty namiesto surového interného reportu
+- structured denial payloads teraz pokrývajú tool policy, operator intake, build/review delivery a evidence export blokácie
+- review eval smoke test beží aj v CI cez `tests/test_review_eval_smoke.py`
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

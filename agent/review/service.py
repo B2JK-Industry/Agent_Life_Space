@@ -26,6 +26,7 @@ from typing import Any
 
 import structlog
 
+from agent.control.denials import make_denial
 from agent.control.models import (
     ArtifactKind,
     DeliveryLifecycleStatus,
@@ -103,6 +104,13 @@ class ReviewService:
             t_validate.fail("; ".join(errors))
             job.status = JobStatus.FAILED
             job.error = f"Validation failed: {'; '.join(errors)}"
+            job.denial = make_denial(
+                code="review_validation_failed",
+                summary="Review intake validation failed",
+                detail="; ".join(errors),
+                scope=intake.repo_path or intake.diff_spec,
+                suggested_action="Fix the intake input and rerun the review request.",
+            ).to_dict()
             self._save_job(job)
             return job
 
@@ -144,13 +152,21 @@ class ReviewService:
             source=job.source,
         )
         if not review_policy.allow_host_read:
-            detail = (
-                f"review execution blocked by policy {review_policy.id}: "
-                f"{review_policy.description}"
+            denial = make_denial(
+                code="review_execution_blocked",
+                summary="Review execution blocked by policy",
+                detail=review_policy.description,
+                scope=analysis_path,
+                policy_id=review_policy.id,
+                environment_profile_id="review_host_read_only",
+                suggested_action=(
+                    "Use a supported review source and review type within the read-only review boundary."
+                ),
             )
-            t_policy.fail(detail)
+            t_policy.fail(denial.message)
             job.status = JobStatus.BLOCKED
-            job.error = detail
+            job.error = denial.message
+            job.denial = denial.to_dict()
             self._record_review_policy_trace(
                 job=job,
                 policy=review_policy,
@@ -160,13 +176,21 @@ class ReviewService:
             self._save_job(job)
             return job
         if intake.diff_spec and not review_policy.allow_git_subprocess:
-            detail = (
-                f"review diff access blocked by policy {review_policy.id}: "
-                "git subprocess execution is not allowed"
+            denial = make_denial(
+                code="review_diff_blocked",
+                summary="Review diff access blocked by policy",
+                detail="git subprocess execution is not allowed",
+                scope=intake.diff_spec,
+                policy_id=review_policy.id,
+                environment_profile_id="review_host_read_only",
+                suggested_action=(
+                    "Use a supported diff review source or fall back to repository-wide review."
+                ),
             )
-            t_policy.fail(detail)
+            t_policy.fail(denial.message)
             job.status = JobStatus.BLOCKED
-            job.error = detail
+            job.error = denial.message
+            job.denial = denial.to_dict()
             self._record_review_policy_trace(
                 job=job,
                 policy=review_policy,
@@ -231,6 +255,7 @@ class ReviewService:
         # ── Step 5: Create artifacts ──
         job.phase = ReviewPhase.REPORTING
         t_artifacts = job.trace("artifacts")
+        handoff_summary = self._build_handoff_summary_pack(job)
 
         # Markdown report
         md_artifact = ReviewArtifact(
@@ -275,6 +300,31 @@ class ReviewService:
             )
             job.artifacts.append(findings_artifact)
             self._save_artifact(job, findings_artifact)
+
+        # Operator summary artifact
+        summary_artifact = ReviewArtifact(
+            artifact_type=ArtifactType.EXECUTIVE_SUMMARY,
+            job_id=job.id,
+            content=handoff_summary["operator_summary_markdown"],
+            content_json=handoff_summary,
+            format="markdown",
+        )
+        job.artifacts.append(summary_artifact)
+        self._save_artifact(job, summary_artifact)
+
+        # Copy-paste-ready PR comment artifact
+        pr_comment_artifact = ReviewArtifact(
+            artifact_type=ArtifactType.EXECUTIVE_SUMMARY,
+            job_id=job.id,
+            content=handoff_summary["pr_comment_markdown"],
+            content_json={
+                **handoff_summary,
+                "summary_kind": "pr_comment",
+            },
+            format="markdown",
+        )
+        job.artifacts.append(pr_comment_artifact)
+        self._save_artifact(job, pr_comment_artifact)
 
         t_artifacts.complete(f"{len(job.artifacts)} artifacts created")
 
@@ -479,6 +529,7 @@ class ReviewService:
                 "workspace_id": job.workspace_id,
                 "review_type": job.job_type.value,
                 "verdict": job.report.verdict,
+                "summary_kind": artifact.content_json.get("summary_kind", ""),
             },
         )
 
@@ -517,6 +568,7 @@ class ReviewService:
                 "review_execution_policy_id": self._review_policy_id(job),
                 "error": job.error,
                 "last_error": job.error,
+                "denial": dict(job.denial),
             },
         )
 
@@ -657,13 +709,34 @@ class ReviewService:
         self.initialize()
         job = self.load_job(job_id)
         if job is None:
-            return {"error": f"Job '{job_id}' not found"}
+            denial = make_denial(
+                code="review_delivery_job_missing",
+                summary="Review delivery approval blocked",
+                detail=f"Job '{job_id}' not found",
+                scope=job_id,
+                suggested_action="Check the job id and rerun the delivery request.",
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
         if job.status != ReviewJobStatus.COMPLETED:
-            return {"error": f"Job '{job_id}' is {job.status.value}, not completed"}
+            denial = make_denial(
+                code="review_delivery_not_completed",
+                summary="Review delivery approval blocked",
+                detail=f"Job '{job_id}' is {job.status.value}, not completed",
+                scope=job_id,
+                suggested_action="Wait for the review job to complete before requesting delivery approval.",
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
 
         bundle = self.get_delivery_bundle(job_id)
         if bundle is None:
-            return {"error": f"Delivery package for '{job_id}' could not be assembled"}
+            denial = make_denial(
+                code="review_delivery_bundle_missing",
+                summary="Review delivery approval blocked",
+                detail=f"Delivery package for '{job_id}' could not be assembled",
+                scope=job_id,
+                suggested_action="Inspect the review artifacts and rerun the review if the bundle is missing.",
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
 
         # Approval queue is REQUIRED for external delivery.
         # Without it, delivery is blocked — not silently bypassed.
@@ -679,9 +752,18 @@ class ReviewService:
                     "approval_bypassed": True,
                     "warning": "DEV MODE: approval bypassed. Not safe for production.",
                 }
+            denial = make_denial(
+                code="review_delivery_denied_by_default",
+                summary="Review delivery blocked by default",
+                detail="No approval queue is configured for external delivery.",
+                scope=bundle["bundle_id"],
+                policy_id=get_delivery_policy().id,
+                environment_profile_id="delivery_export_only",
+                suggested_action="Configure the approval queue before requesting external delivery.",
+            )
             return {
-                "error": "Delivery blocked: no approval queue configured. "
-                         "External delivery requires approval gating.",
+                "error": denial.message,
+                "denial": denial.to_dict(),
                 "job_id": job_id,
                 "bundle_id": self._delivery_bundle_id(job_id),
                 "delivery_ready": False,
@@ -736,6 +818,13 @@ class ReviewService:
             return 2
         return 1
 
+    def _delivery_record_policy_id(self, record: Any) -> str:
+        for event in reversed(record.events):
+            policy_id = str(event.metadata.get("delivery_policy_id", "")).strip()
+            if policy_id:
+                return policy_id
+        return get_delivery_policy().id
+
     def get_client_safe_bundle(self, job_id: str) -> dict[str, Any] | None:
         """Export a client-safe delivery bundle with policy-driven redaction.
 
@@ -766,17 +855,34 @@ class ReviewService:
         bundle_id = self._delivery_bundle_id(job_id)
         record = self._refresh_delivery_record(bundle_id)
         if record is None:
-            return {"error": f"Delivery record not found for job '{job_id}'"}
+            denial = make_denial(
+                code="review_handoff_record_missing",
+                summary="Review handoff blocked",
+                detail=f"Delivery record not found for job '{job_id}'",
+                scope=bundle_id,
+                suggested_action="Rebuild the delivery bundle before marking handoff.",
+            )
+            return {"error": denial.message, "bundle_id": bundle_id, "denial": denial.to_dict()}
         if record.status not in {
             DeliveryLifecycleStatus.APPROVED,
             DeliveryLifecycleStatus.HANDED_OFF,
         }:
-            return {
-                "error": (
+            denial = make_denial(
+                code="review_handoff_not_approved",
+                summary="Review handoff blocked",
+                detail=(
                     f"Delivery record '{bundle_id}' is {record.status.value}, "
                     "not approved for handoff"
                 ),
+                scope=bundle_id,
+                policy_id=self._delivery_record_policy_id(record),
+                environment_profile_id="delivery_export_only",
+                suggested_action="Approve the review delivery request before recording handoff.",
+            )
+            return {
+                "error": denial.message,
                 "bundle_id": bundle_id,
+                "denial": denial.to_dict(),
             }
         if self._approval_queue is not None and record.approval_request_id:
             self._approval_queue.mark_executed(record.approval_request_id)
@@ -833,6 +939,10 @@ class ReviewService:
         json_report: dict[str, Any] = {}
         trace_data: list[dict[str, Any]] = []
         findings_data: list[dict[str, Any]] = []
+        operator_summary = ""
+        pr_comment = ""
+        summary_pack: dict[str, Any] = {}
+        summary_artifact_ids: list[str] = []
 
         for artifact in artifacts:
             artifact_type = artifact.get("artifact_type", "")
@@ -844,6 +954,21 @@ class ReviewService:
                 trace_data = artifact["content_json"].get("trace", [])
             if artifact_type == ArtifactType.FINDING_LIST.value and artifact.get("content_json"):
                 findings_data = artifact["content_json"].get("findings", [])
+            if artifact_type == ArtifactType.EXECUTIVE_SUMMARY.value:
+                summary_artifact_ids.append(artifact.get("id", ""))
+                summary_payload = artifact.get("content_json") or {}
+                summary_kind = summary_payload.get("summary_kind", "")
+                if summary_kind == "operator_summary":
+                    operator_summary = artifact.get("content", "") or summary_payload.get(
+                        "operator_summary_markdown", ""
+                    )
+                    summary_pack = summary_payload or summary_pack
+                elif summary_kind == "pr_comment":
+                    pr_comment = artifact.get("content", "") or summary_payload.get(
+                        "pr_comment_markdown", ""
+                    )
+                    if not summary_pack:
+                        summary_pack = summary_payload
 
         package = DeliveryPackage(
             bundle_id=self._delivery_bundle_id(job.id),
@@ -882,6 +1007,7 @@ class ReviewService:
                     for artifact in artifacts
                     if artifact.get("artifact_type") == ArtifactType.EXECUTION_TRACE.value
                 ],
+                "summary_artifact_ids": [artifact_id for artifact_id in summary_artifact_ids if artifact_id],
             },
         )
         bundle = package.to_dict()
@@ -896,10 +1022,116 @@ class ReviewService:
                 "json_report": json_report,
                 "findings_only": findings_data or [finding.to_dict() for finding in job.report.findings],
                 "execution_trace": trace_data or [trace.to_dict() for trace in job.execution_trace],
+                "operator_summary_markdown": operator_summary,
+                "pr_comment_markdown": pr_comment,
+                "summary_pack": summary_pack,
                 "error": job.error,
             }
         )
         return bundle
+
+    def _build_handoff_summary_pack(self, job: ReviewJob) -> dict[str, Any]:
+        top_findings = self._top_findings(job.report)
+        return {
+            "summary_kind": "operator_summary",
+            "job_id": job.id,
+            "review_type": job.job_type.value,
+            "verdict": job.report.verdict,
+            "verdict_confidence": job.report.verdict_confidence.value,
+            "finding_counts": job.report.finding_counts,
+            "scope_description": job.report.scope_description,
+            "operator_summary_markdown": self._build_operator_summary_markdown(job),
+            "pr_comment_markdown": self._build_pr_comment_markdown(job),
+            "top_findings": top_findings,
+            "open_questions": list(job.report.open_questions[:5]),
+        }
+
+    def _top_findings(self, report: ReviewReport, limit: int = 5) -> list[dict[str, Any]]:
+        ordered = sorted(
+            report.findings,
+            key=lambda finding: list(Severity).index(finding.severity),
+        )
+        return [
+            {
+                "severity": finding.severity.value,
+                "title": finding.title,
+                "location": finding.location,
+                "category": finding.category,
+                "recommendation": finding.recommendation,
+            }
+            for finding in ordered[:limit]
+        ]
+
+    def _build_operator_summary_markdown(self, job: ReviewJob) -> str:
+        counts = job.report.finding_counts
+        lines = [
+            "# Review Handoff Summary",
+            "",
+            f"- Review type: `{job.job_type.value}`",
+            f"- Verdict: `{job.report.verdict}` ({job.report.verdict_confidence.value})",
+            f"- Scope: {job.report.scope_description}",
+            (
+                "- Findings: "
+                f"critical={counts['critical']}, high={counts['high']}, "
+                f"medium={counts['medium']}, low={counts['low']}"
+            ),
+            "",
+            "## Executive Summary",
+            "",
+            job.report.executive_summary or "_No executive summary available._",
+            "",
+            "## Top Findings",
+            "",
+        ]
+        top_findings = self._top_findings(job.report)
+        if not top_findings:
+            lines.append("- No findings.")
+        else:
+            for finding in top_findings:
+                location = f" ({finding['location']})" if finding["location"] else ""
+                lines.append(
+                    f"- [{finding['severity'].upper()}] {finding['title']}{location}"
+                )
+        if job.report.open_questions:
+            lines.extend(["", "## Open Questions", ""])
+            for question in job.report.open_questions[:5]:
+                lines.append(f"- {question}")
+        return "\n".join(lines) + "\n"
+
+    def _build_pr_comment_markdown(self, job: ReviewJob) -> str:
+        counts = job.report.finding_counts
+        lines = [
+            "## ALS Review Summary",
+            "",
+            f"- Verdict: `{job.report.verdict}` ({job.report.verdict_confidence.value})",
+            (
+                "- Findings: "
+                f"critical={counts['critical']}, high={counts['high']}, "
+                f"medium={counts['medium']}, low={counts['low']}"
+            ),
+            f"- Scope: {job.report.scope_description}",
+            "",
+            "### Executive Summary",
+            "",
+            job.report.executive_summary or "_No executive summary available._",
+            "",
+            "### Top Findings",
+            "",
+        ]
+        top_findings = self._top_findings(job.report, limit=3)
+        if not top_findings:
+            lines.append("- No findings.")
+        else:
+            for finding in top_findings:
+                location = f" ({finding['location']})" if finding["location"] else ""
+                lines.append(
+                    f"- [{finding['severity'].upper()}] {finding['title']}{location}"
+                )
+        if job.report.open_questions:
+            lines.extend(["", "### Open Questions", ""])
+            for question in job.report.open_questions[:3]:
+                lines.append(f"- {question}")
+        return "\n".join(lines) + "\n"
 
     def _delivery_bundle_id(self, job_id: str) -> str:
         return f"review-delivery-{job_id}"

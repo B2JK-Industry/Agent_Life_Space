@@ -411,6 +411,7 @@ class BuildJob:
 
     # Error
     error: str = ""
+    denial: dict[str, Any] = field(default_factory=dict)
 
     def trace(self, step: str) -> ExecutionStep:
         """Start a new execution trace step."""
@@ -469,6 +470,7 @@ class BuildJob:
             "execution_trace": [t.to_dict() for t in self.execution_trace],
             "usage": self.usage.to_dict(),
             "error": self.error,
+            "denial": dict(self.denial),
         }
 
     @classmethod
@@ -521,4 +523,5 @@ class BuildJob:
             execution_trace=traces,
             usage=usage,
             error=d.get("error", ""),
+            denial=dict(d.get("denial", {})),
         )

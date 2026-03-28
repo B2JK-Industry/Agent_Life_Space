@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from agent.control.denials import make_denial
 from agent.review.redaction import apply_client_redaction
 
 
@@ -45,7 +46,14 @@ class EvidenceExportService:
         persisted_job = self._control_plane_state.get_product_job(job_id)
         live_job = self._job_queries.get_job(job_id=job_id, kind=kind)
         if persisted_job is None and live_job is None:
-            return {"error": f"Job '{job_id}' not found"}
+            denial = make_denial(
+                code="evidence_job_missing",
+                summary="Evidence export blocked",
+                detail=f"Job '{job_id}' not found",
+                scope=job_id,
+                suggested_action="Check the job id and rerun the export request.",
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
 
         normalized_kind = (
             persisted_job.job_kind.value
@@ -185,6 +193,11 @@ class EvidenceExportService:
             for status, count in approval_summary.get("by_status", {}).items():
                 lines.append(f"- `{status}`: {count}")
             lines.extend(["", "## Client-Safe Bundle", ""])
+            if bundle.get("operator_summary_markdown"):
+                lines.append(bundle["operator_summary_markdown"])
+                lines.extend(["", "## Copy-Paste PR Comment", ""])
+                lines.append(bundle.get("pr_comment_markdown", "_No PR comment available._"))
+                return "\n".join(lines) + "\n"
             markdown_report = bundle.get("markdown_report", "")
             if markdown_report:
                 lines.append(markdown_report)
@@ -231,14 +244,30 @@ class EvidenceExportService:
         deliveries: list[dict[str, Any]],
     ) -> dict[str, Any]:
         if job_kind != "review" or self._review_service is None:
+            denial = make_denial(
+                code="client_safe_not_supported",
+                summary="Client-safe evidence export denied by default",
+                detail="Client-safe evidence export is currently available only for review jobs",
+                scope=job_id,
+                environment_profile_id="delivery_export_only",
+                suggested_action="Use internal export mode or export a review job.",
+            )
             return {
-                "error": "Client-safe evidence export is currently available only for review jobs",
+                "error": denial.message,
+                "denial": denial.to_dict(),
                 "job_id": job_id,
                 "job_kind": job_kind,
             }
         bundle = self._review_service.get_client_safe_bundle(job_id)
         if bundle is None:
-            return {"error": f"Client-safe bundle for '{job_id}' not found"}
+            denial = make_denial(
+                code="client_safe_bundle_missing",
+                summary="Client-safe evidence export blocked",
+                detail=f"Client-safe bundle for '{job_id}' not found",
+                scope=job_id,
+                suggested_action="Rebuild the review delivery bundle before exporting client-safe evidence.",
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
         return {
             "exported_at": package["exported_at"],
             "job_id": package["job_id"],

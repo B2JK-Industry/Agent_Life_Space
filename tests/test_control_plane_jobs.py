@@ -257,6 +257,12 @@ class TestJobQueryService:
                     "title": "Ship build",
                     "blocked_reason": "review failed",
                     "outcome": "review=fail",
+                    "metadata": {
+                        "denial": {
+                            "summary": "Build completion blocked by review gate policy",
+                            "detail": "Critical findings exceeded the configured threshold.",
+                        }
+                    },
                 }
             ),
             MagicMock(
@@ -353,6 +359,11 @@ class TestJobQueryService:
         assert report["summary"]["active_workers"] == 1
         assert report["approval_backlog"]["by_status"]["partially_approved"] == 1
         assert "awaiting additional approval" in report["approval_backlog"]["blocked_reasons"][0]
+        assert any(
+            item["kind"] == "job_attention"
+            and "Build completion blocked by review gate policy" in item["detail"]
+            for item in report["inbox"]
+        )
         assert report["workspace_health"]["by_status"]["failed"] == 1
         assert report["worker_execution"]["active_jobs"] == 1
         assert {item["kind"] for item in report["inbox"]} == {
@@ -944,6 +955,7 @@ class TestUnifiedOperatorIntake:
         assert result["accepted"] is True
         assert result["status"] == "blocked"
         assert "stop-loss" in result["error"]
+        assert result["denial"]["code"] == "budget_blocked"
         agent.run_build_job.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -992,6 +1004,7 @@ class TestUnifiedOperatorIntake:
         assert result["status"] == "awaiting_approval"
         assert result["approval_request"]["category"] == "finance"
         assert result["approval_request"]["required_approvals"] == 2
+        assert result["denial"]["code"] == "approval_required"
         agent.run_build_job.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -1026,7 +1039,28 @@ class TestUnifiedOperatorIntake:
         assert result["status"] == "awaiting_approval"
         assert result["approval_request"]["category"] == "tool"
         assert result["approval_request"]["required_approvals"] == 2
+        assert result["denial"]["code"] == "approval_required"
         agent.run_build_job.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_submit_operator_intake_returns_structured_blocker(self):
+        from agent.core.agent import AgentOrchestrator
+
+        agent = AgentOrchestrator(data_dir="agent-test", watchdog_interval=60.0)
+        agent._initialized = True
+        agent.initialize = AsyncMock()
+
+        result = await agent.submit_operator_intake(
+            OperatorIntake(
+                repo_path="",
+                git_url="",
+                work_type="review",
+            )
+        )
+
+        assert result["accepted"] is False
+        assert result["status"] == "blocked"
+        assert result["denial"]["code"] == "operator_intake_blocked"
 
 
 class TestRuntimeModel:

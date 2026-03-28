@@ -415,6 +415,7 @@ class ReviewJob:
 
     # Error
     error: str = ""
+    denial: dict[str, Any] = field(default_factory=dict)
 
     def trace(self, step: str) -> ExecutionTrace:
         """Start a new execution trace step."""
@@ -506,6 +507,7 @@ class ReviewJob:
             "total_cost_usd": round(self.total_cost_usd, 6),
             "model_used": self.model_used,
             "error": self.error,
+            "denial": dict(self.denial),
             "finding_counts": self.report.finding_counts,
             "verdict": self.report.verdict,
         }
@@ -575,4 +577,5 @@ class ReviewJob:
             execution_trace=traces,
             usage=usage,
             error=d.get("error", ""),
+            denial=dict(d.get("denial", {})),
         )

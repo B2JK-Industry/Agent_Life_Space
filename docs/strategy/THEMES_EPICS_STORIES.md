@@ -138,6 +138,13 @@ Stories:
 
 Stories:
 - T2-E4-S1: Prepare copy-paste-ready PR comments and summary review artifacts.
+  - status: `complete_for_phase`
+  - current_state: Review delivery now emits dedicated operator-summary and
+    copy-paste-ready PR comment artifacts, persists them as first-class review
+    artifacts, and includes them in both shared delivery bundles and
+    client-safe evidence export.
+  - missing: Direct GitHub posting and richer external delivery automation
+    remain future scope.
 - T2-E4-S2: Add delivery approval before external send.
 - T2-E4-S3: Add client-safe output mode with redaction.
 - T2-E4-S4: Add report packaging for operator handoff.
@@ -147,7 +154,7 @@ Stories:
   - current_state: Telegram `/review` and `POST /api/review` now converge
     through the shared review runtime, and review intake preserves channel
     source through recovery-safe persistence.
-  - missing: PR comment packs and richer external delivery remain future scope.
+  - missing: Richer external delivery automation remains future scope.
 
 ## Theme T3: Builder Product
 
@@ -321,7 +328,20 @@ Stories:
   - current_state: Shared policy now covers deterministic job-persistence, artifact-retention, delivery, review-gate, and external-gateway defaults, and those policies surface through control-plane persistence, artifact queries, reporting, and delivery metadata.
   - missing: Repository/diff execution and broader runtime actions are still not enforced through one shared policy engine.
 - T5-E1-S2: Keep policy deny-by-default across execution modes.
+  - status: `mostly_complete`
+  - current_state: Deny-by-default is now explicit across review execution,
+    tool execution, operator intake blockers, evidence export, and
+    build/review delivery approval plus handoff flows, all with stable
+    operator-visible denial payloads.
+  - missing: Build implementation execution and some broader runtime actions
+    still do not run under one shared enforcement boundary.
 - T5-E1-S3: Add structured denial reasons everywhere.
+  - status: `mostly_complete`
+  - current_state: Structured denial payloads now cover tool policy, operator
+    intake, build/review validation and delivery blockers, evidence export,
+    and operator reporting attention detail.
+  - missing: Some remaining finance, social, and adapter edges still return
+    plain error strings instead of the shared denial schema.
 - T5-E1-S4: Ensure policy is deterministic and separately testable.
 - T5-E1-S5: Bring repository and diff analysis under the shared execution and
   policy boundary.
@@ -423,6 +443,12 @@ Stories:
 - T6-E3-S1: Build golden review cases.
 - T6-E3-S2: Measure finding precision and false positives.
 - T6-E3-S3: Add review eval smoke checks to CI or local gating.
+  - status: `complete_for_phase`
+  - current_state: Dedicated `tests/test_review_eval_smoke.py` coverage now
+    validates reviewer handoff artifacts and client-safe redaction, and CI
+    runs that suite explicitly.
+  - missing: No golden cases, precision tracking, or version-over-version
+    quality telemetry yet.
 - T6-E3-S4: Track latency and quality regression across versions.
 
 ## Theme T7: External Capability Gateway

@@ -47,6 +47,7 @@ from agent.build.models import (
 )
 from agent.build.storage import BuildStorage
 from agent.build.verification import DEFAULT_COMMANDS, run_verification_suite
+from agent.control.denials import make_denial
 from agent.control.models import (
     DeliveryLifecycleStatus,
     DeliveryPackage,
@@ -111,6 +112,13 @@ class BuildService:
             t_validate.fail("; ".join(errors))
             job.status = JobStatus.FAILED
             job.error = f"Validation failed: {'; '.join(errors)}"
+            job.denial = make_denial(
+                code="build_validation_failed",
+                summary="Build intake validation failed",
+                detail="; ".join(errors),
+                scope=intake.repo_path,
+                suggested_action="Fix the build intake and rerun the request.",
+            ).to_dict()
             self._save_job(job)
             return job
         try:
@@ -119,6 +127,13 @@ class BuildService:
             t_validate.fail(str(e))
             job.status = JobStatus.FAILED
             job.error = str(e)
+            job.denial = make_denial(
+                code="build_capability_resolution_failed",
+                summary="Build capability resolution failed",
+                detail=str(e),
+                scope=intake.repo_path,
+                suggested_action="Choose a supported build capability or build type.",
+            ).to_dict()
             self._save_job(job)
             return job
         job.capability_id = capability.id
@@ -137,6 +152,14 @@ class BuildService:
             t_ws.fail("No workspace manager — build requires workspace")
             job.status = JobStatus.FAILED
             job.error = "Build jobs require a workspace manager."
+            job.denial = make_denial(
+                code="build_workspace_required",
+                summary="Build execution blocked",
+                detail="Build jobs require a workspace manager.",
+                scope=intake.repo_path,
+                environment_profile_id="build_workspace_local",
+                suggested_action="Configure the workspace manager before running build jobs.",
+            ).to_dict()
             self._save_job(job)
             return job
 
@@ -158,6 +181,14 @@ class BuildService:
             t_ws.fail(str(e))
             job.status = JobStatus.FAILED
             job.error = f"Workspace setup failed: {e}"
+            job.denial = make_denial(
+                code="build_workspace_setup_failed",
+                summary="Build workspace setup failed",
+                detail=str(e),
+                scope=intake.repo_path,
+                environment_profile_id="build_workspace_local",
+                suggested_action="Inspect the workspace configuration and rerun the build.",
+            ).to_dict()
             self._save_job(job)
             return job
 
@@ -180,6 +211,14 @@ class BuildService:
             t_sync.fail(str(e))
             job.status = JobStatus.FAILED
             job.error = f"Workspace sync failed: {e}"
+            job.denial = make_denial(
+                code="build_workspace_sync_failed",
+                summary="Build workspace sync failed",
+                detail=str(e),
+                scope=intake.repo_path,
+                environment_profile_id="build_workspace_local",
+                suggested_action="Fix repository sync into the managed workspace and rerun the build.",
+            ).to_dict()
             self._finalize(job, workspace_path)
             return job
 
@@ -429,6 +468,15 @@ class BuildService:
             if blocked_by_policy:
                 job.status = JobStatus.BLOCKED
                 job.error = block_reason
+                job.denial = make_denial(
+                    code="build_review_gate_blocked",
+                    summary="Build completion blocked by review gate policy",
+                    detail=block_reason,
+                    scope=job.id,
+                    policy_id=self._review_gate_policy(job).id,
+                    environment_profile_id="build_workspace_local",
+                    suggested_action="Address the post-build review findings or relax the review gate policy intentionally.",
+                ).to_dict()
                 t_review.fail(job.error)
             else:
                 t_review.complete(
@@ -1049,6 +1097,7 @@ class BuildService:
                 "delivery_policy_id": job.intake.delivery_policy_id,
                 "error": job.error,
                 "last_error": job.error,
+                "denial": dict(job.denial),
             },
         )
 
@@ -1723,13 +1772,34 @@ class BuildService:
         self.initialize()
         job = self.load_job(job_id)
         if job is None:
-            return {"error": f"Job '{job_id}' not found"}
+            denial = make_denial(
+                code="build_delivery_job_missing",
+                summary="Build delivery approval blocked",
+                detail=f"Job '{job_id}' not found",
+                scope=job_id,
+                suggested_action="Check the build job id and rerun the delivery request.",
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
         if job.status != JobStatus.COMPLETED:
-            return {"error": f"Job '{job_id}' is {job.status.value}, not completed"}
+            denial = make_denial(
+                code="build_delivery_not_completed",
+                summary="Build delivery approval blocked",
+                detail=f"Job '{job_id}' is {job.status.value}, not completed",
+                scope=job_id,
+                suggested_action="Wait for the build job to complete before requesting delivery approval.",
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
 
         bundle = self.get_delivery_bundle(job_id)
         if bundle is None:
-            return {"error": f"Delivery package for '{job_id}' could not be assembled"}
+            denial = make_denial(
+                code="build_delivery_bundle_missing",
+                summary="Build delivery approval blocked",
+                detail=f"Delivery package for '{job_id}' could not be assembled",
+                scope=job_id,
+                suggested_action="Inspect the build artifacts and rerun the build if the delivery package is missing.",
+            )
+            return {"error": denial.message, "denial": denial.to_dict()}
 
         if self._approval_queue is None:
             import os
@@ -1743,9 +1813,18 @@ class BuildService:
                     "approval_bypassed": True,
                     "warning": "DEV MODE: approval bypassed. Not safe for production.",
                 }
+            denial = make_denial(
+                code="build_delivery_denied_by_default",
+                summary="Build delivery blocked by default",
+                detail="No approval queue is configured for external delivery.",
+                scope=bundle["bundle_id"],
+                policy_id=job.intake.delivery_policy_id,
+                environment_profile_id="delivery_export_only",
+                suggested_action="Configure the approval queue before requesting external build delivery.",
+            )
             return {
-                "error": "Delivery blocked: no approval queue configured. "
-                "External delivery requires approval gating.",
+                "error": denial.message,
+                "denial": denial.to_dict(),
                 "job_id": job_id,
                 "bundle_id": bundle["bundle_id"],
                 "delivery_ready": False,
@@ -1827,17 +1906,34 @@ class BuildService:
         bundle_id = self._delivery_bundle_id(job_id)
         record = self._refresh_delivery_record(bundle_id)
         if record is None:
-            return {"error": f"Delivery record not found for job '{job_id}'"}
+            denial = make_denial(
+                code="build_handoff_record_missing",
+                summary="Build handoff blocked",
+                detail=f"Delivery record not found for job '{job_id}'",
+                scope=bundle_id,
+                suggested_action="Rebuild the delivery bundle before marking handoff.",
+            )
+            return {"error": denial.message, "bundle_id": bundle_id, "denial": denial.to_dict()}
         if record.status not in {
             DeliveryLifecycleStatus.APPROVED,
             DeliveryLifecycleStatus.HANDED_OFF,
         }:
-            return {
-                "error": (
+            denial = make_denial(
+                code="build_handoff_not_approved",
+                summary="Build handoff blocked",
+                detail=(
                     f"Delivery record '{bundle_id}' is {record.status.value}, "
                     "not approved for handoff"
                 ),
+                scope=bundle_id,
+                policy_id=self._delivery_record_policy_id(record, job_id=job_id),
+                environment_profile_id="delivery_export_only",
+                suggested_action="Approve the build delivery request before recording handoff.",
+            )
+            return {
+                "error": denial.message,
                 "bundle_id": bundle_id,
+                "denial": denial.to_dict(),
             }
         if (
             self._approval_queue is not None
@@ -1854,6 +1950,16 @@ class BuildService:
 
     def _delivery_bundle_id(self, job_id: str) -> str:
         return f"build-delivery-{job_id}"
+
+    def _delivery_record_policy_id(self, record: Any, *, job_id: str) -> str:
+        for event in reversed(record.events):
+            policy_id = str(event.metadata.get("delivery_policy_id", "")).strip()
+            if policy_id:
+                return policy_id
+        job = self.load_job(job_id)
+        if job is not None:
+            return job.intake.delivery_policy_id
+        return ""
 
     def _sync_delivery_record(
         self,
