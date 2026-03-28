@@ -183,6 +183,7 @@ class AgentOrchestrator:
             job_queries=self.jobs,
             artifact_queries=self.artifacts,
             control_plane_state=self.control_plane,
+            review_service=self.review,
             workspace_queries=self.workspace_queries,
             approval_queue=self.approval_queue,
             runtime_model=self.runtime_model,
@@ -928,6 +929,25 @@ class AgentOrchestrator:
             return None
         return record.to_dict()
 
+    def prune_retained_artifacts(
+        self,
+        *,
+        job_id: str = "",
+        artifact_kind: str = "",
+        retention_policy_id: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Prune expired retained artifacts under the configured retention rules."""
+        return [
+            record.to_dict()
+            for record in self.control_plane.prune_retained_artifacts(
+                job_id=job_id,
+                artifact_kind=artifact_kind,
+                retention_policy_id=retention_policy_id,
+                limit=limit,
+            )
+        ]
+
     def list_cost_ledger(
         self,
         *,
@@ -951,11 +971,45 @@ class AgentOrchestrator:
         *,
         kind: str | None = None,
         export_format: str = "json",
+        export_mode: str = "internal",
     ) -> dict[str, Any] | str:
         """Export a compliance-friendly evidence package for one job."""
         if export_format == "markdown":
-            return self.evidence_exports.export_job_markdown(job_id, kind=kind)
-        return self.evidence_exports.export_job(job_id, kind=kind)
+            return self.evidence_exports.export_job_markdown(
+                job_id,
+                kind=kind,
+                export_mode=export_mode,
+            )
+        return self.evidence_exports.export_job(
+            job_id,
+            kind=kind,
+            export_mode=export_mode,
+        )
+
+    def get_review_delivery_bundle(self, job_id: str) -> dict[str, Any] | None:
+        """Return a reviewer delivery package preview."""
+        return self.review.get_delivery_bundle(job_id)
+
+    def get_review_delivery_record(self, job_id: str) -> dict[str, Any] | None:
+        """Return persisted delivery lifecycle state for a review package."""
+        return self.review.get_delivery_record(job_id)
+
+    def request_review_delivery_approval(self, job_id: str) -> dict[str, Any]:
+        """Request approval for external delivery of a review package."""
+        return self.review.request_delivery_approval(job_id)
+
+    def mark_review_delivery_handed_off(
+        self,
+        job_id: str,
+        *,
+        note: str = "",
+    ) -> dict[str, Any]:
+        """Mark a review delivery package as handed off after approval."""
+        return self.review.mark_delivery_handed_off(job_id, note=note)
+
+    def get_review_client_safe_bundle(self, job_id: str) -> dict[str, Any] | None:
+        """Return the client-safe review delivery bundle."""
+        return self.review.get_client_safe_bundle(job_id)
 
     def list_approval_requests(
         self,

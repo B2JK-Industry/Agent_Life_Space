@@ -37,27 +37,27 @@ python -m agent --health     # Zdravie
 python -m agent --report     # Operator report / inbox
 python -m agent --runtime-model   # Explicitný runtime model
 python -m agent --export-evidence-job <job_id>
+python -m agent --export-evidence-job <job_id> --export-evidence-mode client_safe
 python -m agent --list-artifacts  # Shared artifact query surface
 python -m agent --list-persisted-jobs
 python -m agent --list-retained-artifacts
+python -m agent --prune-expired-retained-artifacts
 python -m agent --list-cost-ledger
 python -m agent --intake-git-url file:///path/to/repo --intake-work-type review --intake-description "Imported review"
 python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-preview
 python -m agent --list-plans
 python -m agent --list-deliveries
-python -m pytest tests/ -q   # Testy (1276+ testov)
+python -m pytest tests/ -q   # Testy (1280+ testov)
 ```
 
 ## Verzia
 
-Aktuálna: **v1.8.0** — phase 1 closure hardening release.
+Aktuálna: **v1.8.1** — phase 1 delivery closure release.
 
-Nové v `v1.8.0`:
-- unified intake vie zobrať podporovaný `git_url` a najprv ho získať do managed local mirroru
-- pribudol evidence export cez `python -m agent --export-evidence-job <job_id>`
-- persisted product jobs teraz nesú `duration`, `retry_count` a `failure_count`
-- runtime model má explicitné environment profiles pre review/build/acquisition/export
-- risky intake a delivery approval flow vie žiadať multi-step approval
-- budget posture teraz ovplyvňuje aj brain-side escalation, nielen intake gating
+Nové v `v1.8.1`:
+- review delivery sa presunul na shared delivery lifecycle s approval linkage a handoff audit stavom
+- evidence export vie aj client-safe review packaging cez `--export-evidence-mode client_safe`
+- retained artifacts sa dajú reálne prune-núť cez `--prune-expired-retained-artifacts`
+- operator report ukazuje approval backlog, blocked reasons a retention posture
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

@@ -290,6 +290,36 @@ class TestJobQueryService:
                 "reason": "External delivery",
             }
         ]
+        approval_queue.list_requests.return_value = [
+            {
+                "id": "apr-1",
+                "status": "pending",
+                "category": "external",
+                "description": "Deliver report",
+                "reason": "External delivery",
+                "required_approvals": 1,
+                "approvals_received": [],
+            },
+            {
+                "id": "apr-2",
+                "status": "partially_approved",
+                "category": "external",
+                "description": "Deliver critical report",
+                "reason": "Needs dual approval",
+                "required_approvals": 2,
+                "approvals_received": ["owner-1"],
+            },
+            {
+                "id": "apr-3",
+                "status": "denied",
+                "category": "tool",
+                "description": "Risky action",
+                "reason": "Policy denied",
+                "denial_reason": "Policy denied",
+                "required_approvals": 1,
+                "approvals_received": [],
+            },
+        ]
         controls = MagicMock()
         controls.get_status.return_value = {"total_disabled": 1}
 
@@ -316,8 +346,13 @@ class TestJobQueryService:
         assert report["summary"]["blocked_jobs"] == 1
         assert report["summary"]["total_artifacts"] == 1
         assert report["summary"]["pending_approvals"] == 1
+        assert report["summary"]["approval_requests_total"] == 3
+        assert report["summary"]["partial_approvals"] == 1
+        assert report["summary"]["blocked_approval_requests"] == 1
         assert report["summary"]["active_workspaces"] == 1
         assert report["summary"]["active_workers"] == 1
+        assert report["approval_backlog"]["by_status"]["partially_approved"] == 1
+        assert "awaiting additional approval" in report["approval_backlog"]["blocked_reasons"][0]
         assert report["workspace_health"]["by_status"]["failed"] == 1
         assert report["worker_execution"]["active_jobs"] == 1
         assert {item["kind"] for item in report["inbox"]} == {
@@ -331,7 +366,10 @@ class TestJobQueryService:
         job_query_service.list_jobs.return_value = []
         report = OperatorReportService(
             job_queries=job_query_service,
-            approval_queue=MagicMock(get_pending=MagicMock(return_value=[])),
+            approval_queue=MagicMock(
+                get_pending=MagicMock(return_value=[]),
+                list_requests=MagicMock(return_value=[]),
+            ),
             operator_controls=MagicMock(
                 get_status=MagicMock(return_value={"total_disabled": 0})
             ),
@@ -1117,3 +1155,62 @@ class TestEvidenceExport:
         assert package["artifact_traceability"][0]["retention_record_id"] == "artifact-1"
         assert package["artifact_traceability"][0]["approval_ids"] == ["approval-1"]
         assert package["artifact_traceability"][0]["workspace_ids"] == ["ws-1"]
+
+    def test_client_safe_review_export_redacts_sensitive_content(self):
+        service = EvidenceExportService(
+            job_queries=MagicMock(
+                get_job=MagicMock(
+                    return_value=_DictRecord(
+                        job_id="review-1",
+                        job_kind=JobKind.REVIEW,
+                        status="completed",
+                        title="Review delivery",
+                    )
+                )
+            ),
+            artifact_queries=MagicMock(list_artifacts=MagicMock(return_value=[])),
+            control_plane_state=MagicMock(
+                get_product_job=MagicMock(return_value=None),
+                list_retained_artifacts=MagicMock(return_value=[]),
+                list_traces=MagicMock(return_value=[]),
+                list_deliveries=MagicMock(return_value=[]),
+                list_cost_entries=MagicMock(return_value=[]),
+            ),
+            review_service=MagicMock(
+                get_client_safe_bundle=MagicMock(
+                    return_value={
+                        "job_id": "review-1",
+                        "markdown_report": "Path [PATH_REDACTED]",
+                        "findings_only": [],
+                        "json_report": {},
+                        "export_mode": "client_safe",
+                    }
+                )
+            ),
+            approval_queue=MagicMock(
+                list_requests=MagicMock(
+                    return_value=[
+                        {
+                            "id": "approval-1",
+                            "category": "external",
+                            "status": "pending",
+                            "description": "Deliver /Users/daniel/report",
+                            "reason": "Share with b2jk-client",
+                            "required_approvals": 1,
+                            "approvals_received": [],
+                        }
+                    ]
+                )
+            ),
+        )
+
+        package = service.export_job(
+            "review-1",
+            kind="review",
+            export_mode="client_safe",
+        )
+
+        assert package["export_mode"] == "client_safe"
+        assert package["client_safe_bundle"]["export_mode"] == "client_safe"
+        assert "/Users/" not in package["approvals"][0]["description"]
+        assert "b2jk" not in package["approvals"][0]["reason"]

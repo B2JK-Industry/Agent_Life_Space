@@ -46,6 +46,11 @@ class OperatorReportService:
             if self._approval_queue is not None
             else []
         )
+        all_approvals = (
+            self._approval_queue.list_requests(limit=max(limit, 200))
+            if self._approval_queue is not None
+            else []
+        )
         controls = (
             self._operator_controls.get_status()
             if self._operator_controls is not None
@@ -91,6 +96,11 @@ class OperatorReportService:
             if self._workspace_queries is not None
             else []
         )
+        retention_posture = (
+            self._control_plane_state.get_retention_posture(limit=max(limit, 500))
+            if self._control_plane_state is not None
+            else {}
+        )
         control_stats = (
             self._control_plane_state.get_stats()
             if self._control_plane_state is not None
@@ -105,7 +115,7 @@ class OperatorReportService:
                     "id": approval["id"],
                     "status": approval["status"],
                     "title": approval["description"],
-                    "detail": approval["reason"],
+                    "detail": self._approval_detail(approval),
                 }
             )
         for job in blocked_jobs[:limit]:
@@ -196,17 +206,30 @@ class OperatorReportService:
                     }
                 )
 
+        approval_backlog = self._approval_backlog(all_approvals)
+
         return {
             "summary": {
                 "total_jobs": len(jobs),
                 "total_artifacts": len(artifacts),
                 "blocked_jobs": len(blocked_jobs),
                 "pending_approvals": len(pending_approvals),
+                "approval_requests_total": approval_backlog["total"],
+                "partial_approvals": approval_backlog["by_status"].get(
+                    "partially_approved",
+                    0,
+                ),
+                "blocked_approval_requests": (
+                    approval_backlog["by_status"].get("denied", 0)
+                    + approval_backlog["by_status"].get("expired", 0)
+                ),
                 "persisted_plans": control_stats.get("plans", len(recent_plans)),
                 "recent_traces": control_stats.get("traces", len(recent_traces)),
                 "delivery_records": control_stats.get("deliveries", len(recent_deliveries)),
                 "persisted_product_jobs": control_stats.get("product_jobs", len(recent_persisted_jobs)),
                 "retained_artifacts": control_stats.get("retained_artifacts", len(recent_retained_artifacts)),
+                "expired_retained_artifacts": retention_posture.get("by_status", {}).get("expired", 0),
+                "pruned_retained_artifacts": retention_posture.get("by_status", {}).get("pruned", 0),
                 "cost_ledger_entries": control_stats.get("cost_entries", len(recent_cost_entries)),
                 "recorded_cost_usd": control_stats.get("recorded_cost_usd", 0.0),
                 "disabled_tools": controls.get("total_disabled", 0),
@@ -243,6 +266,8 @@ class OperatorReportService:
                     finance_budget.get("forecast", {}).get("single_tx_approval_cap", 0.0)
                 ),
             },
+            "approval_backlog": approval_backlog,
+            "retention_posture": retention_posture,
             "inbox": inbox[:limit],
             "recent_jobs": jobs[:limit],
             "recent_artifacts": artifacts[:limit],
@@ -258,4 +283,36 @@ class OperatorReportService:
             "workspace_health": workspace_health,
             "worker_execution": worker_execution,
             "agent_status": agent_status,
+        }
+
+    def _approval_detail(self, approval: dict[str, Any]) -> str:
+        status = approval.get("status", "")
+        if status == "partially_approved":
+            required = int(approval.get("required_approvals", 1) or 1)
+            received = len(approval.get("approvals_received", []))
+            return (
+                f"{received}/{required} approvals received; "
+                "awaiting additional approval"
+            )
+        if status == "denied":
+            return approval.get("denial_reason", "") or approval.get("reason", "")
+        return approval.get("reason", "")
+
+    def _approval_backlog(self, approvals: list[dict[str, Any]]) -> dict[str, Any]:
+        by_status: dict[str, int] = {}
+        by_category: dict[str, int] = {}
+        blocked_reasons: list[str] = []
+        for approval in approvals:
+            status = str(approval.get("status", ""))
+            category = str(approval.get("category", ""))
+            by_status[status] = by_status.get(status, 0) + 1
+            by_category[category] = by_category.get(category, 0) + 1
+            detail = self._approval_detail(approval)
+            if status in {"partially_approved", "denied", "expired"} and detail:
+                blocked_reasons.append(detail)
+        return {
+            "total": len(approvals),
+            "by_status": by_status,
+            "by_category": by_category,
+            "blocked_reasons": blocked_reasons,
         }

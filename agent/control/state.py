@@ -541,6 +541,66 @@ class ControlPlaneStateService:
             refreshed = [record for record in refreshed if record.status.value == status]
         return refreshed[:limit]
 
+    def prune_retained_artifacts(
+        self,
+        *,
+        job_id: str = "",
+        artifact_kind: str = "",
+        retention_policy_id: str = "",
+        limit: int = 100,
+    ) -> list[ArtifactRetentionRecord]:
+        """Prune expired retained artifacts and clear recoverable snapshots."""
+        self.initialize()
+        candidates = self.list_retained_artifacts(
+            job_id=job_id,
+            artifact_kind=artifact_kind,
+            retention_policy_id=retention_policy_id,
+            limit=limit,
+        )
+        pruned: list[ArtifactRetentionRecord] = []
+        now = datetime.now(UTC).isoformat()
+        for record in candidates:
+            if record.status != ArtifactRetentionStatus.EXPIRED:
+                continue
+            record.status = ArtifactRetentionStatus.PRUNED
+            record.updated_at = now
+            record.recoverable = False
+            record.content = ""
+            record.content_json = {}
+            record.metadata = {
+                **record.metadata,
+                "pruned_at": now,
+                "prune_reason": "retention_expired",
+            }
+            self._storage.save_artifact_retention_record(record)
+            pruned.append(record)
+        return pruned
+
+    def get_retention_posture(self, *, limit: int = 5000) -> dict[str, Any]:
+        """Summarize retained-artifact lifecycle posture for operator reporting."""
+        records = self.list_retained_artifacts(limit=limit)
+        by_status = {
+            ArtifactRetentionStatus.ACTIVE.value: 0,
+            ArtifactRetentionStatus.EXPIRED.value: 0,
+            ArtifactRetentionStatus.PRUNED.value: 0,
+        }
+        by_policy: dict[str, int] = {}
+        recoverable = 0
+        for record in records:
+            status = record.status.value
+            by_status[status] = by_status.get(status, 0) + 1
+            by_policy[record.retention_policy_id] = (
+                by_policy.get(record.retention_policy_id, 0) + 1
+            )
+            if record.recoverable:
+                recoverable += 1
+        return {
+            "total": len(records),
+            "by_status": by_status,
+            "by_policy": by_policy,
+            "recoverable_records": recoverable,
+        }
+
     def record_cost_entry(
         self,
         *,

@@ -142,3 +142,35 @@ class TestRetentionState:
         assert record is not None
         assert record.retention_policy_id == "operational_trace_30d"
         assert record.status == ArtifactRetentionStatus.EXPIRED
+
+    def test_prune_expired_record_clears_snapshot(self):
+        from agent.control.state import ControlPlaneStateService
+        from agent.control.storage import ControlPlaneStorage
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db:
+            state = ControlPlaneStateService(
+                storage=ControlPlaneStorage(db_path=db.name)
+            )
+            expired_created_at = (datetime.now(UTC) - timedelta(days=40)).isoformat()
+
+            state.record_retained_artifact(
+                record_id="artifact-1",
+                artifact_id="artifact-1",
+                job_id="build-1",
+                job_kind=JobKind.BUILD,
+                artifact_kind=ArtifactKind.EXECUTION_TRACE,
+                source_type="build_artifact",
+                created_at=expired_created_at,
+                content="trace payload",
+                content_json={"trace": ["step"]},
+            )
+
+            pruned = state.prune_retained_artifacts(limit=10)
+            record = state.get_retained_artifact("artifact-1")
+
+        assert len(pruned) == 1
+        assert record is not None
+        assert record.status == ArtifactRetentionStatus.PRUNED
+        assert record.content == ""
+        assert record.content_json == {}
+        assert record.recoverable is False

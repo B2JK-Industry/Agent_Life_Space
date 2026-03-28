@@ -19,23 +19,23 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Tool governance** — capability manifest, policy engine, 4-step action pipeline with audit trail
 - **Workspace persistence** — SQLite-backed workspaces with audit trail, limits, TTL, recovery
 - **Approval queue** — structured propose → approve/deny → execute workflow with persistent storage and linkage
-- **Builder delivery packages** — deterministic patch/diff export, acceptance bundle preview, and approval-gated build handoff
+- **Delivery packages** — shared build/review delivery lifecycle with deterministic bundle previews, approval linkage, and explicit handoff state
 - **Planner handoff + traces** — persisted `JobPlan` records and durable qualification/budget/capability/delivery traces
 - **Delivery lifecycle tracking** — prepared → awaiting approval → approved/rejected → handed off with audit events
 - **Workspace joins** — workspaces now link to jobs, artifacts, approvals, and delivery bundles
-- **Retained artifact records** — build/review/delivery outputs now carry policy, expiry, and recoverability metadata
+- **Retained artifact records** — build/review/delivery outputs now carry policy, expiry, recoverability, and prune-state metadata
 - **Persisted product jobs** — shared control-plane record of build/review job metadata, status, usage, and artifacts
 - **Per-job cost ledger** — durable usage/token/cost entries with report and CLI inspection
 - **Runtime budget governance** — hard-cap, stop-loss, and approval-gated intake execution
 - **Managed repo acquisition** — supported `git_url` intake can clone/import into a controlled local mirror before runtime routing
-- **Evidence export** — `--export-evidence-job` assembles compliance-friendly packages with artifacts, traces, retention, and traceability
+- **Evidence export** — `--export-evidence-job` assembles internal or client-safe review packages with artifacts, traces, retention, and traceability
 - **Environment profiles** — explicit review/build/acquisition/export execution profiles exposed through the runtime model
 - **Multi-step approvals** — risky intake and delivery paths can require more than one approval deterministically
 - **Shared policy registry** — deterministic job persistence, artifact retention, delivery, review-gate, and gateway defaults
 - **Control-plane queries** — shared inspection across build, review, task, job-runner, agent-loop, artifact, plan, delivery, and workspace state
 - **Runtime model** — explicit coexistence rules for product jobs, planning tasks, infrastructure jobs, and conversational queue items
-- **Operator CLI surfaces** — `--report`, `--runtime-model`, `--export-evidence-job`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, `--list-persisted-jobs`, `--list-retained-artifacts`, `--list-cost-ledger`, unified `--intake-*`, and explicit build delivery handoff
-- **1276+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **Operator CLI surfaces** — `--report`, `--runtime-model`, `--export-evidence-job`, `--export-evidence-mode client_safe`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, `--list-persisted-jobs`, `--list-retained-artifacts`, `--prune-expired-retained-artifacts`, `--list-cost-ledger`, unified `--intake-*`, and explicit delivery handoff
+- **1280+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -108,7 +108,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 1276+ passed, ~22s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1280+ passed, ~22s, $0.00
 ```
 
 | Layer | Tests | What |
