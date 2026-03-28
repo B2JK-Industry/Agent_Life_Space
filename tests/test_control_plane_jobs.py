@@ -541,6 +541,14 @@ class TestOrchestratorEntryPoints:
         assert detail is not None
         assert detail["job_kind"] == "build"
         assert runtime_model["status"] == "explicit_for_current_phase"
+        assert any(
+            profile["id"] == "operator_controlled"
+            for profile in runtime_model["operating_environment_profiles"]
+        )
+        assert any(
+            policy["id"] == "workspace_local_mutation"
+            for policy in runtime_model["build_execution_policies"]
+        )
 
         await agent.stop()
 
@@ -1080,6 +1088,14 @@ class TestRuntimeModel:
         profiles = {item["id"] for item in model["environment_profiles"]}
         assert "review_host_read_only" in profiles
         assert "build_workspace_local" in profiles
+        operating_profiles = {item["id"] for item in model["operating_environment_profiles"]}
+        assert operating_profiles == {
+            "local_owner",
+            "operator_controlled",
+            "enterprise_hardened",
+        }
+        build_policies = {item["id"] for item in model["build_execution_policies"]}
+        assert "workspace_local_mutation" in build_policies
 
 
 class _DictRecord:

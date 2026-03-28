@@ -43,6 +43,7 @@ from agent.build.models import (
     BuildJobType,
     BuildPhase,
     CriterionKind,
+    CriterionStatus,
     VerificationKind,
 )
 from agent.build.storage import BuildStorage
@@ -56,10 +57,12 @@ from agent.control.models import (
     TraceRecordKind,
 )
 from agent.control.policy import (
+    get_build_execution_policy,
     get_delivery_policy,
     get_review_gate_policy,
     list_delivery_policies,
     list_review_gate_policies,
+    select_build_execution_policy,
 )
 
 logger = structlog.get_logger(__name__)
@@ -101,6 +104,7 @@ class BuildService:
 
         job = BuildJob(
             build_type=intake.build_type,
+            source=intake.source or "manual",
             requester=intake.requester,
             intake=intake,
         )
@@ -137,11 +141,40 @@ class BuildService:
             self._save_job(job)
             return job
         job.capability_id = capability.id
+        execution_policy = self._build_execution_policy(job)
+        self._record_control_trace(
+            trace_kind=TraceRecordKind.EXECUTION,
+            title="Build execution policy",
+            detail=execution_policy.description,
+            job_id=job.id,
+            metadata={
+                "policy_id": execution_policy.id,
+                "build_type": job.build_type.value,
+                "source": job.source,
+                "environment_profile_id": execution_policy.environment_profile_id,
+                "allowed": execution_policy.allow_workspace_mutation,
+            },
+        )
+        if not execution_policy.allow_workspace_mutation:
+            t_validate.fail(execution_policy.description)
+            job.status = JobStatus.BLOCKED
+            job.error = execution_policy.description
+            job.denial = make_denial(
+                code="build_execution_blocked",
+                summary="Build execution denied by policy",
+                detail=execution_policy.description,
+                scope=intake.repo_path,
+                policy_id=execution_policy.id,
+                environment_profile_id=execution_policy.environment_profile_id,
+                suggested_action="Use a supported build source/type or relax the build execution policy intentionally.",
+            ).to_dict()
+            self._save_job(job)
+            return job
         t_validate.complete(f"input valid: {intake.build_type.value}")
         job.status = JobStatus.VALIDATING
         job.record_checkpoint(
             BuildCheckpointPhase.VALIDATED,
-            detail=f"capability={capability.id}",
+            detail=f"capability={capability.id}; policy={execution_policy.id}",
         )
 
         # ── Step 2: Workspace setup ──
@@ -157,7 +190,8 @@ class BuildService:
                 summary="Build execution blocked",
                 detail="Build jobs require a workspace manager.",
                 scope=intake.repo_path,
-                environment_profile_id="build_workspace_local",
+                policy_id=execution_policy.id,
+                environment_profile_id=execution_policy.environment_profile_id,
                 suggested_action="Configure the workspace manager before running build jobs.",
             ).to_dict()
             self._save_job(job)
@@ -186,7 +220,8 @@ class BuildService:
                 summary="Build workspace setup failed",
                 detail=str(e),
                 scope=intake.repo_path,
-                environment_profile_id="build_workspace_local",
+                policy_id=execution_policy.id,
+                environment_profile_id=execution_policy.environment_profile_id,
                 suggested_action="Inspect the workspace configuration and rerun the build.",
             ).to_dict()
             self._save_job(job)
@@ -216,7 +251,8 @@ class BuildService:
                 summary="Build workspace sync failed",
                 detail=str(e),
                 scope=intake.repo_path,
-                environment_profile_id="build_workspace_local",
+                policy_id=execution_policy.id,
+                environment_profile_id=execution_policy.environment_profile_id,
                 suggested_action="Fix repository sync into the managed workspace and rerun the build.",
             ).to_dict()
             self._finalize(job, workspace_path)
@@ -254,6 +290,35 @@ class BuildService:
             f"resumed_from={previous.id}; last_checkpoint="
             f"{previous.last_checkpoint.phase.value if previous.last_checkpoint else 'none'}"
         )
+        execution_policy = self._build_execution_policy(job)
+        self._record_control_trace(
+            trace_kind=TraceRecordKind.EXECUTION,
+            title="Build execution policy",
+            detail=execution_policy.description,
+            job_id=job.id,
+            metadata={
+                "policy_id": execution_policy.id,
+                "build_type": job.build_type.value,
+                "source": job.source,
+                "environment_profile_id": execution_policy.environment_profile_id,
+                "allowed": execution_policy.allow_workspace_mutation,
+                "resume_of": previous.id,
+            },
+        )
+        if not execution_policy.allow_workspace_mutation:
+            job.status = JobStatus.BLOCKED
+            job.error = execution_policy.description
+            job.denial = make_denial(
+                code="build_execution_blocked",
+                summary="Build execution denied by policy",
+                detail=execution_policy.description,
+                scope=job.intake.repo_path,
+                policy_id=execution_policy.id,
+                environment_profile_id=execution_policy.environment_profile_id,
+                suggested_action="Use a supported build source/type or relax the build execution policy intentionally.",
+            ).to_dict()
+            self._save_job(job)
+            return job
 
         workspace_path = ""
         reusable_workspace = False
@@ -336,11 +401,21 @@ class BuildService:
 
         # ── Step 4: Verify ──
         job.status = JobStatus.VERIFYING
+        verification_plan: dict[str, Any] = {
+            "steps": [],
+            "capability_id": job.capability_id,
+            "default_steps": [],
+            "step_details": {},
+            "commands": {},
+            "reused": False,
+        }
         if can_skip_completed_steps and self._can_reuse_checkpoint(
             job, BuildCheckpointPhase.VERIFIED
         ):
             results = job.verification_results
             passed = all(r.passed for r in results)
+            verification_plan["steps"] = [result.kind.value for result in results]
+            verification_plan["reused"] = True
             job.trace("resume:verify").complete("verification checkpoint reused")
         else:
             t_verify = job.trace("verify")
@@ -391,18 +466,13 @@ class BuildService:
                 detail=f"passed={passed}",
             )
 
-        # ── Step 5: Create verification artifact ──
-        verification_artifact = BuildArtifact(
-            artifact_kind=ArtifactKind.VERIFICATION_REPORT,
-            job_id=job.id,
-            content_json={
-                "results": [v.to_dict() for v in results],
-                "all_passed": passed,
-            },
-            format="json",
+        # ── Step 5: Create verification artifacts ──
+        self._capture_verification_artifacts(
+            job=job,
+            results=results,
+            passed=passed,
+            verification_plan=verification_plan,
         )
-        job.artifacts.append(verification_artifact)
-        self._save_artifact(job, verification_artifact)
 
         change_set = self._collect_workspace_changes(job, workspace_path)
 
@@ -474,7 +544,7 @@ class BuildService:
                     detail=block_reason,
                     scope=job.id,
                     policy_id=self._review_gate_policy(job).id,
-                    environment_profile_id="build_workspace_local",
+                    environment_profile_id=self._build_environment_profile_id(job),
                     suggested_action="Address the post-build review findings or relax the review gate policy intentionally.",
                 ).to_dict()
                 t_review.fail(job.error)
@@ -538,7 +608,10 @@ class BuildService:
         acceptance_artifact = BuildArtifact(
             artifact_kind=ArtifactKind.ACCEPTANCE_REPORT,
             job_id=job.id,
-            content_json=job.acceptance.to_dict(),
+            content_json=self._build_acceptance_report(
+                job=job,
+                verification_passed=passed,
+            ),
             format="json",
         )
         job.artifacts.append(acceptance_artifact)
@@ -755,6 +828,117 @@ class BuildService:
         if python.exists():
             return [str(python), "-m", module_name, *args]
         return list(fallback)
+
+    def _capture_verification_artifacts(
+        self,
+        *,
+        job: BuildJob,
+        results: list[Any],
+        passed: bool,
+        verification_plan: dict[str, Any],
+    ) -> None:
+        suite_artifact = BuildArtifact(
+            artifact_kind=ArtifactKind.VERIFICATION_REPORT,
+            job_id=job.id,
+            content_json={
+                "report_kind": "suite",
+                "all_passed": passed,
+                "results": [result.to_dict() for result in results],
+                "total_steps": len(results),
+                "passed_steps": sum(1 for result in results if result.passed),
+                "failed_steps": [result.kind.value for result in results if not result.passed],
+                "verification_plan": verification_plan,
+            },
+            format="json",
+        )
+        job.artifacts.append(suite_artifact)
+        self._save_artifact(job, suite_artifact)
+
+        for index, result in enumerate(results):
+            step_artifact = BuildArtifact(
+                artifact_kind=ArtifactKind.VERIFICATION_REPORT,
+                job_id=job.id,
+                content=self._format_verification_artifact_content(result),
+                content_json={
+                    "report_kind": "step",
+                    "step_index": index,
+                    "verification_kind": result.kind.value,
+                    "passed": result.passed,
+                    "command": result.command,
+                    "exit_code": result.exit_code,
+                    "duration_ms": result.duration_ms,
+                    "stdout_length": len(result.stdout),
+                    "stderr_length": len(result.stderr),
+                },
+                format="text",
+            )
+            job.artifacts.append(step_artifact)
+            self._save_artifact(job, step_artifact)
+
+    def _format_verification_artifact_content(self, result: Any) -> str:
+        sections = [
+            f"# Verification Step: {result.kind.value}",
+            "",
+            f"- passed: {result.passed}",
+            f"- command: {result.command}",
+            f"- exit_code: {result.exit_code}",
+            f"- duration_ms: {result.duration_ms}",
+            "",
+            "## stdout",
+            "",
+            result.stdout or "(empty)",
+            "",
+            "## stderr",
+            "",
+            result.stderr or "(empty)",
+            "",
+        ]
+        return "\n".join(sections)
+
+    def _build_acceptance_report(
+        self,
+        *,
+        job: BuildJob,
+        verification_passed: bool,
+    ) -> dict[str, Any]:
+        criteria_by_status = {
+            "met": [
+                criterion.to_dict()
+                for criterion in job.acceptance.criteria
+                if criterion.status == CriterionStatus.MET
+            ],
+            "unmet": [
+                criterion.to_dict()
+                for criterion in job.acceptance.criteria
+                if criterion.status == CriterionStatus.UNMET
+            ],
+            "skipped": [
+                criterion.to_dict()
+                for criterion in job.acceptance.criteria
+                if criterion.status == CriterionStatus.SKIPPED
+            ],
+            "pending": [
+                criterion.to_dict()
+                for criterion in job.acceptance.criteria
+                if criterion.status == CriterionStatus.PENDING
+            ],
+        }
+        return {
+            **job.acceptance.to_dict(),
+            "report_kind": "delivery_acceptance",
+            "verification_passed": verification_passed,
+            "review_verdict": job.post_build_review_verdict or "not_requested",
+            "criteria_by_status": criteria_by_status,
+            "met_criteria": criteria_by_status["met"],
+            "unmet_criteria": criteria_by_status["unmet"],
+            "delivery_summary": {
+                "accepted": job.acceptance.accepted,
+                "summary": job.acceptance.summary,
+                "met_count": job.acceptance.met_count,
+                "unmet_count": job.acceptance.unmet_count,
+                "total": job.acceptance.total,
+            },
+        }
 
     def _has_test_surface(self, workspace_path: Path) -> bool:
         if self._workspace_has_marker(workspace_path, "tests/"):
@@ -988,6 +1172,16 @@ class BuildService:
     ):
         return next((result for result in job.verification_results if result.kind == kind), None)
 
+    def _build_execution_policy(self, job: BuildJob):
+        return select_build_execution_policy(
+            build_type=job.build_type,
+            source=job.source or job.intake.source or "manual",
+            policy_id=job.intake.execution_policy_id or "workspace_local_mutation",
+        )
+
+    def _build_environment_profile_id(self, job: BuildJob) -> str:
+        return self._build_execution_policy(job).environment_profile_id or get_build_execution_policy().environment_profile_id
+
     def _review_gate_policy(self, job: BuildJob):
         policy_id = job.intake.review_gate_policy_id or "critical_findings"
         if not job.intake.block_on_review_failure and policy_id == "critical_findings":
@@ -1080,7 +1274,8 @@ class BuildService:
             metadata={
                 "build_type": job.build_type.value,
                 "capability_id": job.capability_id,
-                "environment_profile_id": "build_workspace_local",
+                "build_execution_policy_id": self._build_execution_policy(job).id,
+                "environment_profile_id": self._build_environment_profile_id(job),
                 "phase": job.phase.value,
                 "timing": job.timing.to_dict(),
                 "checkpoints": [checkpoint.to_dict() for checkpoint in job.checkpoints],
@@ -1640,6 +1835,46 @@ class BuildService:
             artifacts=len(job.artifacts),
         )
 
+    def _verification_artifact_summary(
+        self,
+        artifact: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = artifact.get("content_json") or {}
+        return {
+            "artifact_id": artifact.get("id", ""),
+            "report_kind": payload.get("report_kind", ""),
+            "verification_kind": payload.get("verification_kind", ""),
+            "passed": payload.get("passed"),
+            "command": payload.get("command", ""),
+            "exit_code": payload.get("exit_code"),
+            "duration_ms": payload.get("duration_ms"),
+            "step_index": payload.get("step_index"),
+        }
+
+    def _delivery_acceptance_summary(
+        self,
+        job: BuildJob,
+        acceptance_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        delivery_summary = acceptance_payload.get("delivery_summary") or {}
+        criteria_by_status = acceptance_payload.get("criteria_by_status") or {}
+        return {
+            "accepted": delivery_summary.get("accepted", job.acceptance.accepted),
+            "summary": delivery_summary.get("summary", job.acceptance.summary),
+            "met_count": delivery_summary.get("met_count", job.acceptance.met_count),
+            "unmet_count": delivery_summary.get("unmet_count", job.acceptance.unmet_count),
+            "total": delivery_summary.get("total", job.acceptance.total),
+            "verification_passed": acceptance_payload.get(
+                "verification_passed",
+                job.verification_passed,
+            ),
+            "review_verdict": acceptance_payload.get(
+                "review_verdict",
+                job.post_build_review_verdict or "not_requested",
+            ),
+            "criteria_by_status": criteria_by_status,
+        }
+
     def get_delivery_bundle(self, job_id: str) -> dict[str, Any] | None:
         """Assemble a build delivery package preview.
 
@@ -1660,13 +1895,24 @@ class BuildService:
             (artifact for artifact in artifacts if artifact.get("artifact_kind") == ArtifactKind.DIFF.value),
             None,
         )
+        verification_artifacts = [
+            artifact
+            for artifact in artifacts
+            if artifact.get("artifact_kind") == ArtifactKind.VERIFICATION_REPORT.value
+        ]
         verification_artifact = next(
             (
-                artifact for artifact in artifacts
-                if artifact.get("artifact_kind") == ArtifactKind.VERIFICATION_REPORT.value
+                artifact
+                for artifact in verification_artifacts
+                if (artifact.get("content_json") or {}).get("report_kind") == "suite"
             ),
-            None,
+            verification_artifacts[0] if verification_artifacts else None,
         )
+        verification_step_artifacts = [
+            artifact
+            for artifact in verification_artifacts
+            if (artifact.get("content_json") or {}).get("report_kind") == "step"
+        ]
         acceptance_artifact = next(
             (
                 artifact for artifact in artifacts
@@ -1693,6 +1939,23 @@ class BuildService:
             if self._workspace_manager is not None and job.workspace_id
             else None
         )
+        acceptance_payload = (
+            acceptance_artifact or {}
+        ).get(
+            "content_json",
+            self._build_acceptance_report(
+                job=job,
+                verification_passed=job.verification_passed,
+            ),
+        )
+        acceptance_summary = self._delivery_acceptance_summary(job, acceptance_payload)
+        verification_payload = (
+            verification_artifact or {}
+        ).get("content_json", {"results": [result.to_dict() for result in job.verification_results]})
+        verification_summaries = [
+            self._verification_artifact_summary(artifact)
+            for artifact in verification_artifacts
+        ]
 
         package = DeliveryPackage(
             bundle_id=self._delivery_bundle_id(job.id),
@@ -1715,6 +1978,9 @@ class BuildService:
                 "acceptance_accepted": job.acceptance.accepted,
                 "review_requested": job.intake.run_post_build_review,
                 "review_verdict": job.post_build_review_verdict or "not_requested",
+                "verification_artifacts": len(verification_artifacts),
+                "verification_steps": len(verification_step_artifacts),
+                "acceptance_unmet": acceptance_summary["unmet_count"],
                 "files_changed": (patch_artifact or {}).get("content_json", {}).get("files_changed", 0),
                 "deliverable_files_changed": (patch_artifact or {}).get("content_json", {}).get(
                     "deliverable_files_changed",
@@ -1722,12 +1988,14 @@ class BuildService:
                 ),
             },
             payload={
-                "verification_report": (
-                    verification_artifact or {}
-                ).get("content_json", {"results": [result.to_dict() for result in job.verification_results]}),
-                "acceptance_report": (
-                    acceptance_artifact or {}
-                ).get("content_json", job.acceptance.to_dict()),
+                "verification_report": verification_payload,
+                "verification_artifact_ids": [
+                    artifact.get("id", "")
+                    for artifact in verification_artifacts
+                ],
+                "verification_artifacts": verification_summaries,
+                "acceptance_report": acceptance_payload,
+                "acceptance_summary": acceptance_summary,
                 "patch": {
                     "artifact_id": (patch_artifact or {}).get("id", ""),
                     "content": (patch_artifact or {}).get("content", ""),

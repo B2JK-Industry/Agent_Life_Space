@@ -10,6 +10,35 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-03-28
+
+Phase 2 kickoff release.
+
+### Builder / Delivery Evidence
+- Build verification now persists one suite-level verification report plus one
+  per-step verification artifact for each executed verification step, instead
+  of flattening the whole run into one generic payload
+- Build delivery bundles now expose verification artifact ids and summaries,
+  plus richer acceptance handoff summaries grouped by criterion status for
+  operator-facing delivery review
+
+### Governance / Runtime Policy
+- Build jobs now resolve explicit source-aware build execution policies before
+  mutable workspace execution, record those decisions as control-plane traces,
+  and block unsupported execution sources with stable deny-by-default payloads
+- Runtime model now exposes higher-level `local_owner`,
+  `operator_controlled`, and `enterprise_hardened` operating profiles on top
+  of the lower-level review/build/acquisition/export execution profiles
+
+### Strategy / Planning
+- Strategy docs now mark this slice as the Phase 2 kickoff and move the next
+  backlog toward golden reviewer cases, remaining structured denials,
+  enterprise data-handling rules, and richer builder acceptance semantics
+
+### Verification
+- Local release verification passed with `1286 passed, 4 skipped`
+- Targeted builder/control-plane regression coverage passed with `86 passed`
+
 ## [1.8.2] — 2026-03-28
 
 Phase 1 final closure release.

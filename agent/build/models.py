@@ -262,6 +262,7 @@ class BuildIntake:
     repo_path: str = ""
     build_type: BuildJobType = BuildJobType.IMPLEMENTATION
     capability_id: str = ""
+    execution_policy_id: str = "workspace_local_mutation"
     description: str = ""
     target_files: list[str] = field(default_factory=list)
     acceptance_criteria: list[AcceptanceCriterion] = field(default_factory=list)
@@ -269,6 +270,7 @@ class BuildIntake:
     block_on_review_failure: bool = True
     review_gate_policy_id: str = "critical_findings"
     delivery_policy_id: str = "approval_required"
+    source: str = "manual"
     requester: str = ""
     context: str = ""
 
@@ -288,6 +290,7 @@ class BuildIntake:
             "repo_path": self.repo_path,
             "build_type": self.build_type.value,
             "capability_id": self.capability_id,
+            "execution_policy_id": self.execution_policy_id,
             "description": self.description,
             "target_files": self.target_files,
             "acceptance_criteria": [c.to_dict() for c in self.acceptance_criteria],
@@ -295,6 +298,7 @@ class BuildIntake:
             "block_on_review_failure": self.block_on_review_failure,
             "review_gate_policy_id": self.review_gate_policy_id,
             "delivery_policy_id": self.delivery_policy_id,
+            "source": self.source,
             "requester": self.requester,
             "context": self.context,
         }
@@ -305,6 +309,7 @@ class BuildIntake:
             repo_path=d.get("repo_path", ""),
             build_type=BuildJobType(d.get("build_type", "implementation")),
             capability_id=d.get("capability_id", ""),
+            execution_policy_id=d.get("execution_policy_id", "workspace_local_mutation"),
             description=d.get("description", ""),
             target_files=d.get("target_files", []),
             acceptance_criteria=[
@@ -315,6 +320,7 @@ class BuildIntake:
             block_on_review_failure=d.get("block_on_review_failure", True),
             review_gate_policy_id=d.get("review_gate_policy_id", "critical_findings"),
             delivery_policy_id=d.get("delivery_policy_id", "approval_required"),
+            source=d.get("source", "manual"),
             requester=d.get("requester", ""),
             context=d.get("context", ""),
         )

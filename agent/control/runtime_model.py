@@ -8,7 +8,11 @@ infrastructure jobs, and conversational loop items visible.
 
 from __future__ import annotations
 
-from agent.control.policy import list_environment_profiles
+from agent.control.policy import (
+    list_build_execution_policies,
+    list_environment_profiles,
+    list_operating_environment_profiles,
+)
 
 
 class RuntimeModelService:
@@ -124,6 +128,32 @@ class RuntimeModelService:
                 }
                 for profile in list_environment_profiles()
             ],
+            "operating_environment_profiles": [
+                {
+                    "id": profile.id,
+                    "label": profile.label,
+                    "description": profile.description,
+                    "intended_for": profile.intended_for,
+                    "default_environment_profile_ids": list(profile.default_environment_profile_ids),
+                    "default_build_execution_policy_id": profile.default_build_execution_policy_id,
+                    "default_delivery_policy_id": profile.default_delivery_policy_id,
+                    "default_gateway_policy_id": profile.default_gateway_policy_id,
+                    "notes": list(profile.notes),
+                }
+                for profile in list_operating_environment_profiles()
+            ],
+            "build_execution_policies": [
+                {
+                    "id": policy.id,
+                    "label": policy.label,
+                    "description": policy.description,
+                    "environment_profile_id": policy.environment_profile_id,
+                    "workspace_required": policy.workspace_required,
+                    "allowed_sources": list(policy.allowed_sources),
+                    "allowed_build_types": [item.value for item in policy.allowed_build_types],
+                }
+                for policy in list_build_execution_policies()
+            ],
             "surfaces": surfaces,
             "global_rules": [
                 "External operator-facing execution must converge on BuildJob or ReviewJob.",
@@ -131,6 +161,7 @@ class RuntimeModelService:
                 "JobRunner remains infrastructure-only and should not become a parallel product job model.",
                 "AgentLoop remains an ephemeral queue and must hand off durable work to Task or product jobs.",
                 "Environment profiles define the safe execution boundary for review, build, acquisition, and export flows.",
+                "Operating environment profiles define the higher-level local/operator/enterprise posture over those flow-level execution boundaries.",
             ],
             "convergence_plan": [
                 "Keep BuildJob and ReviewJob as canonical product records.",

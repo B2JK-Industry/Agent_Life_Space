@@ -409,6 +409,7 @@ class OperatorIntakeService:
             repo_path=intake.repo_path,
             build_type=intake.build_type,
             capability_id=build_capability.capability_id,
+            execution_policy_id="workspace_local_mutation",
             description=intake.description,
             target_files=list(intake.target_files),
             acceptance_criteria=[
@@ -419,6 +420,7 @@ class OperatorIntakeService:
             block_on_review_failure=not review_gate_policy.advisory_only,
             review_gate_policy_id=review_gate_policy.id,
             delivery_policy_id=delivery_policy.id,
+            source="operator",
             requester=intake.requester,
             context=intake.context,
         )

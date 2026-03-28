@@ -5,50 +5,46 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Phase 1 Final Closure slice."
+  assessed_state_note: "Snapshot after Phase 2 Kickoff slice."
   interpretation_date: "2026-03-28"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
     T2: { status: complete_for_phase, approx_progress: 96 }
-    T3: { status: in_progress, approx_progress: 80 }
+    T3: { status: in_progress, approx_progress: 85 }
     T4: { status: in_progress, approx_progress: 92 }
-    T5: { status: in_progress, approx_progress: 90 }
+    T5: { status: in_progress, approx_progress: 92 }
     T6: { status: in_progress, approx_progress: 91 }
     T7: { status: not_started, approx_progress: 0 }
-    T8: { status: in_progress, approx_progress: 88 }
+    T8: { status: in_progress, approx_progress: 91 }
 next_execution_backlog:
   - priority: P0
-    story_id: T5-E1-S2
-    title: "Keep policy deny-by-default across execution modes"
-    why_now: "Review, tool, intake, delivery, and evidence-export blockers now emit structured denials, but build/runtime actions still do not share one unified deny-by-default enforcement boundary."
-  - priority: P0
-    story_id: T8-E2-S1
-    title: "Define local, operator, and enterprise environment profiles"
-    why_now: "Flow-level environment profiles exist, so the next step is turning them into a higher-level operating model that can guide deployment and policy defaults honestly."
-  - priority: P0
-    story_id: T3-E2-S4
-    title: "Capture all verification artifacts and verdicts"
-    why_now: "Builder verification is repo-aware, but delivery and evidence export still benefit from richer first-class verification artifacts instead of only summarized reports."
-  - priority: P1
-    story_id: T3-E3-S4
-    title: "Produce acceptance reports for delivery"
-    why_now: "Acceptance reports already exist as build artifacts, but delivery and evidence packaging still treat them more as side data than as first-class operator handoff material."
-  - priority: P1
-    story_id: T8-E3-S4
-    title: "Prepare data-handling rules for future enterprise requirements"
-    why_now: "Client-safe evidence packaging and retention prune flows now exist, so formalizing enterprise data-handling rules is the next honest hardening step."
-  - priority: P1
     story_id: T5-E1-S3
     title: "Add structured denial reasons everywhere"
-    why_now: "Core blocker flows now use stable denial payloads, but some remaining finance, social, and adapter edges still return plain error strings."
-  - priority: P1
+    why_now: "Core blocker flows already emit stable denial payloads, but some finance, social, and adapter edges still return plain strings and break operator-facing consistency."
+  - priority: P0
     story_id: T6-E3-S1
     title: "Build golden review cases"
-    why_now: "CI now runs reviewer handoff smoke coverage, so the next quality step is durable golden cases instead of only structural regression tests."
-  - priority: P2
+    why_now: "Smoke coverage now guards reviewer handoff structure, so the next quality step is durable golden cases rather than only structural regression tests."
+  - priority: P0
+    story_id: T8-E3-S4
+    title: "Prepare data-handling rules for future enterprise requirements"
+    why_now: "Enterprise-facing operating profiles and client-safe evidence export now exist, so formalizing retention, redaction, and handoff rules is the next honest hardening step."
+  - priority: P1
+    story_id: T3-E2-S3
+    title: "Fail jobs clearly when acceptance criteria are not met"
+    why_now: "Delivery payloads now surface richer verification and acceptance evidence, but acceptance failures still need clearer operator-facing semantics and deterministic failure reasons."
+  - priority: P1
+    story_id: T3-E3-S1
+    title: "Define acceptance criteria object model"
+    why_now: "Acceptance handoff is now first-class in delivery, so the criteria model itself needs stronger structure before semantic matching can grow honestly."
+  - priority: P1
     story_id: T7-E1-S1
     title: "Define gateway contract for external capabilities"
-    why_now: "Policy, retention, approval, environment profile, and cost foundations are stronger now, making gateway definition the next clean boundary rather than premature plumbing."
+    why_now: "Execution policy, operating profiles, approval, retention, and cost foundations are now strong enough that a gateway boundary can be defined without premature plumbing."
+  - priority: P1
+    story_id: T8-E2-S3
+    title: "Add configuration discipline for project roots, secrets, and storage"
+    why_now: "The higher-level operating environment matrix now exists, but concrete deployment-grade configuration discipline is still loose."
 themes:
   - id: T1
     name: Platform Foundation
@@ -240,8 +236,8 @@ themes:
     name: Builder Product
     goal: Make implementation controlled, testable, and acceptance-driven.
     status: in_progress
-    approx_progress: 80
-    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, acceptance criteria engine, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, policy-driven post-build review gate, and deterministic patch/diff plus delivery-lifecycle output.
+    approx_progress: 85
+    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, acceptance criteria engine, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, source-aware build execution policy gating, richer verification/acceptance delivery evidence, policy-driven post-build review gate, and deterministic patch/diff plus delivery-lifecycle output.
     main_gap: No LLM implementation, no real code generation, and no external delivery send path yet.
     epics:
       - id: T3-E1
@@ -273,7 +269,7 @@ themes:
       - id: T3-E2
         name: Build Verification Loop
         status: in_progress
-        approx_progress: 84
+        approx_progress: 90
         stories:
           - id: T3-E2-S1
             name: Add test, lint, and type-check loop for implementation jobs
@@ -292,12 +288,13 @@ themes:
             missing: Acceptance evaluation is still rule-based and limited.
           - id: T3-E2-S4
             name: Capture all verification artifacts and verdicts
-            status: in_progress
-            current_state: Verification results persist as first-class build artifacts.
+            status: complete_for_phase
+            current_state: Verification now persists one suite-level report plus per-step verification artifacts, and build delivery bundles expose those artifact ids and summaries for operator handoff.
+            missing: Discovery remains heuristic and evidence export does not yet add richer language-specific interpretation.
       - id: T3-E3
         name: Acceptance Criteria Engine
         status: in_progress
-        approx_progress: 70
+        approx_progress: 78
         stories:
           - id: T3-E3-S1
             name: Define acceptance criteria object model
@@ -316,9 +313,9 @@ themes:
             missing: No richer semantic engine beyond deterministic rule-based evaluators yet.
           - id: T3-E3-S4
             name: Produce acceptance reports for delivery
-            status: in_progress
-            current_state: Acceptance reports are emitted as build artifacts.
-            missing: Delivery packaging is still basic.
+            status: complete_for_phase
+            current_state: Acceptance reports are emitted as build artifacts and now include delivery-usable summaries, criteria grouped by status, verification outcome, and review verdict metadata that flow into build delivery bundles.
+            missing: Acceptance semantics are still deterministic and rule-based; there is no richer semantic requirement model yet.
 
   - id: T4
     name: Operator Product
@@ -408,14 +405,14 @@ themes:
     name: Security, Governance, And Policy
     goal: Ensure all valuable workflows remain controlled and auditable.
     status: in_progress
-    approx_progress: 90
-    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, and review-execution policy profiles, multi-step approval thresholds, plus shared job-persistence, artifact-retention, and gateway-default policies now pair with broader structured denial payloads across core blocked flows.
+    approx_progress: 92
+    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, review-execution, and build-execution policy profiles, multi-step approval thresholds, plus shared job-persistence, artifact-retention, and gateway-default policies now pair with broader structured denial payloads across core blocked flows.
     main_gap: Build and broader runtime action flow still sit outside a single unified policy enforcement boundary.
     epics:
       - id: T5-E1
         name: Policy Control Plane
         status: in_progress
-        approx_progress: 88
+        approx_progress: 91
         stories:
           - id: T5-E1-S1
             name: Extend policy model to job, artifact, delivery, and gateway decisions
@@ -425,7 +422,7 @@ themes:
           - id: T5-E1-S2
             name: Keep policy deny-by-default across execution modes
             status: mostly_complete
-            current_state: Deny-by-default is now explicit across review execution, tool execution, operator intake blockers, evidence export, and build/review delivery approval plus handoff flows, all with stable operator-visible denial payloads.
+            current_state: Deny-by-default is now explicit across review execution, tool execution, operator intake blockers, evidence export, build/review delivery approval plus handoff flows, and source-aware build execution policies, all with stable operator-visible denial payloads.
             missing: Build implementation execution and some broader runtime actions still do not run under one shared enforcement boundary.
           - id: T5-E1-S3
             name: Add structured denial reasons everywhere
@@ -592,8 +589,8 @@ themes:
     name: Enterprise Hardening
     goal: Prepare for enterprise-grade architecture without premature fragmentation.
     status: in_progress
-    approx_progress: 88
-    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records with prune flow, environment profiles, managed acquisition, internal/client-safe evidence export, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review execution policy boundaries, ADR-001 sidecar, TS operator contracts and skeleton, and policy-driven redaction.
+    approx_progress: 91
+    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, internal/client-safe evidence export, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review/build execution policy boundaries, ADR-001 sidecar, TS operator contracts and skeleton, and policy-driven redaction.
     main_gap: Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack.
     epics:
       - id: T8-E1
@@ -619,16 +616,18 @@ themes:
       - id: T8-E2
         name: Deployment And Environment Profiles
         status: in_progress
-        approx_progress: 45
+        approx_progress: 76
         stories:
           - id: T8-E2-S1
             name: Define local, operator, and enterprise environment profiles
-            status: not_started
+            status: complete_for_phase
+            current_state: Runtime model now exposes local-owner, operator-controlled, and enterprise-hardened operating profiles with default execution, delivery, and gateway posture layered on top of the lower-level execution environment profiles.
+            missing: The profile matrix exists, but it is not yet enforced as a deployment-grade contract across the whole execution stack.
           - id: T8-E2-S2
             name: Make environment-sensitive behavior explicit and testable
             status: mostly_complete
             current_state: Runtime model and planner metadata now expose explicit environment profiles for review, build, acquisition/import, and export-only flows, making execution boundaries visible and testable in the shared control plane.
-            missing: The higher-level local/operator/enterprise profile matrix is still not formalized.
+            missing: The higher-level profile matrix now exists, but broader deployment enforcement is still not formalized.
           - id: T8-E2-S3
             name: Add configuration discipline for project roots, secrets, and storage
             status: started

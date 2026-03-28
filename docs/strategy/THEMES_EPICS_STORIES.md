@@ -11,7 +11,7 @@ Use it for:
 
 ## Current Progress Snapshot
 
-Assessment basis: after Phase 1 Delivery Closure slice.
+Assessment basis: after Phase 2 Kickoff slice.
 
 Important:
 - this is a strategy progress snapshot, not a merge-state indicator
@@ -23,12 +23,12 @@ Important:
 |-------|--------|-----------------|---------------|-----|
 | T1 Platform Foundation | `in_progress` | 96% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted job/plan/trace/delivery records, retention-aware artifact records with prune flow, first-class workspace joins, and explicit environment profiles for review/build/acquisition/export flows. | No unified cross-domain action layer yet. |
 | T2 Reviewer Product | `complete_for_phase` | 90% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, converged Telegram and structured API review entrypoints, plus shared review delivery lifecycle state. | PR comment packs and LLM analysis are v2. |
-| T3 Builder Product | `in_progress` | 80% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery, policy-driven review gating, and deterministic patch/diff plus persisted delivery lifecycle output. | Build step is still placeholder and there is no external delivery send path. |
+| T3 Builder Product | `in_progress` | 85% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery, source-aware execution policy traces and blocking, plus deterministic patch/diff, richer verification/acceptance delivery evidence, and persisted delivery lifecycle output. | Build step is still placeholder and there is no external delivery send path. |
 | T4 Operator Product | `in_progress` | 92% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, shared review/build delivery lifecycle state, evidence export, and richer operator report/CLI surfaces now exist. | No live backend/UI and no full external delivery workflow yet. |
-| T5 Security, Governance, And Policy | `in_progress` | 87% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution policy profiles, multi-step approval thresholds, plus runtime risky-execution approvals for unified intake. | Build execution and broader runtime action flow still sit outside one unified policy enforcement boundary. |
+| T5 Security, Governance, And Policy | `in_progress` | 91% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, multi-step approval thresholds, plus runtime risky-execution approvals for unified intake. | Build execution and broader runtime action flow still sit outside one unified policy enforcement boundary. |
 | T6 Cost, Usage, And Observability | `in_progress` | 89% | UsageSummary, a durable per-job cost ledger, persisted job duration/retry/failure telemetry, runtime hard/soft/stop-loss budget posture, budget-aware escalation controls, durable plan/trace/delivery telemetry, shared runtime job/artifact/workspace queries, richer operator reporting, and explicit approval backlog plus retention posture summaries now exist. | No live operator UI or deeper cross-runtime telemetry yet. |
 | T7 External Capability Gateway | `not_started` | 0% | Nothing yet. | No gateway contract. |
-| T8 Enterprise Hardening | `in_progress` | 88% | Shared control-plane layer, explicit runtime coexistence rules, direct review/build primitive reuse, persisted product-job/plan/delivery state, retention-aware artifact records with prune flow, environment profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, and deterministic review execution policy boundaries. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack. |
+| T8 Enterprise Hardening | `in_progress` | 91% | Shared control-plane layer, explicit runtime coexistence rules, direct review/build primitive reuse, persisted product-job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, and deterministic review/build execution policy boundaries. | Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack. |
 
 ## Theme T1: Platform Foundation
 
@@ -191,7 +191,7 @@ Stories:
 ### Epic T3-E2: Build Verification Loop
 
 - status: `in_progress`
-- approx_progress: 84%
+- approx_progress: 90%
 
 Stories:
 - T3-E2-S1: Add test, lint, and type-check loop for implementation jobs.
@@ -207,13 +207,14 @@ Stories:
   - current_state: BuildService fails job when acceptance criteria unmet. AcceptanceVerdict.evaluate() checks all non-skipped criteria.
   - missing: Evaluation is still rule-based and limited; no semantic requirement engine.
 - T3-E2-S4: Capture all verification artifacts and verdicts.
-  - status: `in_progress`
-  - current_state: Verification results are first-class BuildArtifact (VERIFICATION_REPORT kind). Persisted via BuildStorage.
+  - status: `complete_for_phase`
+  - current_state: Verification now persists one suite-level report plus per-step verification artifacts, and build delivery bundles expose those artifact ids and summaries for operator handoff.
+  - missing: Discovery remains heuristic and evidence export does not yet add richer language-specific interpretation.
 
 ### Epic T3-E3: Acceptance Criteria Engine
 
 - status: `in_progress`
-- approx_progress: 70%
+- approx_progress: 78%
 
 Stories:
 - T3-E3-S1: Define acceptance criteria object model.
@@ -229,9 +230,9 @@ Stories:
   - current_state: Completion-time validation now supports keyword-bound verification checks, explicit `verify:` commands executed in the workspace, review-backed security checks, and change-set-aware docs/target-file evaluators.
   - missing: No semantic acceptance engine beyond deterministic rule-based evaluators yet.
 - T3-E3-S4: Produce acceptance reports for delivery.
-  - status: `in_progress`
-  - current_state: Acceptance reports are emitted as typed build artifacts.
-  - missing: Delivery packaging is still basic.
+  - status: `complete_for_phase`
+  - current_state: Acceptance reports are emitted as typed build artifacts and now include delivery-usable summaries, criteria grouped by status, verification outcome, and review verdict metadata that flow into build delivery bundles.
+  - missing: Acceptance semantics are still deterministic and rule-based; there is no richer semantic requirement model yet.
 
 ## Theme T4: Operator Product
 
@@ -330,9 +331,9 @@ Stories:
 - T5-E1-S2: Keep policy deny-by-default across execution modes.
   - status: `mostly_complete`
   - current_state: Deny-by-default is now explicit across review execution,
-    tool execution, operator intake blockers, evidence export, and
-    build/review delivery approval plus handoff flows, all with stable
-    operator-visible denial payloads.
+    tool execution, operator intake blockers, evidence export, build/review
+    delivery approval plus handoff flows, and source-aware build execution
+    policies, all with stable operator-visible denial payloads.
   - missing: Build implementation execution and some broader runtime actions
     still do not run under one shared enforcement boundary.
 - T5-E1-S3: Add structured denial reasons everywhere.
@@ -496,14 +497,17 @@ Stories:
 
 ### Epic T8-E2: Deployment And Environment Profiles
 
-- approx_progress: 45%
+- approx_progress: 76%
 
 Stories:
 - T8-E2-S1: Define local, operator, and enterprise environment profiles.
+  - status: `complete_for_phase`
+  - current_state: Runtime model now exposes local-owner, operator-controlled, and enterprise-hardened operating profiles with default execution, delivery, and gateway posture layered on top of the lower-level execution environment profiles.
+  - missing: The profile matrix exists, but it is not yet enforced as a deployment-grade contract across the whole execution stack.
 - T8-E2-S2: Make environment-sensitive behavior explicit and testable.
   - status: `mostly_complete`
   - current_state: Runtime model and planner metadata now expose explicit environment profiles for review, build, acquisition/import, and export-only flows, making execution boundaries visible and testable in the shared control plane.
-  - missing: The higher-level local/operator/enterprise profile matrix is still not formalized.
+  - missing: The higher-level profile matrix now exists, but broader deployment enforcement is still not formalized.
 - T8-E2-S3: Add configuration discipline for project roots, secrets, and storage.
 - T8-E2-S4: Add deployment documentation for controlled environments.
 
