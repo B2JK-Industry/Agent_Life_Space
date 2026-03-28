@@ -81,6 +81,8 @@ class BuildOperationType(str, Enum):
     INSERT_AFTER_TEXT = "insert_after_text"
     DELETE_TEXT = "delete_text"
     DELETE_FILE = "delete_file"
+    COPY_FILE = "copy_file"
+    MOVE_FILE = "move_file"
     JSON_SET = "json_set"
 
 
@@ -99,6 +101,7 @@ class BuildOperation:
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     operation_type: BuildOperationType = BuildOperationType.WRITE_FILE
     path: str = ""
+    source_path: str = ""
     description: str = ""
     content: str = ""
     match_text: str = ""
@@ -116,6 +119,22 @@ class BuildOperation:
                 errors.append("implementation_plan.path must be relative")
             if ".." in candidate.parts:
                 errors.append("implementation_plan.path must not contain '..'")
+        if self.operation_type in {
+            BuildOperationType.COPY_FILE,
+            BuildOperationType.MOVE_FILE,
+        }:
+            if not self.source_path:
+                errors.append(
+                    f"{self.operation_type.value} operations require source_path"
+                )
+            else:
+                source_candidate = Path(self.source_path)
+                if source_candidate.is_absolute():
+                    errors.append("implementation_plan.source_path must be relative")
+                if ".." in source_candidate.parts:
+                    errors.append(
+                        "implementation_plan.source_path must not contain '..'"
+                    )
 
         if self.operation_type in {
             BuildOperationType.REPLACE_TEXT,
@@ -135,6 +154,7 @@ class BuildOperation:
             "id": self.id,
             "operation_type": self.operation_type.value,
             "path": self.path,
+            "source_path": self.source_path,
             "description": self.description,
             "content": self.content,
             "match_text": self.match_text,
@@ -160,6 +180,7 @@ class BuildOperation:
             id=d.get("id") or uuid.uuid4().hex[:8],
             operation_type=BuildOperationType(operation_value),
             path=d.get("path", ""),
+            source_path=d.get("source_path", d.get("source", "")),
             description=d.get("description", ""),
             content=d.get("content", ""),
             match_text=d.get("match_text", d.get("match", "")),
@@ -230,6 +251,7 @@ class CriterionEvaluator(str, Enum):
     REVIEW = "review"
     CHANGE_SET = "change_set"
     WORKSPACE = "workspace"
+    IMPLEMENTATION = "implementation"
 
 
 class CriterionStatus(str, Enum):
@@ -331,6 +353,9 @@ class AcceptanceCriterion:
             "diff": ("evaluator", CriterionEvaluator.CHANGE_SET),
             "workspace": ("evaluator", CriterionEvaluator.WORKSPACE),
             "build": ("evaluator", CriterionEvaluator.WORKSPACE),
+            "implementation": ("evaluator", CriterionEvaluator.IMPLEMENTATION),
+            "engine": ("evaluator", CriterionEvaluator.IMPLEMENTATION),
+            "mutation": ("evaluator", CriterionEvaluator.IMPLEMENTATION),
         }
 
         while True:

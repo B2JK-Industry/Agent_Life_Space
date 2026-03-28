@@ -19,6 +19,7 @@ import aiohttp
 from agent.control.denials import make_denial
 from agent.control.models import JobKind, TraceRecordKind, UsageSummary
 from agent.control.policy import (
+    classify_provider_delivery_outcome,
     evaluate_external_gateway_access,
     get_external_capability_route,
     get_external_gateway_contract,
@@ -207,6 +208,10 @@ class ExternalGatewayService:
                 result=result,
                 provider_context=resolved_provider_context,
             )
+            provider_outcome = classify_provider_delivery_outcome(
+                receipt_status=str(provider_receipt.get("status", "")),
+                ok=True,
+            )
             missing_receipt_fields = self._missing_provider_receipt_fields(
                 provider_receipt=provider_receipt,
                 provider_context=resolved_provider_context,
@@ -268,6 +273,7 @@ class ExternalGatewayService:
                     "response_json": result["response_json"],
                     "response_text": result["response_text"],
                     "provider_receipt": provider_receipt,
+                    "provider_outcome": provider_outcome,
                 },
             )
             if policy.record_cost:
@@ -280,6 +286,7 @@ class ExternalGatewayService:
                     attempts=result["attempts"],
                     provider_context=resolved_provider_context,
                     provider_receipt=provider_receipt,
+                    provider_outcome=provider_outcome,
                 )
             return {
                 **base_response,
@@ -288,6 +295,7 @@ class ExternalGatewayService:
                 "response_json": result["response_json"],
                 "response_text": result["response_text"],
                 "provider_receipt": provider_receipt,
+                "provider_outcome": provider_outcome,
             }
 
         denial = make_denial(
@@ -1017,6 +1025,7 @@ class ExternalGatewayService:
         attempts: int,
         provider_context: dict[str, Any],
         provider_receipt: dict[str, Any],
+        provider_outcome: dict[str, Any],
     ) -> None:
         if self._control_plane_state is None:
             return
@@ -1039,6 +1048,7 @@ class ExternalGatewayService:
                 "attempts": attempts,
                 "provider_context": dict(provider_context),
                 "provider_receipt": dict(provider_receipt),
+                "provider_outcome": dict(provider_outcome),
             },
         )
 

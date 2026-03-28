@@ -876,6 +876,78 @@ class TestOrchestratorEntryPoints:
 
         await agent.stop()
 
+    @pytest.mark.asyncio
+    async def test_orchestrator_release_readiness_and_provider_outcomes_flow_into_report(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        from agent.core.agent import AgentOrchestrator
+
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        (repo_dir / "app.py").write_text("def main():\n    return 1\n")
+        (repo_dir / "README.md").write_text("# Repo\n")
+
+        agent = AgentOrchestrator(data_dir=str(tmp_path / "agent"), watchdog_interval=60.0)
+        agent.workspaces._root = tmp_path / "workspaces"
+        agent.workspaces._db_path = str(tmp_path / "workspaces" / "workspaces.db")
+        await agent.initialize()
+
+        review_job = await agent.run_review_job(
+            ReviewIntake(
+                repo_path=str(repo_dir),
+                review_type=ReviewJobType.REPO_AUDIT,
+                context="Release readiness integration",
+            )
+        )
+        approval = agent.request_review_delivery_approval(review_job.id)
+        agent.approval_queue.approve(approval["approval_request_id"], decided_by="owner-1")
+
+        async def request_executor(**_: object) -> dict[str, object]:
+            return {
+                "status_code": 202,
+                "response_json": {
+                    "accepted": True,
+                    "delivery_id": "queued-receipt-1",
+                    "status": "queued",
+                },
+                "response_text": "queued",
+            }
+
+        agent.gateway._request_executor = request_executor
+        monkeypatch.setenv(
+            "AGENT_OBOLOS_REVIEW_WEBHOOK_URL",
+            "https://obolos.example.test/review",
+        )
+        monkeypatch.setenv("AGENT_OBOLOS_AUTH_TOKEN", "secret-token")
+
+        send_result = await agent.send_review_delivery_via_gateway(
+            review_job.id,
+            provider_id="obolos.tech",
+            capability_id="review_handoff_v1",
+        )
+        readiness = await agent.evaluate_release_readiness(release_label="v1.15.0")
+        report = agent.get_operator_report(limit=10)
+        delivery = agent.get_review_delivery_record(review_job.id)
+
+        assert send_result["ok"] is True
+        assert send_result["provider_outcome"]["outcome"] == "pending"
+        assert readiness["ready"] is True
+        assert delivery is not None
+        assert delivery["summary"]["provider_delivery"]["outcome"] == "pending"
+        assert delivery["summary"]["provider_delivery"]["provider_status"] == "queued"
+        assert report["summary"]["release_ready"] is True
+        assert report["latest_release_readiness"]["ready"] is True
+        assert report["provider_delivery_summary"]["by_outcome"]["pending"] >= 1
+        assert report["recent_provider_deliveries"][0]["provider_status"] == "queued"
+        assert any(
+            item["kind"] == "provider_delivery_attention"
+            for item in report["inbox"]
+        )
+
+        await agent.stop()
+
 
 class TestUnifiedOperatorIntake:
     def test_qualification_routes_diff_to_review(self):

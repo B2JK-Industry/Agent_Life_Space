@@ -390,6 +390,7 @@ class TraceRecordKind(str, Enum):
     EXECUTION = "execution"
     GATEWAY = "gateway"
     QUALITY = "quality"
+    RELEASE = "release"
 
 
 @dataclass

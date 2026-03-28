@@ -7,9 +7,12 @@ and external gateway decisions.
 
 from __future__ import annotations
 
+import fnmatch
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
-from agent.build.models import BuildJobType
+from agent.build.models import BuildJobType, BuildOperation
 from agent.control.models import ArtifactKind, JobKind
 from agent.review.models import ReviewJobType
 
@@ -173,6 +176,23 @@ class ExternalCapabilityRoute:
     estimated_cost_usd: float = 0.0
     priority: int = 100
     notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReleaseReadinessPolicy:
+    """Deterministic release-readiness thresholds for Phase 2 closure."""
+
+    id: str
+    label: str
+    minimum_total_cases: int = 3
+    minimum_exact_match_rate: float = 1.0
+    minimum_verdict_accuracy: float = 1.0
+    minimum_count_accuracy: float = 1.0
+    minimum_title_accuracy: float = 1.0
+    max_false_positive_cases: int = 0
+    max_false_negative_cases: int = 0
+    allow_quality_regression: bool = False
+    warn_when_gateway_unconfigured: bool = True
 
 
 @dataclass(frozen=True)
@@ -688,6 +708,22 @@ _ESCALATION_BUDGET_POLICIES: dict[str, EscalationBudgetPolicy] = {
     )
 }
 
+_RELEASE_READINESS_POLICIES: dict[str, ReleaseReadinessPolicy] = {
+    "phase2_closure": ReleaseReadinessPolicy(
+        id="phase2_closure",
+        label="Phase 2 closure readiness",
+        minimum_total_cases=3,
+        minimum_exact_match_rate=1.0,
+        minimum_verdict_accuracy=1.0,
+        minimum_count_accuracy=1.0,
+        minimum_title_accuracy=1.0,
+        max_false_positive_cases=0,
+        max_false_negative_cases=0,
+        allow_quality_regression=False,
+        warn_when_gateway_unconfigured=True,
+    ),
+}
+
 
 def get_review_gate_policy(policy_id: str = "critical_findings") -> ReviewGatePolicy:
     """Resolve a configured review gate policy."""
@@ -1015,6 +1051,255 @@ def resolve_external_capability_routes(
         job_kind=job_kind,
         export_mode=export_mode,
     )
+
+
+def path_matches_declared_targets(path: str, target_files: list[str]) -> bool:
+    """Return whether a relative path stays within the declared target scope."""
+    candidate = Path(path).as_posix()
+    for declared in target_files:
+        target = str(declared).strip().replace("\\", "/")
+        if not target:
+            continue
+        normalized = target.rstrip("/")
+        if candidate == normalized or candidate.startswith(f"{normalized}/"):
+            return True
+        if fnmatch.fnmatch(candidate, target):
+            return True
+    return False
+
+
+def evaluate_build_capability_guardrails(
+    *,
+    capability: Any,
+    operations: list[BuildOperation],
+    target_files: list[str],
+) -> dict[str, Any]:
+    """Evaluate deterministic builder capability guardrails outside runtime code."""
+    if not operations:
+        return {
+            "allowed": True,
+            "errors": [],
+            "metadata": {
+                "operation_count": 0,
+                "target_files_declared": bool(target_files),
+            },
+        }
+
+    errors: list[str] = []
+    if len(operations) > int(getattr(capability, "max_operation_count", 0) or 0):
+        errors.append(
+            f"capability {capability.id} allows at most "
+            f"{capability.max_operation_count} structured operation(s)"
+        )
+
+    supported_operation_types = {
+        item.value for item in getattr(capability, "supported_operation_types", [])
+    }
+    for operation in operations:
+        if operation.operation_type.value not in supported_operation_types:
+            errors.append(
+                f"capability {capability.id} does not allow "
+                f"{operation.operation_type.value}"
+            )
+        if target_files and not path_matches_declared_targets(
+            operation.path,
+            target_files,
+        ):
+            errors.append(
+                f"operation path {operation.path} is outside declared target_files"
+            )
+        if (
+            target_files
+            and operation.source_path
+            and not path_matches_declared_targets(operation.source_path, target_files)
+        ):
+            errors.append(
+                "operation source_path "
+                f"{operation.source_path} is outside declared target_files"
+            )
+
+    return {
+        "allowed": not errors,
+        "errors": errors,
+        "metadata": {
+            "operation_count": len(operations),
+            "target_files_declared": bool(target_files),
+            "supported_operation_types": sorted(supported_operation_types),
+        },
+    }
+
+
+def classify_provider_delivery_outcome(
+    *,
+    receipt_status: str = "",
+    ok: bool = True,
+) -> dict[str, Any]:
+    """Normalize provider receipt semantics into operator-facing outcome classes."""
+    normalized = str(receipt_status or "").strip().casefold()
+    if not ok:
+        return {
+            "outcome": "failed",
+            "provider_status": normalized or "failed",
+            "terminal": True,
+            "success": False,
+            "attention_required": True,
+        }
+    if normalized in {"delivered", "completed", "complete", "success", "succeeded"}:
+        return {
+            "outcome": "delivered",
+            "provider_status": normalized,
+            "terminal": True,
+            "success": True,
+            "attention_required": False,
+        }
+    if normalized in {"accepted", "acknowledged", "received"}:
+        return {
+            "outcome": "accepted",
+            "provider_status": normalized,
+            "terminal": False,
+            "success": True,
+            "attention_required": False,
+        }
+    if normalized in {"queued", "pending", "processing", "scheduled", "in_progress"}:
+        return {
+            "outcome": "pending",
+            "provider_status": normalized,
+            "terminal": False,
+            "success": True,
+            "attention_required": True,
+        }
+    if normalized in {"rejected", "failed", "error", "denied"}:
+        return {
+            "outcome": "failed",
+            "provider_status": normalized,
+            "terminal": True,
+            "success": False,
+            "attention_required": True,
+        }
+    return {
+        "outcome": "unknown",
+        "provider_status": normalized or "unknown",
+        "terminal": False,
+        "success": ok,
+        "attention_required": True,
+    }
+
+
+def get_release_readiness_policy(
+    policy_id: str = "phase2_closure",
+) -> ReleaseReadinessPolicy:
+    """Resolve release-readiness thresholds for Phase 2 closure and beyond."""
+    return _RELEASE_READINESS_POLICIES.get(
+        policy_id,
+        _RELEASE_READINESS_POLICIES["phase2_closure"],
+    )
+
+
+def list_release_readiness_policies() -> list[ReleaseReadinessPolicy]:
+    """Return known release-readiness policies."""
+    return list(_RELEASE_READINESS_POLICIES.values())
+
+
+def evaluate_release_readiness(
+    *,
+    quality_summary: dict[str, Any],
+    gateway_catalog: dict[str, Any] | None = None,
+    policy_id: str = "phase2_closure",
+) -> dict[str, Any]:
+    """Evaluate whether the current runtime posture is ready for release use."""
+    policy = get_release_readiness_policy(policy_id)
+    gateway_summary = dict((gateway_catalog or {}).get("summary", {}))
+    blocking_reasons: list[str] = []
+    warnings: list[str] = []
+
+    total_cases = int(quality_summary.get("total_cases", 0) or 0)
+    exact_match_rate = float(quality_summary.get("exact_match_rate", 0.0) or 0.0)
+    verdict_accuracy = float(quality_summary.get("verdict_accuracy", 0.0) or 0.0)
+    count_accuracy = float(quality_summary.get("count_accuracy", 0.0) or 0.0)
+    title_accuracy = float(quality_summary.get("title_accuracy", 0.0) or 0.0)
+    false_positive_cases = int(quality_summary.get("false_positive_cases", 0) or 0)
+    false_negative_cases = int(quality_summary.get("false_negative_cases", 0) or 0)
+    trend = dict(quality_summary.get("trend", {}))
+
+    if total_cases < policy.minimum_total_cases:
+        blocking_reasons.append(
+            f"Golden review coverage is below the required floor: "
+            f"{total_cases} < {policy.minimum_total_cases} case(s)."
+        )
+    if exact_match_rate < policy.minimum_exact_match_rate:
+        blocking_reasons.append(
+            f"Exact match rate is below policy: {exact_match_rate:.3f} < "
+            f"{policy.minimum_exact_match_rate:.3f}."
+        )
+    if verdict_accuracy < policy.minimum_verdict_accuracy:
+        blocking_reasons.append(
+            f"Verdict accuracy is below policy: {verdict_accuracy:.3f} < "
+            f"{policy.minimum_verdict_accuracy:.3f}."
+        )
+    if count_accuracy < policy.minimum_count_accuracy:
+        blocking_reasons.append(
+            f"Count accuracy is below policy: {count_accuracy:.3f} < "
+            f"{policy.minimum_count_accuracy:.3f}."
+        )
+    if title_accuracy < policy.minimum_title_accuracy:
+        blocking_reasons.append(
+            f"Finding-title accuracy is below policy: {title_accuracy:.3f} < "
+            f"{policy.minimum_title_accuracy:.3f}."
+        )
+    if false_positive_cases > policy.max_false_positive_cases:
+        blocking_reasons.append(
+            "False-positive golden cases exceed policy: "
+            f"{false_positive_cases} > {policy.max_false_positive_cases}."
+        )
+    if false_negative_cases > policy.max_false_negative_cases:
+        blocking_reasons.append(
+            "False-negative golden cases exceed policy: "
+            f"{false_negative_cases} > {policy.max_false_negative_cases}."
+        )
+    if trend.get("regression_detected") and not policy.allow_quality_regression:
+        blocking_reasons.append(
+            trend.get(
+                "summary",
+                "Golden review quality regressed versus the previous baseline.",
+            )
+        )
+
+    total_routes = int(gateway_summary.get("total_routes", 0) or 0)
+    configured_routes = int(gateway_summary.get("configured_routes", 0) or 0)
+    if policy.warn_when_gateway_unconfigured and total_routes > 0 and configured_routes == 0:
+        warnings.append(
+            "Gateway routes exist, but none are configured in the current environment."
+        )
+    elif total_routes > 0 and 0 < configured_routes < total_routes:
+        warnings.append(
+            f"Only {configured_routes}/{total_routes} gateway routes are configured."
+        )
+
+    ready = not blocking_reasons
+    return {
+        "ready": ready,
+        "policy_id": policy.id,
+        "policy_label": policy.label,
+        "blocking_reasons": blocking_reasons,
+        "warnings": warnings,
+        "quality_summary": {
+            "release_label": quality_summary.get("release_label", ""),
+            "total_cases": total_cases,
+            "exact_match_rate": exact_match_rate,
+            "verdict_accuracy": verdict_accuracy,
+            "count_accuracy": count_accuracy,
+            "title_accuracy": title_accuracy,
+            "false_positive_cases": false_positive_cases,
+            "false_negative_cases": false_negative_cases,
+            "trend": trend,
+        },
+        "gateway_summary": gateway_summary,
+        "summary": (
+            "Release readiness checks passed."
+            if ready
+            else "Release readiness checks failed."
+        ),
+    }
 
 
 def get_data_handling_rule(

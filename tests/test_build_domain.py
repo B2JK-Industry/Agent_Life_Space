@@ -105,6 +105,15 @@ class TestAcceptanceCriteria:
         assert criterion.metadata["path"] == "config.json"
         assert criterion.metadata["expected_value"] == "1.11.0"
 
+    def test_criterion_from_text_parses_implementation_evaluator(self):
+        criterion = AcceptanceCriterion.from_text(
+            "required: implementation: bounded engine applies changes"
+        )
+
+        assert criterion.required is True
+        assert criterion.evaluator == CriterionEvaluator.IMPLEMENTATION
+        assert criterion.description == "bounded engine applies changes"
+
 
 class TestAcceptanceVerdict:
     def test_empty_verdict_not_accepted(self):
@@ -751,6 +760,129 @@ class TestBuildService:
         assert bundle["summary"]["operation_mix"]["insert_before_text"] == 1
         assert bundle["summary"]["operation_mix"]["delete_text"] == 1
         assert bundle["summary"]["operation_mix"]["delete_file"] == 1
+
+    async def test_structured_implementation_plan_supports_copy_and_move_operations(
+        self, service, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                )
+            ],
+        )
+        (Path(self._repo_dir) / "templates").mkdir()
+        (Path(self._repo_dir) / "templates" / "snippet.txt").write_text(
+            "copied content\n",
+            encoding="utf-8",
+        )
+        (Path(self._repo_dir) / "legacy.txt").write_text("legacy\n", encoding="utf-8")
+
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Exercise copy and move builder mutations",
+            target_files=[
+                "templates/snippet.txt",
+                "docs/copied.txt",
+                "legacy.txt",
+                "archive/legacy.txt",
+            ],
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.COPY_FILE,
+                    source_path="templates/snippet.txt",
+                    path="docs/copied.txt",
+                ),
+                BuildOperation(
+                    operation_type=BuildOperationType.MOVE_FILE,
+                    source_path="legacy.txt",
+                    path="archive/legacy.txt",
+                ),
+            ],
+        )
+
+        job = await service.run_build(intake)
+        bundle = service.get_delivery_bundle(job.id)
+
+        assert job.status == JobStatus.COMPLETED
+        assert (Path(self._workspace_dir) / "docs" / "copied.txt").read_text(
+            encoding="utf-8"
+        ) == "copied content\n"
+        assert not (Path(self._workspace_dir) / "legacy.txt").exists()
+        assert (Path(self._workspace_dir) / "archive" / "legacy.txt").read_text(
+            encoding="utf-8"
+        ) == "legacy\n"
+        assert bundle is not None
+        assert bundle["summary"]["operation_mix"]["copy_file"] == 1
+        assert bundle["summary"]["operation_mix"]["move_file"] == 1
+
+    async def test_implementation_acceptance_uses_execution_summary(
+        self, service, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "agent.build.service.run_verification_suite",
+            lambda **kwargs: [
+                VerificationResult(
+                    kind=VerificationKind.TEST,
+                    passed=True,
+                    command="pytest",
+                    exit_code=0,
+                )
+            ],
+        )
+
+        intake = BuildIntake(
+            repo_path=self._repo_dir,
+            description="Use implementation-backed acceptance",
+            target_files=["app.py", "docs/notes.md"],
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.REPLACE_TEXT,
+                    path="app.py",
+                    match_text="return 1",
+                    replacement_text="return 3",
+                ),
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="docs/notes.md",
+                    content="# Notes\nready\n",
+                ),
+            ],
+            acceptance_criteria=[
+                AcceptanceCriterion(
+                    description="Implementation plan applies target mutations",
+                    evaluator=CriterionEvaluator.IMPLEMENTATION,
+                    metadata={
+                        "minimum_changed_operations": 2,
+                        "maximum_noop_operations": 0,
+                        "required_operation_types": ["replace_text", "write_file"],
+                        "required_changed_paths": ["app.py", "docs/notes.md"],
+                        "implementation_mode": "bounded_local_engine",
+                    },
+                )
+            ],
+        )
+
+        job = await service.run_build(intake)
+        bundle = service.get_delivery_bundle(job.id)
+
+        assert job.status == JobStatus.COMPLETED
+        assert job.acceptance.criteria[0].status == CriterionStatus.MET
+        assert bundle is not None
+        assert (
+            bundle["payload"]["acceptance_report"]["implementation_summary"][
+                "changed_operations"
+            ]
+            == 2
+        )
+        assert (
+            bundle["payload"]["acceptance_summary"]["implementation"]["changed_operations"]
+            == 2
+        )
 
     async def test_capability_guardrails_block_operations_outside_declared_targets(
         self, service

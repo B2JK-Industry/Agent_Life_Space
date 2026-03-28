@@ -5,42 +5,46 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Phase 2 Builder Engine v2 and Provider Receipt slice."
+  assessed_state_note: "Snapshot after Phase 2 closure and release-readiness slice."
   interpretation_date: "2026-03-28"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
     T2: { status: complete_for_phase, approx_progress: 96 }
-    T3: { status: in_progress, approx_progress: 98 }
-    T4: { status: in_progress, approx_progress: 95 }
-    T5: { status: in_progress, approx_progress: 98 }
-    T6: { status: in_progress, approx_progress: 98 }
-    T7: { status: in_progress, approx_progress: 90 }
-    T8: { status: in_progress, approx_progress: 97 }
+    T3: { status: complete_for_phase, approx_progress: 99 }
+    T4: { status: in_progress, approx_progress: 96 }
+    T5: { status: in_progress, approx_progress: 99 }
+    T6: { status: in_progress, approx_progress: 99 }
+    T7: { status: in_progress, approx_progress: 92 }
+    T8: { status: in_progress, approx_progress: 98 }
 next_execution_backlog:
   - priority: P0
-    story_id: T3-E1-S5
-    title: "Finish the bounded local implementation engine"
-    why_now: "The builder can now do richer deterministic mutations safely, so the remaining honest gap is moving from explicit structured plans toward a production-ready execution envelope."
+    story_id: T4-E2-S3
+    title: "Bind review, verify, and deliver planner phases to stronger runtime capabilities"
+    why_now: "Phase 2 builder closure is now good enough that the next honest gap is operatorization, not more builder mechanics."
   - priority: P0
-    story_id: T3-E3-S2
-    title: "Deepen structured acceptance through execution and delivery"
-    why_now: "Builder execution and delivery are now stronger, so the next product move is making acceptance semantics more meaningful than a deterministic checklist alone."
-  - priority: P1
-    story_id: T5-E1-S4
-    title: "Finish deterministic policy coverage across build/review/provider gateway"
-    why_now: "Builder guardrails and provider receipts now exist, so the next architectural risk is drift between build, review, and gateway enforcement rather than missing policy primitives."
-  - priority: P1
-    story_id: T6-E3-S4
-    title: "Promote quality trends into stronger release gating"
-    why_now: "Release labels, latency, regression deltas, and provider receipts now exist, but they still need to drive more of the release and operator loop."
-  - priority: P1
     story_id: T4-E3-S4
-    title: "Promote provider-specific delivery outcomes into operator workflow"
-    why_now: "Gateway sends now return provider receipts, so operator handoff should understand provider outcomes instead of stopping at generic delivery state."
+    title: "Finish provider-specific operator delivery workflow"
+    why_now: "Provider receipts, provider outcomes, and release readiness now exist, but the operator flow still stops at report or CLI detail instead of a richer active workflow."
+  - priority: P1
+    story_id: T5-E1-S1
+    title: "Push policy toward one broader runtime action boundary"
+    why_now: "Builder guardrails, review execution policy, and gateway policy are all deterministic now, so the next architectural move is unifying them more deeply instead of adding another isolated policy branch."
+  - priority: P1
+    story_id: T6-E2-S1
+    title: "Deepen persisted runtime telemetry beyond current product-job summaries"
+    why_now: "Release readiness, provider outcomes, and product-job telemetry now exist, so operatorization needs richer ongoing runtime history."
+  - priority: P1
+    story_id: T6-E1-S1
+    title: "Improve real cost estimation and operator cost feedback"
+    why_now: "Runtime cost ledger is durable enough that the next useful step is improving quality of estimates, not just recording more of the same."
   - priority: P2
-    story_id: T8-E2-S4
-    title: "Add deployment documentation for controlled environments"
-    why_now: "Provider routing, vault-backed auth, project-root discipline, and richer builder execution are now real runtime concerns, so production-oriented setup docs need to catch up before broader use."
+    story_id: T7-E1-S1
+    title: "Expand the gateway contract beyond one-provider Phase 2 semantics"
+    why_now: "obolos.tech is now a concrete provider with route semantics and receipts, so Phase 3 can start generalizing the gateway boundary."
+  - priority: P2
+    story_id: T8-E1-S3
+    title: "Add stronger architecture invariants for cross-domain boundaries"
+    why_now: "The runtime shape is now concrete enough that enforcement-level invariants matter more than additional descriptive docs alone."
 themes:
   - id: T1
     name: Platform Foundation
@@ -231,16 +235,16 @@ themes:
   - id: T3
     name: Builder Product
     goal: Make implementation controlled, testable, and acceptance-driven.
-    status: in_progress
-    approx_progress: 98
-    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, source-aware build execution policy gating, richer verification and acceptance delivery evidence, a bounded local implementation engine with richer insert/delete-safe workspace mutations plus capability guardrails, structured acceptance criteria flowing through CLI, unified intake, planning, runtime evaluation, and delivery metadata, plus an explicit gateway send path for approved build bundles.
-    main_gap: No general code generation and no semantic requirement engine yet.
+    status: complete_for_phase
+    approx_progress: 99
+    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, source-aware build execution policy gating, richer verification and acceptance delivery evidence, a bounded local implementation engine with insert/delete-safe plus copy or move workspace mutations, capability guardrails, implementation-backed acceptance criteria, release-readiness gating, and an explicit gateway send path for approved build bundles.
+    main_gap: No general code generation and no semantic requirement engine yet, but those now sit beyond the current Phase 2 closure scope.
     epics:
       - id: T3-E1
         name: Capability-Based Build Execution
-        status: in_progress
-        approx_progress: 91
-        remaining_gap: Build flow exists, has real runtime entrypoints, declared capabilities, resumable checkpoints, a bounded local implementation engine, and delivery-package preview artifacts, but it still lacks general code generation and wider execution planning.
+        status: complete_for_phase
+        approx_progress: 98
+        remaining_gap: Runtime entrypoints, declared capabilities, resumable checkpoints, a bounded local implementation engine, and delivery-package preview artifacts now cover the honest deterministic builder slice; general code generation remains future scope.
         stories:
           - id: T3-E1-S1
             name: Define implementation capability catalog
@@ -264,8 +268,8 @@ themes:
             missing: No planner-driven or distributed-worker resume policy yet.
           - id: T3-E1-S5
             name: Replace placeholder build step with a bounded local implementation engine
-            status: mostly_complete
-            current_state: BuildService now executes structured workspace mutations (write_file, append_text, replace_text, insert_before_text, insert_after_text, delete_text, delete_file, json_set) through a bounded local engine, enforces deterministic operation-count plus target-scope guardrails, persists per-operation results, and exposes implementation mode plus execution summaries through job metadata, delivery bundles, CLI, and planning surfaces.
+            status: complete_for_phase
+            current_state: BuildService now executes structured workspace mutations (write_file, append_text, replace_text, insert_before_text, insert_after_text, delete_text, delete_file, copy_file, move_file, json_set) through a bounded local engine, enforces deterministic operation-count plus source and target-scope guardrails, persists per-operation results, and exposes implementation mode plus execution summaries through job metadata, delivery bundles, CLI, and planning surfaces.
             missing: Execution still depends on an explicit structured plan; there is no freeform or LLM-backed code generation yet.
       - id: T3-E2
         name: Build Verification Loop
@@ -294,8 +298,8 @@ themes:
             missing: Discovery remains heuristic and evidence export does not yet add richer language-specific interpretation.
       - id: T3-E3
         name: Acceptance Criteria Engine
-        status: in_progress
-        approx_progress: 93
+        status: complete_for_phase
+        approx_progress: 96
         stories:
           - id: T3-E3-S1
             name: Define acceptance criteria object model
@@ -304,9 +308,9 @@ themes:
             missing: The object model is stronger, but semantic requirement matching is still outside the current deterministic evaluator set.
           - id: T3-E3-S2
             name: Attach acceptance criteria to jobs
-            status: mostly_complete
-            current_state: BuildIntake carries structured AcceptanceCriterion objects, BuildJob inherits them, CLI can now load acceptance criteria from JSON, unified operator intake accepts both lightweight strings and richer criterion objects, and JobPlan now exposes acceptance summaries with required, optional, structured, and evaluator breakdown before execution.
-            missing: Acceptance criteria are now first-class in intake and planning, but semantic requirement matching is still missing.
+            status: complete_for_phase
+            current_state: BuildIntake carries structured AcceptanceCriterion objects, BuildJob inherits them, CLI can now load acceptance criteria from JSON, unified operator intake accepts both lightweight strings and richer criterion objects, JobPlan exposes acceptance summaries before execution, and delivery-ready reports now include implementation-backed acceptance summaries over changed operations, changed paths, operation types, and implementation mode.
+            missing: Semantic requirement matching is still outside the current deterministic evaluator set.
           - id: T3-E3-S3
             name: Validate criteria at completion time
             status: complete_for_phase
@@ -322,9 +326,9 @@ themes:
     name: Operator Product
     goal: Coordinate end-to-end work and delivery.
     status: in_progress
-    approx_progress: 95
-    current_state: Unified intake routing, phase-aware JobPlan preview and submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, workspace joins, richer operator report service, internal and client-safe evidence export, shared build and review delivery lifecycle, operation-count-aware builder planning, acceptance-summary-aware planning, and explicit gateway handoff actions now exist alongside CI typecheck.
-    main_gap: No live backend/UI and no provider-specific external delivery workflow yet.
+    approx_progress: 96
+    current_state: Unified intake routing, phase-aware JobPlan preview and submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, workspace joins, richer operator report service, internal and client-safe evidence export, shared build and review delivery lifecycle, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware operator reporting, and release-readiness traces now exist alongside CI typecheck.
+    main_gap: No live backend/UI and no richer active provider-specific operator workflow yet.
     epics:
       - id: T4-E1
         name: Intake And Qualification
@@ -379,7 +383,7 @@ themes:
       - id: T4-E3
         name: Delivery Workflow
         status: mostly_complete
-        approx_progress: 95
+        approx_progress: 96
         stories:
           - id: T4-E3-S1
             name: Define delivery package model
@@ -398,22 +402,22 @@ themes:
             missing: Richer approval chains and provider-specific send remain future scope.
           - id: T4-E3-S4
             name: Record delivery status and handoff audit events
-            status: mostly_complete
-            current_state: Build and review delivery now persist lifecycle state (prepared, awaiting_approval, approved, rejected, handed_off) plus explicit audit events for gateway request, success, and failure surfaced through the orchestrator, CLI, workspace joins, and operator report.
-            missing: Provider-specific delivery outcomes and broader operator workflow remain future scope.
+            status: complete_for_phase
+            current_state: Build and review delivery now persist lifecycle state (prepared, awaiting_approval, approved, rejected, handed_off) plus explicit audit events for gateway request, success, and failure, and provider-specific outcomes now flow into delivery summaries, operator report summaries, inbox attention, and recent provider-delivery views.
+            missing: Broader active operator workflow and live UI remain future scope.
 
   - id: T5
     name: Security, Governance, And Policy
     goal: Ensure all valuable workflows remain controlled and auditable.
     status: in_progress
-    approx_progress: 98
-    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, review-execution, and build-execution policy profiles, multi-step approval thresholds, provider-aware gateway routes and readiness checks, provider receipt validation, builder capability guardrails, plus shared job-persistence, artifact-retention, gateway-default policies, runtime gateway access evaluation, and broader structured denial payloads across build, review, tool, web, social, and finance-facing blocked flows.
+    approx_progress: 99
+    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, review-execution, and build-execution policy profiles, multi-step approval thresholds, provider-aware gateway routes and readiness checks, provider receipt validation, builder capability guardrails, release-readiness thresholds, shared job-persistence, artifact-retention, gateway-default policies, runtime gateway access evaluation, and broader structured denial payloads across build, review, tool, web, social, and finance-facing blocked flows.
     main_gap: Build and broader runtime action flow still sit outside a single unified policy enforcement boundary.
     epics:
       - id: T5-E1
         name: Policy Control Plane
         status: in_progress
-        approx_progress: 91
+        approx_progress: 99
         stories:
           - id: T5-E1-S1
             name: Extend policy model to job, artifact, delivery, and gateway decisions
@@ -432,8 +436,8 @@ themes:
             missing: One unified runtime enforcement engine is still separate scope.
           - id: T5-E1-S4
             name: Ensure policy is deterministic and separately testable
-            status: mostly_complete
-            current_state: Gateway provider catalogs, route selection, config readiness, provider receipt validation, builder capability guardrails, and fallback behavior now sit on deterministic policy + catalog surfaces with targeted tests instead of living only in ad-hoc runtime branches.
+            status: complete_for_phase
+            current_state: Gateway provider catalogs, route selection, config readiness, provider receipt validation, provider-outcome classification, builder capability guardrails, fallback behavior, and release-readiness thresholds now sit on deterministic policy + catalog surfaces with targeted tests instead of living only in ad-hoc runtime branches.
             missing: Build, review, tool, and gateway execution are still not governed by one unified enforcement engine.
           - id: T5-E1-S5
             name: Bring repository and diff analysis under shared execution and policy boundary
@@ -490,8 +494,8 @@ themes:
     name: Cost, Usage, And Observability
     goal: Make the system operable, measurable, and economically sane.
     status: in_progress
-    approx_progress: 98
-    current_state: UsageSummary now lands in a durable per-job control-plane cost ledger for build and review jobs. Orchestrator-visible build/review counters, persisted product jobs, retained artifacts, durable planning/delivery/gateway traces, shared cross-system job/artifact/workspace queries, approval backlog visibility with blocked reasons, runtime budget enforcement, budget-aware escalation controls, operator-facing reporting, review-eval smoke checks, golden review cases in CI, and runtime review-quality telemetry now cover workspace health, worker execution, recorded-cost summaries, product-job telemetry, budget posture, retention posture, the latest quality snapshot, and regression-vs-baseline trend posture.
+    approx_progress: 99
+    current_state: UsageSummary now lands in a durable per-job control-plane cost ledger for build and review jobs. Orchestrator-visible build/review counters, persisted product jobs, retained artifacts, durable planning/delivery/gateway/release traces, shared cross-system job/artifact/workspace queries, approval backlog visibility with blocked reasons, runtime budget enforcement, budget-aware escalation controls, operator-facing reporting, review-eval smoke checks, golden review cases in CI, release-readiness gating in CLI and CI, and runtime review-quality telemetry now cover workspace health, worker execution, recorded-cost summaries, product-job telemetry, budget posture, retention posture, latest provider outcomes, and regression-vs-baseline trend posture.
     main_gap: No live operator UI or broader longitudinal dashboards yet.
     epics:
       - id: T6-E1
@@ -547,7 +551,7 @@ themes:
       - id: T6-E3
         name: Quality Evals
         status: mostly_complete
-        approx_progress: 96
+        approx_progress: 99
         stories:
           - id: T6-E3-S1
             name: Build golden review cases
@@ -566,16 +570,16 @@ themes:
             missing: No version-over-version quality or latency telemetry yet.
           - id: T6-E3-S4
             name: Track latency and quality regression across versions
-            status: mostly_complete
-            current_state: Review quality evaluation now records release labels, runtime duration, quality deltas versus the previous baseline, and regression posture into the control plane and operator report.
-            missing: Trend telemetry exists, but it is not yet promoted into broader release gating or longitudinal dashboards.
+            status: complete_for_phase
+            current_state: Review quality evaluation now records release labels, runtime duration, quality deltas versus the previous baseline, and regression posture into the control plane and operator report, and release-readiness now promotes those signals into a real deterministic gate surfaced through CLI, CI, traces, and operator report.
+            missing: Longitudinal dashboards remain future scope.
 
   - id: T7
     name: External Capability Gateway
     goal: Integrate external capability providers cleanly and safely.
     status: in_progress
-    approx_progress: 90
-    current_state: Runtime model and policy layer now expose explicit gateway defaults plus a planning-safe external gateway contract, and the runtime now enforces approval-aware auth/timeout/retry/rate-limit delivery sends with gateway traces, cost entries, a concrete obolos.tech provider catalog, readiness-aware routes, provider-specific request payload shaping, parsed provider receipts, and provider-backed delivery fallback.
+    approx_progress: 92
+    current_state: Runtime model and policy layer now expose explicit gateway defaults plus a planning-safe external gateway contract, and the runtime now enforces approval-aware auth/timeout/retry/rate-limit delivery sends with gateway traces, cost entries, a concrete obolos.tech provider catalog, readiness-aware routes, provider-specific request payload shaping, parsed provider receipts, provider outcome classification, provider-backed delivery fallback, and operator-facing provider outcome summaries.
     main_gap: Only one provider exists so far, and broader downstream provider workflow still remains future scope.
     epics:
       - id: T7-E1
@@ -632,8 +636,8 @@ themes:
     name: Enterprise Hardening
     goal: Prepare for enterprise-grade architecture without premature fragmentation.
     status: in_progress
-    approx_progress: 97
-    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, internal/client-safe evidence export, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review/build execution policy boundaries, ADR-001 sidecar, TS operator contracts and skeleton, policy-driven redaction, provider readiness reporting, project-root inference, and explicit enterprise-facing data-handling rules.
+    approx_progress: 98
+    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, internal/client-safe evidence export, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review/build execution policy boundaries, release-readiness gating, controlled-environment deployment documentation, ADR-001 sidecar, TS operator contracts and skeleton, policy-driven redaction, provider readiness reporting, project-root inference, and explicit enterprise-facing data-handling rules.
     main_gap: Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack.
     epics:
       - id: T8-E1
@@ -676,6 +680,11 @@ themes:
             status: mostly_complete
             current_state: Project-root inference now prefers the checked-out repo, gateway route readiness reports env/vault-backed configuration posture, and provider sends can resolve auth from either environment variables or the encrypted local vault.
             missing: Broader deployment/storage documentation and stricter runtime enforcement still remain open.
+          - id: T8-E2-S4
+            name: Add deployment documentation for controlled environments
+            status: complete_for_phase
+            current_state: Deployment documentation now covers controlled local-owner, operator-controlled, and enterprise-hardened postures, release-readiness checks, gateway env/vault configuration, and runtime execution boundaries for practical Phase 2 deployment and handoff.
+            missing: The docs are explicit, but deployment enforcement is still not an extraction-grade runtime contract across the whole stack.
       - id: T8-E3
         name: Compliance-Friendly Foundations
         status: in_progress
