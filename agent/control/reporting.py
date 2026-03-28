@@ -125,7 +125,7 @@ class OperatorReportService:
                     "id": job["job_id"],
                     "status": job["status"],
                     "title": job["title"],
-                    "detail": job["blocked_reason"] or job["outcome"],
+                    "detail": self._job_attention_detail(job),
                 }
             )
         failed_workspaces = workspace_health.get("by_status", {}).get("failed", 0)
@@ -202,7 +202,7 @@ class OperatorReportService:
                         "id": job["job_id"],
                         "status": job["status"],
                         "title": job["title"],
-                        "detail": job.get("metadata", {}).get("last_error", "") or job.get("blocked_reason", ""),
+                        "detail": self._job_attention_detail(job),
                     }
                 )
 
@@ -316,3 +316,16 @@ class OperatorReportService:
             "by_category": by_category,
             "blocked_reasons": blocked_reasons,
         }
+
+    def _job_attention_detail(self, job: dict[str, Any]) -> str:
+        denial = job.get("metadata", {}).get("denial", {})
+        if denial.get("summary"):
+            detail = denial.get("detail", "")
+            if detail:
+                return f"{denial['summary']}: {detail}"
+            return denial["summary"]
+        return (
+            job.get("metadata", {}).get("last_error", "")
+            or job.get("blocked_reason", "")
+            or job.get("outcome", "")
+        )

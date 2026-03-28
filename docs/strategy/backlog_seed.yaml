@@ -5,46 +5,46 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after Phase 1 Delivery Closure slice."
+  assessed_state_note: "Snapshot after Phase 1 Final Closure slice."
   interpretation_date: "2026-03-28"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
-    T2: { status: complete_for_phase, approx_progress: 90 }
+    T2: { status: complete_for_phase, approx_progress: 96 }
     T3: { status: in_progress, approx_progress: 80 }
     T4: { status: in_progress, approx_progress: 92 }
-    T5: { status: in_progress, approx_progress: 87 }
-    T6: { status: in_progress, approx_progress: 89 }
+    T5: { status: in_progress, approx_progress: 90 }
+    T6: { status: in_progress, approx_progress: 91 }
     T7: { status: not_started, approx_progress: 0 }
     T8: { status: in_progress, approx_progress: 88 }
 next_execution_backlog:
   - priority: P0
     story_id: T5-E1-S2
     title: "Keep policy deny-by-default across execution modes"
-    why_now: "Review execution, intake gating, delivery lifecycle, and evidence export are now stronger, but build/runtime actions still do not share one unified deny-by-default enforcement boundary."
+    why_now: "Review, tool, intake, delivery, and evidence-export blockers now emit structured denials, but build/runtime actions still do not share one unified deny-by-default enforcement boundary."
   - priority: P0
     story_id: T8-E2-S1
     title: "Define local, operator, and enterprise environment profiles"
     why_now: "Flow-level environment profiles exist, so the next step is turning them into a higher-level operating model that can guide deployment and policy defaults honestly."
   - priority: P0
-    story_id: T2-E4-S1
-    title: "Prepare copy-paste-ready PR comments and summary review artifacts"
-    why_now: "Review delivery lifecycle and client-safe export are now much stronger, so the next reviewer-facing gap is a truly operator-usable handoff artifact for PR and issue workflows."
-  - priority: P1
     story_id: T3-E2-S4
     title: "Capture all verification artifacts and verdicts"
     why_now: "Builder verification is repo-aware, but delivery and evidence export still benefit from richer first-class verification artifacts instead of only summarized reports."
+  - priority: P1
+    story_id: T3-E3-S4
+    title: "Produce acceptance reports for delivery"
+    why_now: "Acceptance reports already exist as build artifacts, but delivery and evidence packaging still treat them more as side data than as first-class operator handoff material."
   - priority: P1
     story_id: T8-E3-S4
     title: "Prepare data-handling rules for future enterprise requirements"
     why_now: "Client-safe evidence packaging and retention prune flows now exist, so formalizing enterprise data-handling rules is the next honest hardening step."
   - priority: P1
-    story_id: T6-E3-S3
-    title: "Add review eval smoke checks to CI or local gating"
-    why_now: "Reviewer phase-1 scope is effectively closed functionally, so the next quality gap is regression discipline rather than another feature flag."
-  - priority: P1
     story_id: T5-E1-S3
     title: "Add structured denial reasons everywhere"
-    why_now: "Approval backlog and budget/report posture are richer now, but deny-by-default still needs more consistent operator-visible reasoning."
+    why_now: "Core blocker flows now use stable denial payloads, but some remaining finance, social, and adapter edges still return plain error strings."
+  - priority: P1
+    story_id: T6-E3-S1
+    title: "Build golden review cases"
+    why_now: "CI now runs reviewer handoff smoke coverage, so the next quality step is durable golden cases instead of only structural regression tests."
   - priority: P2
     story_id: T7-E1-S1
     title: "Define gateway contract for external capabilities"
@@ -150,9 +150,9 @@ themes:
     name: Reviewer Product
     goal: Make review a first-class client-ready workflow.
     status: complete_for_phase
-    approx_progress: 90
-    current_state: Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode, converged Telegram plus structured API review entrypoints, and shared review delivery lifecycle through the shared runtime.
-    main_gap: LLM analysis and PR comment packs are v2 scope.
+    approx_progress: 96
+    current_state: Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode, converged Telegram plus structured API review entrypoints, shared review delivery lifecycle, and reusable operator-summary plus copy-paste PR comment artifacts now flow through the shared runtime.
+    main_gap: LLM analysis and richer external delivery automation are v2 scope.
     epics:
       - id: T2-E1
         name: Review Job Types
@@ -207,12 +207,14 @@ themes:
             status: mostly_complete
       - id: T2-E4
         name: Review Delivery
-        status: mostly_complete
-        approx_progress: 80
+        status: complete_for_phase
+        approx_progress: 96
         stories:
           - id: T2-E4-S1
             name: Prepare copy-paste-ready PR comments
-            status: not_started
+            status: complete_for_phase
+            current_state: Review delivery now emits dedicated executive-summary artifacts for an operator summary and copy-paste-ready PR comment markdown, persists them as first-class artifacts, and includes them in shared delivery bundles and client-safe evidence export.
+            missing: Direct GitHub posting and richer external delivery automation remain future scope.
           - id: T2-E4-S2
             name: Add delivery approval before external send
             status: complete_for_phase
@@ -406,14 +408,14 @@ themes:
     name: Security, Governance, And Policy
     goal: Ensure all valuable workflows remain controlled and auditable.
     status: in_progress
-    approx_progress: 87
-    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, and review-execution policy profiles, multi-step approval thresholds, plus shared job-persistence, artifact-retention, and gateway-default policies.
+    approx_progress: 90
+    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, and review-execution policy profiles, multi-step approval thresholds, plus shared job-persistence, artifact-retention, and gateway-default policies now pair with broader structured denial payloads across core blocked flows.
     main_gap: Build and broader runtime action flow still sit outside a single unified policy enforcement boundary.
     epics:
       - id: T5-E1
         name: Policy Control Plane
         status: in_progress
-        approx_progress: 82
+        approx_progress: 88
         stories:
           - id: T5-E1-S1
             name: Extend policy model to job, artifact, delivery, and gateway decisions
@@ -422,10 +424,14 @@ themes:
             missing: Repository/diff execution and broader runtime actions are still not enforced through one shared policy engine.
           - id: T5-E1-S2
             name: Keep policy deny-by-default across execution modes
-            status: in_progress
+            status: mostly_complete
+            current_state: Deny-by-default is now explicit across review execution, tool execution, operator intake blockers, evidence export, and build/review delivery approval plus handoff flows, all with stable operator-visible denial payloads.
+            missing: Build implementation execution and some broader runtime actions still do not run under one shared enforcement boundary.
           - id: T5-E1-S3
             name: Add structured denial reasons everywhere
-            status: started
+            status: mostly_complete
+            current_state: Structured denial payloads now cover tool policy, operator intake, build/review validation and delivery blockers, evidence export, and operator reporting attention detail.
+            missing: Some remaining finance, social, and adapter edges still return plain error strings instead of the shared denial schema.
           - id: T5-E1-S4
             name: Ensure policy is deterministic and separately testable
             status: mostly_complete
@@ -484,9 +490,9 @@ themes:
     name: Cost, Usage, And Observability
     goal: Make the system operable, measurable, and economically sane.
     status: in_progress
-    approx_progress: 89
-    current_state: UsageSummary now lands in a durable per-job control-plane cost ledger for build and review jobs. Orchestrator-visible build/review counters, persisted product jobs, retained artifacts, durable planning/delivery traces, shared cross-system job/artifact/workspace queries, approval backlog visibility with blocked reasons, runtime budget enforcement, budget-aware escalation controls, and operator-facing reporting now include workspace health, worker execution, recorded-cost summaries, product-job telemetry, budget posture, and retention posture.
-    main_gap: No live operator UI or deeper cross-runtime telemetry.
+    approx_progress: 91
+    current_state: UsageSummary now lands in a durable per-job control-plane cost ledger for build and review jobs. Orchestrator-visible build/review counters, persisted product jobs, retained artifacts, durable planning/delivery traces, shared cross-system job/artifact/workspace queries, approval backlog visibility with blocked reasons, runtime budget enforcement, budget-aware escalation controls, operator-facing reporting, and review-eval smoke checks in CI now cover workspace health, worker execution, recorded-cost summaries, product-job telemetry, budget posture, and retention posture.
+    main_gap: No live operator UI, golden quality set, or deeper cross-runtime telemetry.
     epics:
       - id: T6-E1
         name: Cost Ledger
@@ -540,8 +546,8 @@ themes:
             missing: No live web UI or push-based updates yet.
       - id: T6-E3
         name: Quality Evals
-        status: started
-        approx_progress: 20
+        status: in_progress
+        approx_progress: 40
         stories:
           - id: T6-E3-S1
             name: Build golden review cases
@@ -549,6 +555,11 @@ themes:
           - id: T6-E3-S2
             name: Measure finding precision and false positives
             status: not_started
+          - id: T6-E3-S3
+            name: Add review eval smoke checks to CI or local gating
+            status: complete_for_phase
+            current_state: Dedicated `tests/test_review_eval_smoke.py` coverage now validates reviewer handoff artifacts and client-safe redaction, and CI runs that suite explicitly.
+            missing: No golden cases, precision tracking, or version-over-version quality telemetry yet.
 
   - id: T7
     name: External Capability Gateway

@@ -117,12 +117,14 @@ class TestToolExecutor:
         assert result["blocked"] is True
         assert result["risk_level"] == "high"
         assert "safe mode" in result["error"]
+        assert result["denial"]["code"] == "safe_mode"
 
     @pytest.mark.asyncio
     async def test_unknown_tool_returns_error(self, executor):
         result = await executor.execute("nonexistent_tool", {})
         assert "error" in result
         assert "Unknown tool" in result["error"]
+        assert result["denial"]["code"] == "unknown_tool"
 
     @pytest.mark.asyncio
     async def test_stats_tracking(self, executor):

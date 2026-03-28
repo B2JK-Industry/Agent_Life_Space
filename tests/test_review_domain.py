@@ -770,6 +770,25 @@ class TestDeliveryBundle:
         assert bundle["execution_mode"] == "read_only_host"
         assert bundle["status"] == "completed"
 
+    async def test_bundle_contains_handoff_summaries(self, service, sample_repo):
+        intake = ReviewIntake(repo_path=sample_repo, requester="daniel")
+        job = await service.run_review(intake)
+        bundle = service.get_delivery_bundle(job.id)
+        assert bundle["operator_summary_markdown"].startswith("# Review Handoff Summary")
+        assert bundle["pr_comment_markdown"].startswith("## ALS Review Summary")
+        assert bundle["summary_pack"]["job_id"] == job.id
+        assert bundle["payload"]["summary_artifact_ids"]
+
+    async def test_review_creates_summary_artifacts(self, service, sample_repo):
+        intake = ReviewIntake(repo_path=sample_repo, requester="daniel")
+        job = await service.run_review(intake)
+        summary_artifacts = [
+            artifact for artifact in job.artifacts if artifact.artifact_type == ArtifactType.EXECUTIVE_SUMMARY
+        ]
+        assert len(summary_artifacts) == 2
+        assert any("Review Handoff Summary" in artifact.content for artifact in summary_artifacts)
+        assert any("ALS Review Summary" in artifact.content for artifact in summary_artifacts)
+
     async def test_bundle_nonexistent_job(self, service):
         bundle = service.get_delivery_bundle("nonexistent-id")
         assert bundle is None
@@ -949,6 +968,7 @@ class TestDeliveryApproval:
             result = service.request_delivery_approval(job.id)
             assert result.get("delivery_ready") is False
             assert "error" in result
+            assert result["denial"]["code"] == "review_delivery_denied_by_default"
         os.unlink(db_path)
 
     async def test_delivery_dev_mode_bypass(self):
@@ -1080,6 +1100,8 @@ class TestClientSafeExport:
             # Internal paths must be redacted
             assert "/Users/" not in bundle["markdown_report"]
             assert "/home/" not in bundle["markdown_report"]
+            assert "/tmp/" not in bundle["operator_summary_markdown"]
+            assert "/tmp/" not in bundle["pr_comment_markdown"]
 
     async def test_client_safe_strips_trace(self, service):
         with tempfile.TemporaryDirectory() as tmpdir:

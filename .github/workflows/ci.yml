@@ -54,6 +54,9 @@ jobs:
       - name: Security audit
         run: pytest tests/test_security_audit.py -v --tb=short
 
+      - name: Review eval smoke
+        run: pytest tests/test_review_eval_smoke.py -q --tb=short
+
       - name: Performance budget
         timeout-minutes: 3
         run: |

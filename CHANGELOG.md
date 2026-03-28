@@ -10,6 +10,35 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.8.2] — 2026-03-28
+
+Phase 1 final closure release.
+
+### Reviewer / Delivery
+- Review delivery now persists copy-paste-ready PR comment markdown and
+  operator-summary artifacts alongside the canonical report, then includes
+  those handoff artifacts in the shared delivery bundle
+- Client-safe evidence export now reuses those redacted review handoff
+  summaries so operators can export cleaner client-facing reviewer packages
+
+### Governance / Denials
+- Added a shared structured denial payload model and propagated it through
+  tool-policy blocks, operator-intake blockers, build/review delivery approval
+  and handoff blockers, and evidence-export denials
+- Operator reporting now prefers structured denial summaries/details when
+  surfacing blocked job attention instead of flattening those states into
+  generic error strings
+
+### Quality / Regression Gating
+- Added `tests/test_review_eval_smoke.py` to validate reviewer handoff
+  artifacts and client-safe redaction behavior end-to-end
+- CI now runs that review-eval smoke suite explicitly as part of the default
+  workflow
+
+### Verification
+- Local release verification passed with `1285 passed, 4 skipped`
+- Targeted closure regression coverage passed with `147 passed`
+
 ## [1.8.1] — 2026-03-28
 
 Phase 1 delivery closure release.
