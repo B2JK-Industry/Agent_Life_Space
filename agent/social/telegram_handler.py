@@ -455,15 +455,16 @@ class TelegramHandler:
         # Prefer the shared runtime entrypoint, but keep a service fallback for
         # lightweight adapters and legacy test doubles that do not expose it.
         from inspect import isawaitable
-        from unittest.mock import Mock
 
         run_review_job = getattr(self._agent, "run_review_job", None)
         if callable(run_review_job):
             maybe_job = run_review_job(intake)
-            if isinstance(maybe_job, Mock):
-                job = await self._agent.review.run_review(intake)
+            if isawaitable(maybe_job):
+                job = await maybe_job
+            elif hasattr(maybe_job, "error"):
+                job = maybe_job
             else:
-                job = await maybe_job if isawaitable(maybe_job) else maybe_job
+                job = await self._agent.review.run_review(intake)
         else:
             job = await self._agent.review.run_review(intake)
 
@@ -990,7 +991,7 @@ class TelegramHandler:
                 "Prečítaj súbory, napíš/uprav kód, spusti testy, commitni.\n"
                 f"Na konci VŽDY napíš zhrnutie. {get_response_language_instruction()}"
             )
-        elif task_type in ("simple", "factual", "greeting") and not tool_context.count("\n") > 2:
+        elif task_type in ("simple", "factual", "greeting") and tool_context.count("\n") <= 2:
             prompt = (
                 f"{get_simple_prompt()}\n"
                 f"{ctx.sender}: {text}\n"

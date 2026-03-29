@@ -246,4 +246,4 @@ sys.exit(result.returncode)
 
 def _escape_triple_quotes(code: str) -> str:
     """Escape triple quotes in code for embedding in Python string."""
-    return code.replace('"""', r'\"\"\"').replace("\\", "\\\\")
+    return code.replace("\\", "\\\\").replace('"""', r'\"\"\"')

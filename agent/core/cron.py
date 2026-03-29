@@ -14,7 +14,7 @@ Joby:
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -139,7 +139,7 @@ class AgentCron:
                 next_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
                 if now.hour >= 8:
                     # Already past 8am, wait until tomorrow
-                    next_8am = next_8am.replace(day=now.day + 1)
+                    next_8am = next_8am + timedelta(days=1)
                 wait_seconds = (next_8am - now).total_seconds()
                 await asyncio.sleep(max(wait_seconds, 60))
 

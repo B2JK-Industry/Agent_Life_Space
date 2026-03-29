@@ -510,13 +510,18 @@ class MemoryStore:
         Excludes: EPISODIC messages, WORKING context, BELIEF, CLAIM.
         Prefers: verified > observed > user_asserted > inferred.
         """
-        return await self.query(
+        _FACT_TYPES = {MemoryType.SEMANTIC, MemoryType.PROCEDURAL}
+        _FACT_KINDS = {MemoryKind.FACT, MemoryKind.PROCEDURE}
+        results = await self.query(
             tags=tags,
             keyword=keyword,
-            limit=limit,
+            limit=limit * 3,  # over-fetch before post-filter
             exclude_stale=True,
-            kind=None,  # We filter below for multiple kinds
         )
+        return [
+            e for e in results
+            if e.memory_type in _FACT_TYPES and e.kind in _FACT_KINDS
+        ][:limit]
 
     async def query_conversations(
         self,

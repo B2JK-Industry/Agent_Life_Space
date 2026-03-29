@@ -10,7 +10,7 @@ Self-hosted AI agent ktorý:
 - Komunikuje cez Telegram
 - Má vlastnú pamäť, skills, knowledge base
 - Učí sa z toho čo robí (feedback loop: episodic → skills → knowledge)
-- Minimalizuje API volania cez 7-vrstvový cascade (lokálny compute namiesto LLM)
+- Minimalizuje API volania cez 9-vrstvový cascade (lokálny compute namiesto LLM)
 - Programuje, scrapuje web, spúšťa kód v povinnom Docker sandboxe
 - Má šifrovaný vault pre citlivé dáta (Fernet AES-128 + PBKDF2)
 
@@ -89,15 +89,17 @@ docker compose up -d
                        │
                        ▼
 ┌─────────────────────────────────────────────────────┐
-│                 7-LAYER CASCADE                      │
+│                 9-LAYER CASCADE                      │
 │                                                      │
 │  1. /commands      → priame odpovede (0 API callov)  │
 │  2. Dispatcher     → regex patterny (0 API callov)   │
 │  3. Semantic Router→ MiniLM lokálne (CPU/RAM)        │
 │  4. Semantic Cache → podobná otázka? (lokálne)       │
 │  5. Self-RAG       → knowledge base (lokálne embed.) │
-│  6. Haiku/Sonnet   → jednoduché/konverzácia (API)   │
-│  7. Opus           → programovanie (API)             │
+│  6. Classify       → task type klasifikácia          │
+│  7. Haiku/Sonnet   → jednoduché/konverzácia (API)   │
+│  8. Quality Gate   → eskalácia + learning feedback   │
+│  9. Opus           → programovanie (API)             │
 │                                                      │
 └──────────────────────┬──────────────────────────────┘
                        │
@@ -127,7 +129,7 @@ docker compose up -d
 
 ## Ako funguje cascade
 
-Cieľ: **minimalizovať API volania.** Vrstvy 1-5 bežia lokálne (CPU/RAM, nie zadarmo, ale bez API callov). LLM sa volá len keď interné moduly nestačia.
+Cieľ: **minimalizovať API volania.** Vrstvy 1-6 bežia lokálne (CPU/RAM, nie zadarmo, ale bez API callov). LLM sa volá len keď interné moduly nestačia.
 
 ### Vrstva 1: Slash commands (0 API callov)
 ```python
@@ -177,14 +179,26 @@ elif result["action"] == "augment":  # score 0.60-0.85
 ```
 Hľadá v knowledge base cez embeddingy.
 
-### Vrstva 6-7: LLM (Haiku/Sonnet/Opus)
+### Vrstva 6: Classify (task type klasifikácia)
+```python
+# brain/decision.py
+task_type = classify_task(text)  # "simple" → Haiku, "chat" → Sonnet, "programming" → Opus
+```
+Deterministic routing — rozhodne aký model zavolať.
+
+### Vrstva 7: LLM (Haiku/Sonnet)
 ```python
 # core/models.py
-task_type = classify_task(text)  # "simple" → Haiku, "chat" → Sonnet, "programming" → Opus
 model = get_model(task_type)
 # → subprocess.run(["claude", "--model", model.model_id, ...])
 ```
 Najdrahšia vrstva — len keď ostatné nestačia.
+
+### Vrstva 8: Quality Gate (eskalácia + learning feedback)
+Quality escalation — ak odpoveď nie je dostatočná, eskaluj na silnejší model. Learning feedback loop aktualizuje skills.
+
+### Vrstva 9: Opus (programovanie)
+Eskalovaná vrstva pre zložité úlohy — programovanie, review, analýza. Volá sa len po quality gate eskalácii.
 
 ---
 
@@ -301,19 +315,19 @@ Nie je to prázdna škatuľka. Konkrétny flow:
 
 ## Resource Odhad
 
-**Lokálny compute (vrstvy 1-5):**
+**Lokálny compute (vrstvy 1-6):**
 - MiniLM model: ~470MB RAM (jednorazovo pri štarte)
 - Embedding výpočet: <100ms per query (i7-5500U)
 - Semantic cache: <1MB RAM (max 200 entries, 1h TTL)
 - RAG index: ~10MB RAM (16 knowledge docs)
 
-**API volania (vrstvy 6-7, len keď treba):**
+**API volania (vrstvy 7-9, len keď treba):**
 - Haiku: ~$0.001 per odpoveď
 - Sonnet: ~$0.01 per odpoveď
 - Opus: ~$0.05-0.20 per programovacia úloha
 - S Max subscription: $0/volanie (zahrnuté v predplatnom)
 
-**Reálna cache hit rate:** 5-10% (väčšina otázok je unikátna). Cache je bonus, nie základ optimalizácie. Hlavná úspora sú vrstvy 1-3 (dispatcher, regex, semantic router).
+**Reálna cache hit rate:** 5-10% (väčšina otázok je unikátna). Cache je bonus, nie základ optimalizácie. Hlavná úspora sú vrstvy 1-4 (dispatcher, regex, semantic router, cache).
 
 ---
 

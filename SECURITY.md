@@ -2,9 +2,10 @@
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| v1.0.x  | Yes       |
+| Version | Supported          |
+|---------|---------------------|
+| v1.17.x | Yes                |
+| v1.0.x  | End-of-life (EOL)  |
 
 ## Reporting a Vulnerability
 
@@ -34,7 +35,7 @@ This project implements multiple security layers. See [Security wiki](https://gi
 
 ### Automated Testing
 
-50 security audit tests run on every commit, covering:
+127 security audit tests run on every commit, covering:
 - Hardcoded secrets scan
 - SQL injection detection
 - eval/exec ban

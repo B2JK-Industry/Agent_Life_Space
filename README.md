@@ -39,7 +39,7 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Runtime model** — explicit coexistence rules for product jobs, planning tasks, infrastructure jobs, and conversational queue items
 - **Release readiness gate** — deterministic CLI/CI quality and gateway posture gate before release or handoff
 - **Operator CLI surfaces** — `--report`, `--runtime-model`, `--export-evidence-job`, `--export-evidence-mode client_safe`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, `--list-persisted-jobs`, `--list-retained-artifacts`, `--prune-expired-retained-artifacts`, `--list-cost-ledger`, unified `--intake-*`, and explicit delivery handoff
-- **1344+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **1371+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -94,6 +94,9 @@ Response -> Telegram + memory + learning
 | `vault/` | Encrypted secrets (Fernet AES-128, PBKDF2 480K iterations) | Stable |
 | `tasks/` | Task lifecycle (create -> start -> complete) | Stable |
 | `projects/` | Project scoping | Beta |
+| `review/` | Structured review runtime, evidence export, reviewer handoff | Stable |
+| `build/` | Build execution, delivery packages, bundle lifecycle | Stable |
+| `control/` | Control-plane queries, runtime model, release readiness gate | Stable |
 | `work/` | Isolated workspaces | Beta |
 
 ~17,300 lines of code. Details: **[Modules wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Modules)**
@@ -117,7 +120,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 1344+ passed, ~24s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1371+ passed, ~24s, $0.00
 ```
 
 | Layer | Tests | What |
