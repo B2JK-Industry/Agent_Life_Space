@@ -21,7 +21,18 @@ from typing import Any
 import aiosqlite
 import structlog
 
+from agent.core.identity import get_agent_identity
+
 logger = structlog.get_logger(__name__)
+
+_PROMPT_EXCLUDED_CORE_KEYS = {
+    "owner",
+    "owner_name",
+    "owner_full_name",
+    "language",
+    "preferred_language",
+    "default_language",
+}
 
 
 class PersistentConversation:
@@ -110,7 +121,7 @@ class PersistentConversation:
         conversation_id: str,
         user_msg: str,
         assistant_msg: str,
-        sender: str = "Daniel",
+        sender: str = "user",
     ) -> None:
         """Ulož user+assistant pár okamžite po každom CLI calle."""
         assert self._db
@@ -122,9 +133,10 @@ class PersistentConversation:
             (conversation_id, now),
         )
 
+        identity = get_agent_identity()
         for role, content, who in [
-            ("user", user_msg, sender),
-            ("assistant", assistant_msg, "John"),
+            ("user", user_msg, sender or "user"),
+            ("assistant", assistant_msg, identity.agent_name),
         ]:
             await self._db.execute(
                 "INSERT INTO messages (conversation_id, sender, role, content, timestamp) "
@@ -188,7 +200,11 @@ class PersistentConversation:
             "SELECT key, value FROM core_memory ORDER BY updated_at DESC"
         ) as cur:
             rows = await cur.fetchall()
-        return "\n".join(f"- {k}: {v}" for k, v in rows) if rows else ""
+        filtered = [
+            (k, v) for k, v in rows
+            if k.lower() not in _PROMPT_EXCLUDED_CORE_KEYS
+        ]
+        return "\n".join(f"- {k}: {v}" for k, v in filtered) if filtered else ""
 
     async def _get_summary(self, conversation_id: str) -> str:
         assert self._db

@@ -50,6 +50,7 @@ from agent.control.storage import ControlPlaneStorage
 from agent.control.workspace_queries import WorkspaceQueryService
 from agent.core.approval import ApprovalCategory, ApprovalQueue
 from agent.core.approval_storage import ApprovalStorage
+from agent.core.identity import get_identity_onboarding_warnings
 from agent.core.job_runner import JobConfig, JobRunner
 from agent.core.llm_router import LLMRouter
 from agent.core.messages import Message, MessageType, ModuleID
@@ -1404,6 +1405,10 @@ class AgentOrchestrator:
             gateway_catalog=gateway_catalog,
             policy_id=policy_id,
         )
+        identity_warnings = get_identity_onboarding_warnings()
+        if identity_warnings:
+            readiness["warnings"] = [*readiness.get("warnings", []), *identity_warnings]
+            readiness["identity_onboarding_warnings"] = identity_warnings
         self.control_plane.record_trace(
             trace_kind=TraceRecordKind.RELEASE,
             title="Release readiness evaluation",

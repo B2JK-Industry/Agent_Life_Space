@@ -2,15 +2,12 @@
 _Kategória: systems | Tags: github, git, repos | Aktualizované: 2026-03-24_
 
 ## Účet
-- Organizácia/user: B2JK-Industry
+- Organizácia/user: deployment-specific GitHub account
 - Token: uložený v vault (GITHUB_TOKEN)
 
 ## Repozitáre
-- **Agent_Life_Space** — hlavný projekt, môj kód
-- **john-test** — testovací repo
-- **anp-sovereign-node** — ANP sovereign node
-- **b2jk_test** — testovací repo
-- **CSNT** — ďalší projekt
+- Repozitáre sú deployment-specific a závisia od pripojeného GitHub účtu
+- Tento projekt môže pracovať s vlastným repozitárom aj s ďalšími repo, ku ktorým má token prístup
 
 ## API
 - Base URL: https://api.github.com

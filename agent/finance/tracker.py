@@ -503,7 +503,7 @@ class FinanceTracker:
         Politika:
             - 3 dni: warning (pripomienka)
             - 7 dní: escalation (urgentná notifikácia)
-            - 14 dní: auto-cancel (Daniel evidentne nechce)
+            - 14 dní: auto-cancel (operátor evidentne nechce)
         """
         now = datetime.now(UTC)
         stale: list[dict[str, Any]] = []

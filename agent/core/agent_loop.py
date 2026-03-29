@@ -5,7 +5,7 @@ John si sám vytvára frontu úloh a postupne ich spracúva.
 Nie všetko naraz v jednom Claude volaní — ale po jednom, s výsledkami.
 
 Flow:
-    1. Daniel pošle správu (napr. "otestuj 5 skills")
+    1. Používateľ pošle správu (napr. "otestuj 5 skills")
     2. John rozloží na tasky a zaradí do internej queue
     3. Odpovie "mám N úloh, začínam"
     4. Spracúva po jednom (každý = jeden Claude CLI call)

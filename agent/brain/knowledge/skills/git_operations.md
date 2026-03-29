@@ -10,11 +10,11 @@ _Kategória: skills | Tags: git, commit, push | Aktualizované: 2026-03-24_
 - `git diff` — čo sa zmenilo
 
 ## Repozitár
-- Cesta: ~/agent-life-space
-- Remote: B2JK-Industry/agent-life-space (GitHub)
-- Branch: main
+- Cesta: aktuálny project root
+- Remote: deployment-specific Git remote
+- Branch: podľa aktívneho workflowu
 
 ## Pravidlá
 - Commit message musí byť jasný a popisný
 - Pred commitom spustiť testy ak existujú
-- Nikdy force push bez Danielovho schválenia
+- Nikdy force push bez explicitného schválenia ownera

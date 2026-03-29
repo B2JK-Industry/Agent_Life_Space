@@ -147,7 +147,7 @@ class TelegramHandler:
                     return f"Príkaz {cmd} je dostupný len pre ownera."
             return await self._handle_command(text)
 
-        # Keep sending typing indicator while John thinks
+        # Keep sending typing indicator while the agent thinks
         typing_task = None
         if self._bot:
             async def keep_typing():
@@ -735,7 +735,11 @@ class TelegramHandler:
             MemoryEntry(
                 content=f"{self._current_sender} mi napísal: {text}",
                 memory_type=MemoryType.EPISODIC,
-                tags=["telegram", "user_input", "daniel"],
+                tags=[
+                    "telegram",
+                    "user_input",
+                    "owner" if ctx.is_owner else "participant",
+                ],
                 source="telegram",
                 importance=0.6,
             )
@@ -825,7 +829,7 @@ class TelegramHandler:
             logger.error("persistent_conv_error", error=str(e))
 
         # === STEP 3.7: Auto-inject runtime stav pri otázkach o sebe ===
-        # Zabraňuje konfabulácii — John dostane fakty, nie generuje čísla
+        # Zabraňuje konfabulácii — agent dostane fakty, nie generuje čísla
         runtime_context = ""
         import re as _re_self
         _SELF_PATTERNS = [
@@ -947,7 +951,7 @@ class TelegramHandler:
             conv_context = "\n".join(conv_lines)
 
             # Ak existuje konverzácia a správa je krátka/vágna,
-            # eskaluj na chat (nie simple/factual) aby John použil kontext
+            # eskaluj na chat (nie simple/factual) aby agent použil kontext
             if task_type in ("simple", "factual") and len(text.split()) <= 8:
                 task_type = "chat"
                 from agent.core.models import get_model
@@ -1086,7 +1090,7 @@ class TelegramHandler:
                     content=f"Odpovedal som na '{text[:40]}': {reply[:150]}",
                     memory_type=MemoryType.EPISODIC,
                     tags=["telegram", "agent_response"],
-                    source="john",
+                    source="agent",
                     importance=0.3,
                 )
             )

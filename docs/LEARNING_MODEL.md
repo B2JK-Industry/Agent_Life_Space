@@ -51,7 +51,7 @@ Zmena musí byť:
 2. **Learning nesmie meniť approval thresholds** — finance approval je hardcoded
 3. **Každá zmena musí byť logovaná** — žiadne tiché úpravy
 4. **Rollback:** skill reset cez `skills.json` edit, memory cez `mark_stale()`
-5. **Owner control:** Daniel môže kedykoľvek resetnúť skills alebo pamäť
+5. **Owner control:** owner môže kedykoľvek resetnúť skills alebo pamäť
 
 ## Metriky
 

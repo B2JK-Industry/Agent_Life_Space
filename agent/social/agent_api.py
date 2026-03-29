@@ -1,7 +1,7 @@
 """
 Agent Life Space — Agent-to-Agent API
 
-HTTP endpoint kde iní agenti môžu posielať správy Johnovi.
+HTTP endpoint kde iní agenti môžu posielať správy agentovi.
 Nie je závislý na Telegrame — priama komunikácia.
 
 Endpoint:
@@ -29,12 +29,17 @@ import structlog
 from aiohttp import web
 
 from agent.control.denials import make_denial
+from agent.core.identity import get_agent_identity
 
 logger = structlog.get_logger(__name__)
 
 _DEFAULT_PORT = 8420
 _RATE_LIMIT = 10  # requests per minute per IP
 _MAX_MESSAGE_LENGTH = 2000
+
+
+def _runtime_agent_slug() -> str:
+    return get_agent_identity().agent_name.lower().replace(" ", "-")
 
 
 class ApiAuditEntry:
@@ -336,7 +341,7 @@ class AgentAPI:
                     logger.warning("agent_api_timeout", sender=sender)
                     return web.json_response({
                         "reply": "Premýšľam príliš dlho. Skús jednoduchšiu otázku.",
-                        "agent": "john-b2jk",
+                        "agent": _runtime_agent_slug(),
                         "sender": sender,
                         "timeout": True,
                     }, status=200)
@@ -348,7 +353,7 @@ class AgentAPI:
                 ))
                 return web.json_response({
                     "reply": response,
-                    "agent": "john-b2jk",
+                    "agent": _runtime_agent_slug(),
                     "sender": sender,
                     "intent": intent,
                 })
@@ -595,7 +600,7 @@ class AgentAPI:
     async def _handle_status(self, request: web.Request) -> web.Response:
         """GET /api/status — minimal public status (no internal details)."""
         return web.json_response({
-            "agent": "john-b2jk",
+            "agent": _runtime_agent_slug(),
             "status": "running",
         })
 

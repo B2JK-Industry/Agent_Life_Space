@@ -61,10 +61,12 @@ class TestCoreImports:
         assert ApprovalQueue
 
     def test_import_persona(self):
+        from agent.core.identity import get_agent_identity
         from agent.core.persona import AGENT_PROMPT, SIMPLE_PROMPT, SYSTEM_PROMPT
-        assert "John" in SYSTEM_PROMPT
-        assert "John" in AGENT_PROMPT
-        assert "John" in SIMPLE_PROMPT
+        agent_name = get_agent_identity().agent_name
+        assert agent_name in SYSTEM_PROMPT
+        assert agent_name in AGENT_PROMPT
+        assert agent_name in SIMPLE_PROMPT
 
     def test_import_status(self):
         try:

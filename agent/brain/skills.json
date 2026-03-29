@@ -93,7 +93,7 @@
     "last_error": "",
     "last_used": "2026-03-24",
     "name": "github_api",
-    "notes": "Otestované 2x - curl s $GITHUB_TOKEN funguje. GET /user vracia B2JK-Industry profil (3 public repos). GET /user/repos vracia zoznam repozitárov (Agent_Life_Space, anp-sovereign-node, b2jk_test, CSNT, john-test). gh CLI nie je nainštalované, treba používať curl.",
+    "notes": "Otestované 2x - curl s $GITHUB_TOKEN funguje. GET /user a GET /user/repos vracajú očakávaný profil a zoznam repozitárov. gh CLI nie je nainštalované, treba používať curl.",
     "status": "mastered",
     "success_count": 2
   },
@@ -107,7 +107,7 @@
     "last_error": "",
     "last_used": "2026-03-24",
     "name": "github_create_issue",
-    "notes": "Otestované 2x - vytvoril issue #1 na Agent_Life_Space a issue #1 na john-test repo. Funguje na ľubovoľnom repo pod B2JK-Industry. Používa curl + $GITHUB_TOKEN.",
+    "notes": "Otestované 2x - vytváranie issue funguje na repo, ku ktorému má pripojený token prístup. Používa curl + $GITHUB_TOKEN.",
     "status": "mastered",
     "success_count": 2
   },
@@ -261,7 +261,7 @@
     "last_error": "",
     "last_used": "2026-03-24",
     "name": "telegram_send",
-    "notes": "Otestované - getMe OK (@b2jk_john_bot, id=8701046998), send_message OK (message_id=210). Markdown fallback funguje (prvý pokus s emoji v Markdown zlyhá, automaticky pošle plain text). TELEGRAM_USER_ID obsahuje viac ID oddelených čiarkou, treba split. Spoľahlivý skill.",
+    "notes": "Otestované na deployment-specific Telegram botovi: getMe OK, send_message OK, Markdown fallback funguje, a TELEGRAM_USER_ID môže obsahovať viac ID oddelených čiarkou. Spoľahlivý skill.",
     "status": "learned",
     "success_count": 1
   },

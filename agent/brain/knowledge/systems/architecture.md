@@ -59,7 +59,7 @@ agent/
 └── work/                   — pracovný priestor
 ```
 
-## Flow správy od Daniela
+## Flow správy od operátora
 1. Telegram API → telegram_bot.py (polling)
 2. → router.py (message bus)
 3. → dispatcher.py → semantic_router.py (klasifikácia)

@@ -45,9 +45,9 @@ class TestPatternExtraction:
 
     @pytest.mark.asyncio
     async def test_user_preference_becomes_semantic(self, store, consolidator):
-        """When Daniel says he wants something, it becomes a semantic memory."""
+        """When the owner says they want something, it becomes a semantic memory."""
         await store.store(MemoryEntry(
-            content="Daniel chce aby som odpovedal stručne a po slovensky",
+            content="Owner chce aby som odpovedal stručne a po anglicky",
             memory_type=MemoryType.EPISODIC,
             tags=["telegram", "user_input"],
             source="telegram",
@@ -59,7 +59,7 @@ class TestPatternExtraction:
         assert report["patterns_found"] >= 1
         semantic = await store.query(memory_type=MemoryType.SEMANTIC, limit=10)
         contents = [m.content for m in semantic]
-        assert any("Daniel chce" in c for c in contents)
+        assert any("Owner chce" in c for c in contents)
 
     @pytest.mark.asyncio
     async def test_skill_learned_becomes_procedural(self, store, consolidator):
@@ -131,7 +131,7 @@ class TestPatternExtraction:
     async def test_no_duplicate_consolidation(self, store, consolidator):
         """Running consolidation twice doesn't create duplicates."""
         await store.store(MemoryEntry(
-            content="Daniel chce aby John bol autonómny",
+            content="Owner chce aby John bol autonómny",
             memory_type=MemoryType.EPISODIC,
             tags=["telegram", "user_input"],
             source="telegram",
@@ -149,7 +149,7 @@ class TestPatternExtraction:
         """One consolidation run extracts multiple pattern types."""
         entries = [
             MemoryEntry(
-                content="Daniel preferuje stručné odpovede",
+                content="Owner preferuje stručné odpovede",
                 memory_type=MemoryType.EPISODIC,
                 tags=["telegram", "user_input"],
                 source="telegram", importance=0.6,
@@ -186,7 +186,7 @@ class TestDeduplication:
     async def test_duplicates_removed(self, store, consolidator):
         """Two episodic memories with same first 80 chars — one gets removed."""
         # Dedup uses first 80 chars as key — both must share that prefix
-        shared_prefix = "Daniel mi napísal presne toto: ahoj, ako sa máš? Čo nového na svete? Povedz mi niečo."
+        shared_prefix = "Owner mi napísal presne toto: ahoj, ako sa máš? Čo nového na svete? Povedz mi niečo."
         await store.store(MemoryEntry(
             content=shared_prefix,
             memory_type=MemoryType.EPISODIC,
@@ -206,7 +206,7 @@ class TestDeduplication:
     async def test_different_memories_not_deduplicated(self, store, consolidator):
         """Clearly different memories should both survive."""
         await store.store(MemoryEntry(
-            content="Daniel mi napísal o serveri a jeho konfigurácii",
+            content="Owner mi napísal o serveri a jeho konfigurácii",
             memory_type=MemoryType.EPISODIC,
             tags=["telegram"], source="telegram", importance=0.5,
         ))
@@ -249,7 +249,7 @@ class TestWorkingMemory:
         """Working memory is set and queryable."""
         mem_id = await consolidator.set_working_context(
             current_goal="Opraviť konsolidáciu pamäte",
-            active_conversation="Daniel pýta na testy",
+            active_conversation="Owner pýta na testy",
         )
 
         assert mem_id
@@ -273,12 +273,12 @@ class TestUserPatterns:
 
     @pytest.mark.asyncio
     async def test_extract_criticism_and_praise(self, store, consolidator):
-        """Detect Daniel's criticism and praise patterns."""
+        """Detect owner criticism and praise patterns."""
         messages = [
-            "Daniel mi napísal: super, to funguje perfektne!",
-            "Daniel mi napísal: nefunguje to, prečo je tam chyba?",
-            "Daniel mi napísal: výborne, presne toto som chcel",
-            "Daniel mi napísal: zle, neodpovedá server",
+            "Owner mi napísal: super, to funguje perfektne!",
+            "Owner mi napísal: nefunguje to, prečo je tam chyba?",
+            "Owner mi napísal: výborne, presne toto som chcel",
+            "Owner mi napísal: zle, neodpovedá server",
         ]
         for msg in messages:
             await store.store(MemoryEntry(

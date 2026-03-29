@@ -1,7 +1,7 @@
 """
 Agent Life Space — Cron / Initiative System
 
-John sa sám prebudí a koná bez toho aby ho niekto oslovil.
+Agent sa sám prebudí a koná bez toho, aby ho niekto oslovil.
 Pravidelné úlohy bežia na pozadí.
 
 Joby:
@@ -19,12 +19,14 @@ from typing import Any
 
 import structlog
 
+from agent.core.identity import get_agent_identity
+
 logger = structlog.get_logger(__name__)
 
 
 class AgentCron:
     """
-    Periodic initiative system. John acts on his own.
+    Periodic initiative system. The agent acts on its own.
     """
 
     def __init__(
@@ -76,7 +78,8 @@ class AgentCron:
     async def _do_health_check(self) -> None:
         health = self._agent.watchdog.get_system_health()
 
-        # Alert Daniel if something is wrong
+        identity = get_agent_identity()
+        # Alert the operator if something is wrong
         if health.alerts and self._bot and self._owner_chat_id:
             # Rozlíš severity
             unresponsive = [a for a in health.alerts if "unresponsive" in a.lower()]
@@ -84,7 +87,7 @@ class AgentCron:
 
             if unresponsive:
                 alert_text = (
-                    "🔴 *John — CRITICAL: Modul UNRESPONSIVE*\n\n"
+                    f"🔴 *{identity.agent_name} — CRITICAL: Modul UNRESPONSIVE*\n\n"
                     + "\n".join(unresponsive)
                     + f"\n\nCPU: {health.cpu_percent:.0f}%, "
                     f"RAM: {health.memory_percent:.0f}%\n"
@@ -92,7 +95,7 @@ class AgentCron:
                 )
             else:
                 alert_text = (
-                    "⚠️ *John — Health Alert*\n\n"
+                    f"⚠️ *{identity.agent_name} — Health Alert*\n\n"
                     + "\n".join(other_alerts)
                     + f"\n\nCPU: {health.cpu_percent:.0f}%, "
                     f"RAM: {health.memory_percent:.0f}%"
@@ -147,7 +150,7 @@ class AgentCron:
                 logger.exception("cron_morning_error")
 
     async def _do_morning_report(self) -> None:
-        """John sends Daniel a morning report — proactively."""
+        """The agent sends the operator a morning report proactively."""
         if not self._bot or not self._owner_chat_id:
             return
 
@@ -164,7 +167,7 @@ class AgentCron:
             )
 
         report = (
-            f"☀️ *Dobré ráno, Daniel!*\n\n"
+            "☀️ *Dobré ráno!*\n\n"
             f"*Môj stav:*\n"
             f"  CPU: {health.cpu_percent:.0f}%, RAM: {health.memory_percent:.0f}%\n"
             f"  Moduly: {'všetky OK' if not health.alerts else ', '.join(health.alerts)}\n"
@@ -198,7 +201,7 @@ class AgentCron:
         if len(queued) > 10 and self._bot and self._owner_chat_id:
             await self._bot.send_message(
                 self._owner_chat_id,
-                f"📋 *John — Task Review*\n\n"
+                f"📋 *{get_agent_identity().agent_name} — Task Review*\n\n"
                 f"Mám {len(queued)} úloh v rade a {len(running)} bežiacich.\n"
                 f"Chceš niektoré prioretizovať alebo zrušiť?",
             )
@@ -270,7 +273,7 @@ class AgentCron:
 
     async def _dead_man_switch_loop(self) -> None:
         """
-        Kontroluj stale proposals a notifikuj Daniela.
+        Kontroluj stale proposals a notifikuj ownera.
 
         Politika:
             3 dni → warning (pripomienka)
@@ -319,8 +322,9 @@ class AgentCron:
                 lines.append(f"  • {s['description']} (${s['amount']:.2f}, {s['age_days']}d)")
 
         if lines:
+            identity = get_agent_identity()
             message = (
-                "⏰ *John — Dead Man Switch*\n\n"
+                f"⏰ *{identity.agent_name} — Dead Man Switch*\n\n"
                 f"Mám {len(stale)} nevybavených proposals:\n\n"
                 + "\n".join(lines)
                 + "\n\nPouži /budget na detail."
@@ -330,4 +334,3 @@ class AgentCron:
                         warnings=len(warnings),
                         escalations=len(escalations),
                         cancelled=len(cancelled))
-

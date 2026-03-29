@@ -13,7 +13,7 @@ Tento súbor je len rozcestník. Detailná dokumentácia je na wiki stránkach:
 | [API Reference](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/API-Reference) | Agent-to-Agent HTTP API + Telegram commands |
 | [Deployment](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Deployment) | Setup, env vars, Cloudflare tunnel |
 | [Testing](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Testing) | Test pyramid, coverage, how to run |
-| [Skills & Knowledge](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Skills-and-Knowledge) | Čo John vie a pozná |
+| [Skills & Knowledge](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Skills-and-Knowledge) | Čo agent vie a pozná |
 | [Cron & Maintenance](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Cron-and-Maintenance) | Background jobs, health checks |
 | [Finance](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Finance) | Budget, proposals, approval flow |
 | [Roadmap](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Roadmap) | Backlog, priorities, known issues |
@@ -64,7 +64,7 @@ python -m pytest tests/ -q   # Testy
 Aktuálna: **v1.16.1** — Telegram identity and language default fix release.
 
 Nové v `v1.16.1`:
-- fresh install už nededí hardcoded `Daniel` owner identitu ani povinnú
+- fresh install už nededí hardcoded owner identitu ani povinnú
   slovenčinu v promptoch
 - Telegram owner flow zachováva reálne Telegram meno a explicitne odovzdáva
   owner status callback vrstve

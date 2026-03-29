@@ -1,7 +1,7 @@
 """
 Agent Life Space — Web Access Module
 
-John vie čítať internet. Rozumne, bezpečne, s rate limitom.
+Agent vie čítať internet rozumne, bezpečne a s rate limitom.
 
 Capabilities:
     - fetch_url: GET request, vráti text/HTML
@@ -12,7 +12,7 @@ Capabilities:
 Rules:
     - Rate limit: max 10 requests per minute
     - Timeout: 15s per request
-    - No auth to external services without Daniel's approval
+    - No auth to external services without operator approval
     - Results stored in memory (episodic or semantic)
 """
 
@@ -98,7 +98,7 @@ def _check_rate_limit() -> bool:
 
 class WebAccess:
     """
-    John's internet access. Fetch URLs, scrape text, call APIs.
+    Shared internet access surface. Fetch URLs, scrape text, call APIs.
     """
 
     def __init__(self) -> None:
@@ -108,7 +108,7 @@ class WebAccess:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT),
-                headers={"User-Agent": "John-AgentLifeSpace/0.1"},
+                headers={"User-Agent": "AgentLifeSpace/0.1"},
             )
         return self._session
 

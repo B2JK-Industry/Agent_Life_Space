@@ -363,7 +363,7 @@ class TestChannelAbstraction:
         msg = IncomingMessage(
             text="hello",
             sender_id="123",
-            sender_name="Daniel",
+            sender_name="owner",
             channel_type="telegram",
             chat_id="456",
         )

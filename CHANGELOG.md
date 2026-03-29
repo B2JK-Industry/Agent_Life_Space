@@ -15,7 +15,7 @@ This project follows [Semantic Versioning](https://semver.org/):
 Telegram owner-identity and language-default fix.
 
 ### Telegram / Identity / Persona
-- Fresh installs no longer inherit hardcoded `Daniel` owner identity or forced
+- Fresh installs no longer inherit a hardcoded owner identity or forced
   Slovak response defaults in runtime prompts and Telegram handling
 - Telegram owner messages now keep the real Telegram display name while passing
   explicit owner status through the callback path
@@ -25,7 +25,7 @@ Telegram owner-identity and language-default fix.
 ### Docs / Deployment
 - `.env.example`, `CLAUDE.md`, `JOHN.md`, and bundled owner knowledge now
   describe deployment-specific owner/language configuration instead of shipping
-  Daniel-specific defaults
+  deployment-specific defaults
 - Added regression coverage for runtime persona identity and Telegram owner
   resolution on fresh installs
 

@@ -164,7 +164,7 @@ Embedding model detekuje intent aj keď je otázka formulovaná inak.
 # memory/semantic_cache.py
 cached = cache.lookup("koľko mám úloh?")  # cosine > 0.90 → return cached
 ```
-Ak John už odpovedal na podobnú otázku, vráti cache.
+Ak agent už odpovedal na podobnú otázku, vráti cache.
 
 ### Vrstva 5: Self-RAG (lokálne embeddingy, alebo kontext pre LLM)
 ```python

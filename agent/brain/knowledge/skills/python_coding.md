@@ -2,8 +2,8 @@
 _Kategória: skills | Tags: python, coding, venv | Aktualizované: 2026-03-24_
 
 ## Prostredie
-- Python: ~/agent-life-space/.venv/bin/python
-- Pip: ~/agent-life-space/.venv/bin/pip
+- Python: repo-local `.venv/bin/python` ak existuje
+- Pip: repo-local `.venv/bin/pip` ak existuje
 - Venv je aktivovaný v service
 
 ## Čo viem

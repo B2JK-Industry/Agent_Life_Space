@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agent.core.identity import get_agent_identity
 from agent.core.response_quality import QualityAssessment
 from agent.social.channel import IncomingMessage
 
@@ -39,7 +40,7 @@ class TestAgentBrainBasics:
     @pytest.mark.asyncio
     async def test_empty_message(self, brain):
         msg = IncomingMessage(
-            text="", sender_id="1", sender_name="Daniel",
+            text="", sender_id="1", sender_name="owner",
             channel_type="telegram", chat_id="123",
         )
         result = await brain.process(msg)
@@ -49,17 +50,17 @@ class TestAgentBrainBasics:
     async def test_identity_handled_internally(self, brain):
         """Identity questions bypass LLM."""
         msg = IncomingMessage(
-            text="kto si?", sender_id="1", sender_name="Daniel",
+            text="kto si?", sender_id="1", sender_name="owner",
             channel_type="telegram", chat_id="123", is_owner=True,
         )
         result = await brain.process(msg)
-        assert "John" in result
+        assert get_agent_identity().agent_name in result
 
     @pytest.mark.asyncio
     async def test_status_handled_internally(self, brain):
         """Status questions bypass LLM."""
         msg = IncomingMessage(
-            text="aký je tvoj stav?", sender_id="1", sender_name="Daniel",
+            text="aký je tvoj stav?", sender_id="1", sender_name="owner",
             channel_type="telegram", chat_id="123", is_owner=True,
         )
         result = await brain.process(msg)
@@ -119,7 +120,7 @@ class TestBrainSecurity:
 
         msg = IncomingMessage(
             text="1. task one\n2. task two",
-            sender_id="1", sender_name="Daniel",
+            sender_id="1", sender_name="owner",
             channel_type="telegram", chat_id="123",
             is_owner=True,
         )
@@ -179,7 +180,7 @@ class TestBrainMultiChannel:
             msg = IncomingMessage(
                 text="navrhni zmenu architektury",
                 sender_id="1",
-                sender_name="Daniel",
+                sender_name="owner",
                 channel_type="telegram",
                 chat_id="123",
                 is_owner=True,
@@ -233,7 +234,7 @@ class TestBrainMultiChannel:
         msg = IncomingMessage(
             text="analyzuj architekturu tohto projektu detailne",
             sender_id="1",
-            sender_name="Daniel",
+            sender_name="owner",
             channel_type="telegram",
             chat_id="123",
             is_owner=True,

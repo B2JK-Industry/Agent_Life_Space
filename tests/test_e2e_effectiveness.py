@@ -87,9 +87,9 @@ class TestMemoryEffectiveness:
     async def test_memory_store_and_retrieve_cycle(self, agent: AgentOrchestrator) -> None:
         """Store → query → get back the same data."""
         mem_id = await agent.memory.store(MemoryEntry(
-            content="Daniel preferuje stručné odpovede po slovensky",
+            content="Owner preferuje stručné odpovede po anglicky",
             memory_type=MemoryType.SEMANTIC,
-            tags=["preference", "daniel", "language"],
+            tags=["preference", "owner", "language"],
             source="test",
             importance=0.9,
         ))
@@ -148,7 +148,7 @@ class TestMemoryEffectiveness:
         """Different memory types serve different purposes."""
         for mtype, content in [
             (MemoryType.WORKING, "Aktuálna úloha: review kódu"),
-            (MemoryType.EPISODIC, "Daniel mi povedal aby som bol stručný"),
+            (MemoryType.EPISODIC, "Owner mi povedal aby som bol stručný"),
             (MemoryType.SEMANTIC, "Python je interpretovaný jazyk"),
             (MemoryType.PROCEDURAL, "Pri code review: najprv čítaj, potom komentuj"),
         ]:
@@ -179,10 +179,10 @@ class TestPersistentConversation:
     async def test_save_and_retrieve_exchange(self, persistent_conv: PersistentConversation) -> None:
         """Saved exchanges appear in context."""
         await persistent_conv.save_exchange(
-            "session-1", "Ahoj John", "Ahoj Daniel! Čo riešiš?", sender="Daniel"
+            "session-1", "Ahoj John", "Ahoj owner! Čo riešiš?", sender="owner"
         )
         context = await persistent_conv.build_context("session-1")
-        assert "Daniel" in context
+        assert "Ahoj owner" in context
         assert "Ahoj" in context
 
     @pytest.mark.asyncio
@@ -202,13 +202,13 @@ class TestPersistentConversation:
 
     @pytest.mark.asyncio
     async def test_core_memory_persists_facts(self, persistent_conv: PersistentConversation) -> None:
-        """Core facts survive and appear in context."""
-        await persistent_conv.update_core_fact("owner", "Daniel Babjak")
-        await persistent_conv.update_core_fact("language", "slovenčina")
+        """Owner/language facts persist but are not injected back into prompts."""
+        await persistent_conv.update_core_fact("owner", "owner")
+        await persistent_conv.update_core_fact("language", "english")
 
         context = await persistent_conv.build_context("session-3")
-        assert "Daniel Babjak" in context
-        assert "slovenčina" in context
+        assert "owner" not in context
+        assert "english" not in context
 
     @pytest.mark.asyncio
     async def test_core_fact_upsert(self, persistent_conv: PersistentConversation) -> None:

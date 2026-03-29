@@ -140,7 +140,7 @@ def assess_quality(
             reason = f"Haiku odpoveď nízka kvalita ({score:.1f}): {', '.join(signals)}. Eskalujem na Sonnet."
         elif "sonnet" in model_used.lower():
             # Sonnet tiež zlyhal — ale neeskalujeme na Opus cez API
-            # (Daniel nechce API, Opus je len cez CLI pre programming)
+            # (Opus escalation is reserved for controlled higher-trust paths)
             should_escalate = False
             reason = f"Sonnet odpoveď nízka kvalita ({score:.1f}): {', '.join(signals)}. Nemožno eskalovať ďalej."
 

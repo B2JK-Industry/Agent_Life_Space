@@ -53,8 +53,13 @@ pip install -e . && pip install sentence-transformers
 ```bash
 export TELEGRAM_BOT_TOKEN="your_token"      # from @BotFather
 export TELEGRAM_USER_ID="your_id"           # your Telegram user ID
+export AGENT_NAME="MyAgent"                 # optional but recommended
+export AGENT_SERVER_NAME="my-server"        # optional but recommended
 export AGENT_VAULT_KEY="your_key"           # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 export AGENT_API_KEY="your_api_key"         # python -c "import secrets; print(f'agent_api_{secrets.token_urlsafe(24)}')"
+# optional: leave owner fields empty and let the first authorized Telegram message teach the owner profile
+# export AGENT_OWNER_NAME="Your name"
+# export AGENT_OWNER_FULL_NAME="Your full name"
 
 .venv/bin/python -m agent
 ```

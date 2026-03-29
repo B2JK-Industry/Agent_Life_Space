@@ -287,7 +287,7 @@ class TestEndToEndBrainFlow:
 
         await consolidator.set_working_context(
             current_goal="Testovanie pamäťového systému",
-            active_conversation="Daniel chce vedieť či mozog funguje",
+            active_conversation="Owner chce vedieť či mozog funguje",
         )
 
         working = await store.query(memory_type=MemoryType.WORKING, limit=1)
@@ -299,7 +299,7 @@ class TestEndToEndBrainFlow:
     async def test_memory_types_serve_different_purposes(self, store):
         """Each memory type has distinct role and is queryable separately."""
         await store.store(MemoryEntry(
-            content="Daniel mi napísal: otestuj curl",
+            content="Owner mi napísal: otestuj curl",
             memory_type=MemoryType.EPISODIC,
             tags=["telegram"], source="telegram", importance=0.5,
         ))
