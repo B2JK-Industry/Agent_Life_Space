@@ -26,6 +26,10 @@ agent/build/**/*.pyc
 .mypy_cache/
 .ruff_cache/
 
+# Agent runtime data
+.agent_runtime/
+agent-test/
+
 # Agent data (persistent, not in git)
 *.db
 agent/memory/memories.db

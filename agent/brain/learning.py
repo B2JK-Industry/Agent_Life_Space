@@ -131,6 +131,7 @@ class LearningSystem:
         self.skills = SkillRegistry(skills_path)
         self.knowledge = KnowledgeBase(knowledge_dir)
         self.audit_log = LearningAuditLog()
+        self._model_failures: dict[str, str] = {}  # skill_name → last failed model_id
 
     def can_i_do(self, skill_name: str, auto_test: bool = False) -> dict[str, Any]:
         """
@@ -624,7 +625,6 @@ class LearningSystem:
         }
 
     # --- Model failure tracking (in-memory, resets on restart) ---
-    _model_failures: dict[str, str] = {}  # skill_name → last failed model_id
 
     def _record_model_failure(self, skill_name: str, model_id: str, error: str) -> None:
         """Zaznamenaj ktorý model zlyhal pre skill."""

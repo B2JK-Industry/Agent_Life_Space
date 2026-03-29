@@ -10,6 +10,42 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.17.0] — 2026-03-30
+
+Audit-driven quality release: 7 bug fixes, documentation sync, clean Phase 3 foundation.
+
+### Bug Fixes
+- **cron**: Fixed month-boundary crash in morning report loop — `replace(day=day+1)`
+  replaced with `timedelta(days=1)` to handle month/year rollovers correctly
+- **telegram**: Fixed operator precedence bug that made the simple-prompt branch
+  unreachable — `not count > 2` corrected to `count <= 2`
+- **memory**: `query_facts()` now correctly filters to SEMANTIC+PROCEDURAL types and
+  FACT+PROCEDURE kinds as documented (was returning all non-stale memories)
+- **telegram**: Removed `unittest.mock.Mock` import from production code — replaced
+  with duck typing via `isawaitable` + `hasattr`
+- **sandbox**: Fixed `_escape_triple_quotes()` replacement order — backslashes now
+  escaped before triple-quotes to prevent double-escaping
+- **job_runner**: `cancel()` now actually cancels the running asyncio Task instead of
+  only marking the record (prevents zombie tasks)
+- **learning**: Moved `_model_failures` from class variable to instance variable to
+  prevent shared state across LearningSystem instances
+
+### Documentation
+- README: added review/, build/, control/ to module table; updated test count
+- SECURITY.md: updated supported versions (v1.17.x), security test count (127)
+- CONTRIBUTING.md: updated test count
+- docs/BLUEPRINT.md: corrected 7-layer to 9-layer cascade with full layer descriptions
+- .gitignore: added `.agent_runtime/` and `agent-test/` exclusions
+
+### Testing
+- Added 14 new regression tests covering all 7 bug fixes
+- Fixed test_telegram_review.py mock fixture for Mock import removal compatibility
+
+### Verification
+- 1371 passed, 4 skipped
+- `ruff check` passed
+- All security audit tests passed
+
 ## [1.16.1] — 2026-03-29
 
 Telegram owner-identity and language-default fix.

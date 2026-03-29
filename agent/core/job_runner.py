@@ -131,6 +131,7 @@ class JobRunner:
         self._max_concurrent = max_concurrent
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._active_jobs: dict[str, JobRecord] = {}
+        self._tasks: dict[str, asyncio.Task[None]] = {}  # job_id → asyncio Task
         self._completed_jobs: dict[str, JobRecord] = {}  # O(1) lookup by id
         self._dead_letters: dict[str, JobRecord] = {}  # O(1) lookup by id
         self._max_completed = max_completed_history
@@ -221,7 +222,8 @@ class JobRunner:
         )
 
         # Launch execution (respects concurrency limit)
-        asyncio.create_task(self._execute(record, kwargs or {}))
+        task = asyncio.create_task(self._execute(record, kwargs or {}))
+        self._tasks[record.id] = task
 
         return record.id
 
@@ -344,6 +346,7 @@ class JobRunner:
 
     def _store_completed(self, record: JobRecord) -> None:
         """Store completed job with bounded history."""
+        self._tasks.pop(record.id, None)
         if len(self._completed_jobs) >= self._max_completed:
             oldest_id = next(iter(self._completed_jobs))
             del self._completed_jobs[oldest_id]
@@ -386,6 +389,9 @@ class JobRunner:
     async def cancel(self, job_id: str) -> bool:
         """Cancel a scheduled/running job."""
         if job_id in self._active_jobs:
+            task = self._tasks.pop(job_id, None)
+            if task and not task.done():
+                task.cancel()
             record = self._active_jobs.pop(job_id)
             record.status = JobStatus.CANCELLED
             record.completed_at = datetime.now(UTC).isoformat()

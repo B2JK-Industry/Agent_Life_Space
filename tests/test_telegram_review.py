@@ -26,6 +26,9 @@ def mock_agent():
     agent.review = MagicMock()
     agent.review.initialize = MagicMock()
     agent.review._initialized = True
+    # Ensure run_review_job is not auto-created as a callable MagicMock
+    # so the handler falls through to agent.review.run_review
+    agent.run_review_job = None
     return agent
 
 

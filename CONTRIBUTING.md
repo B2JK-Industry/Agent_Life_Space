@@ -28,7 +28,7 @@ Thanks for your interest in Agent Life Space!
 
 ### Testing Requirements
 
-All PRs must pass the full test suite (696+ tests):
+All PRs must pass the full test suite (1360+ tests):
 
 ```bash
 .venv/bin/python -m pytest tests/ -q
