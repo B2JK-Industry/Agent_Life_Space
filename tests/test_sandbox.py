@@ -223,8 +223,11 @@ class TestCheckDocker:
         mock_proc.returncode = 0
         mock_proc.communicate = AsyncMock(return_value=(b'{"ok": true}', b""))
 
+        async def _await_and_return(awaitable, timeout):
+            return await awaitable
+
         with patch("asyncio.create_subprocess_shell", return_value=mock_proc):
-            with patch("asyncio.wait_for", return_value=(b'{"ok": true}', b"")):
+            with patch("asyncio.wait_for", side_effect=_await_and_return):
                 result = await s.check_docker()
 
         assert result["available"] is True

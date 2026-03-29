@@ -20,6 +20,7 @@ import tempfile
 import pytest
 
 from agent.core.agent import AgentOrchestrator
+from agent.core.identity import get_agent_identity
 from agent.core.messages import Message, MessageType, ModuleID, Priority
 from agent.memory.store import MemoryEntry, MemoryType
 
@@ -400,7 +401,7 @@ class TestDispatcherIntegration:
         dispatcher = InternalDispatcher(agent)
         result = await dispatcher.try_handle("kto si?")
         assert result is not None
-        assert "John" in result
+        assert get_agent_identity().agent_name in result
 
     @pytest.mark.asyncio
     async def test_complex_query_not_handled(self, agent: AgentOrchestrator) -> None:
@@ -504,9 +505,9 @@ class TestConsolidationIntegration:
         # Store multiple related episodic memories
         for i in range(5):
             await agent.memory.store(MemoryEntry(
-                content=f"Daniel preferuje stručné odpovede session {i}",
+                content=f"Owner preferuje stručné odpovede session {i}",
                 memory_type=MemoryType.EPISODIC,
-                tags=["telegram", "user_input", "daniel"],
+                tags=["telegram", "user_input", "owner"],
                 source="telegram",
                 importance=0.5,
             ))

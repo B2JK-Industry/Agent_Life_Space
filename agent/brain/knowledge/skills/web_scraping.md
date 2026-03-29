@@ -9,7 +9,7 @@
 import requests
 from bs4 import BeautifulSoup
 
-resp = requests.get(url, timeout=10, headers={"User-Agent": "John-Bot/0.1"})
+resp = requests.get(url, timeout=10, headers={"User-Agent": "AgentLifeSpace/0.1"})
 soup = BeautifulSoup(resp.text, "html.parser")
 ```
 

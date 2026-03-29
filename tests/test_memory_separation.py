@@ -40,13 +40,13 @@ class TestMemorySeparation:
 
         # Conversational memories
         await s.store(MemoryEntry(
-            content="Daniel mi napísal: ahoj, ako sa máš?",
+            content="Owner mi napísal: ahoj, ako sa máš?",
             memory_type=MemoryType.EPISODIC,
             kind=MemoryKind.CLAIM,
             tags=["message", "user_input"],
         ))
         await s.store(MemoryEntry(
-            content="Daniel mi napísal: pozri sa na ten bug",
+            content="Owner mi napísal: pozri sa na ten bug",
             memory_type=MemoryType.EPISODIC,
             kind=MemoryKind.CLAIM,
             tags=["message", "user_input"],
@@ -63,7 +63,7 @@ class TestMemorySeparation:
 
     @pytest.mark.asyncio
     async def test_query_conversations_excludes_facts(self, store):
-        convs = await store.query_conversations(keyword="Daniel")
+        convs = await store.query_conversations(keyword="Owner")
         assert len(convs) >= 1
         assert all(e.memory_type == MemoryType.EPISODIC for e in convs)
 

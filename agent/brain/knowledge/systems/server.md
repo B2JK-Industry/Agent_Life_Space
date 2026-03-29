@@ -1,22 +1,20 @@
-# Server b2jk-agentlifespace
-_Kategória: systems | Tags: server, hardware, ubuntu | Aktualizované: 2026-03-24_
+# Server Environment
+_Kategória: systems | Tags: server, hardware, runtime | Aktualizované: 2026-03-29_
 
-## Hardware
-- Počítač: Acer Aspire V3-572G
-- CPU: Intel i7-5500U (4 jadrá, až 3GHz)
-- RAM: 8GB DDR3
-- GPU: NVIDIA GeForce 840M (nepoužívam)
-- Disk: ~dostatočný (9.3% využitie)
+## Deployment-Specific Facts
+- Hostname, hardware a disk posture závisia od aktuálneho servera
+- Nepredpokladaj fixný model počítača, OS image ani domáci adresár
+- Reálne fakty majú prichádzať z runtime reportu, nie z upstream knowledge template
 
 ## Software
-- OS: Ubuntu 24.04.4 LTS
-- Python: 3.x vo venv
-- Systemd user service: agent-life-space
+- Python beží vo venv alebo inom izolovanom runtime podľa nasadenia
+- System service môže byť `systemd`, Docker, supervisor alebo iný process manager
+- Repo path a data dir sú deployment-configured
 
 ## Prístupy
-- SSH pre Daniela
-- Žiadne sudo pre Johna
-- Venv izolovaný od systému
+- SSH a shell prístup patria ownerovi alebo autorizovanému operátorovi
+- Escalated oprávnenia sa majú povoľovať explicitne, nie predpokladať
+- Venv a data dir majú zostať izolované od zvyšku systému
 
 ## Služba
 - Start: `systemctl --user start agent-life-space`

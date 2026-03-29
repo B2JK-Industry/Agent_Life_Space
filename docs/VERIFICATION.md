@@ -369,7 +369,7 @@ python -m pytest tests/ -v --tb=short
 
 ## Nasadzovacie Scenáre (E2E na serveri)
 
-Tieto scenáre sú pre agenta (John) po nasadení na server. Spúšťaj postupne, každý scenár overuje jednu zmenu v produkcii.
+Tieto scenáre sú pre nasadeného agenta po deployi na server. Spúšťaj postupne, každý scenár overuje jednu zmenu v produkcii.
 
 ### Scenár 0: Pre-deploy príprava
 
@@ -631,7 +631,7 @@ Potom cez Telegram pošli tieto správy a over odpovede:
 | 1 | `/status` | Agent status (running, spomienky, úlohy) | Cascade vrstva 1 — slash command |
 | 2 | `/health` | CPU%, RAM%, moduly | Watchdog funguje |
 | 3 | `/usage` | Požiadavky: 0, Náklady: $0 | Usage tracking |
-| 4 | `Ahoj John` | Krátka odpoveď (1-2 vety) + 💰 Haiku | Cascade: Haiku pre jednoduché |
+| 4 | `Hello agent` | Krátka odpoveď (1-2 vety) + 💰 Haiku | Cascade: Haiku pre jednoduché |
 | 5 | `/usage` | Požiadavky: 1, Náklady > $0 | Usage sa aktualizoval |
 | 6 | `Aký je stav servera?` | Interná odpoveď BEZ 💰 | Cascade: dispatcher/semantic router |
 | 7 | `Koľko mám úloh?` | Odpoveď z interných modulov | Cascade: dispatcher regex |

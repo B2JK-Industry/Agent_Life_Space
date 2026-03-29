@@ -5,7 +5,7 @@
 Agent Life Space je **personal sovereign operator** — nie general agent platform.
 
 ### Čo to znamená
-- Jeden vlastník (Daniel), jeden agent (John)
+- Jeden vlastník (owner), jeden agent
 - Všetky rozhodnutia s human-in-the-loop
 - Self-hosted, local-first, security-first
 - Agent slúži vlastníkovi, nie verejnosti
@@ -38,4 +38,4 @@ Agent Life Space je **personal sovereign operator** — nie general agent platfo
 - "App store" for agent capabilities
 
 ### Success metric
-> Agent je užitočný pre Daniela a Daniel vždy rozumie čo agent robí a prečo.
+> Agent je užitočný pre ownera a owner vždy rozumie čo agent robí a prečo.

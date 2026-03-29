@@ -2,7 +2,7 @@
 _Kategória: systems | Tags: telegram, api, bot | Aktualizované: 2026-03-24_
 
 ## Bot
-- Username: @b2jk_john_bot
+- Username je deployment-specific
 - Token: v vault
 - Metóda: long polling
 

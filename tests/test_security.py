@@ -358,6 +358,39 @@ class TestOwnerIdentification:
         assert captured["is_owner"] is True
 
     @pytest.mark.asyncio
+    async def test_owner_identity_is_captured_from_telegram(self, monkeypatch, tmp_path):
+        """Authorized Telegram owner should teach the runtime owner profile."""
+        monkeypatch.setenv("AGENT_DATA_DIR", str(tmp_path))
+        monkeypatch.delenv("AGENT_OWNER_NAME", raising=False)
+        monkeypatch.delenv("AGENT_OWNER_FULL_NAME", raising=False)
+        bot = self._make_bot(allowed_ids=[12345], owner_name="owner")
+
+        async def mock_callback(text, user_id, chat_id, username="", chat_type="", **kwargs):
+            return "ok"
+
+        bot.on_message(mock_callback)
+
+        message = {
+            "chat": {"id": 100, "type": "private"},
+            "from": {
+                "id": 12345,
+                "username": "kilian_tg",
+                "first_name": "Kilian",
+                "last_name": "Novak",
+            },
+            "text": "hello",
+        }
+
+        with patch.object(bot, "send_message", new_callable=AsyncMock):
+            await bot._handle_message(message)
+
+        from agent.core.identity import get_agent_identity
+
+        identity = get_agent_identity()
+        assert identity.owner_name == "Kilian"
+        assert identity.owner_full_name == "Kilian Novak"
+
+    @pytest.mark.asyncio
     async def test_non_owner_gets_raw_username(self):
         """When user_id is NOT in allowed_users, use raw telegram username."""
         bot = self._make_bot(allowed_ids=[12345], owner_name="owner")
@@ -476,7 +509,7 @@ class TestIsProgrammingTask:
         assert self._check("koľko mám úloh") is False
 
     def test_greeting(self):
-        assert self._check("ahoj John") is False
+        assert self._check("hello agent") is False
 
     def test_memory_question(self):
         assert self._check("čo si pamätáš o mne?") is False

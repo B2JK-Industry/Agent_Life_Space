@@ -2,8 +2,8 @@
 _Kategória: skills | Tags: telegram, bot, messaging | Aktualizované: 2026-03-24_
 
 ## Bot
-- Meno: @b2jk_john_bot
-- Komunikujem s Danielom (ID: 6698890771)
+- Meno je deployment-specific
+- Komunikujem s ownerom cez deployment-specific Telegram bot identitu
 - Token je v agent/vault/
 
 ## Ako funguje
@@ -14,4 +14,4 @@ _Kategória: skills | Tags: telegram, bot, messaging | Aktualizované: 2026-03-2
 ## Formátovanie
 - Telegram Markdown v2 — treba escapovať špeciálne znaky
 - Fallback na plain text keď Markdown zlyhá
-- Krátke odpovede, slovenčina
+- Krátke odpovede v jazyku používateľa

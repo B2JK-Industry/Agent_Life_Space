@@ -67,14 +67,14 @@ class TestApprovalQueue:
 
     def test_approve(self, queue):
         req = queue.propose(ApprovalCategory.TOOL, "run dangerous code")
-        result = queue.approve(req.id, decided_by="Daniel")
+        result = queue.approve(req.id, decided_by="owner")
         assert result.status == ApprovalStatus.APPROVED
-        assert result.decided_by == "Daniel"
+        assert result.decided_by == "owner"
         assert len(queue.get_pending()) == 0
 
     def test_deny(self, queue):
         req = queue.propose(ApprovalCategory.EXTERNAL, "post to Twitter")
-        result = queue.deny(req.id, reason="not now", decided_by="Daniel")
+        result = queue.deny(req.id, reason="not now", decided_by="owner")
         assert result.status == ApprovalStatus.DENIED
         assert result.denial_reason == "not now"
 

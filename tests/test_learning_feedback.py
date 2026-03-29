@@ -72,7 +72,7 @@ class TestDetectSkillsInText:
         assert "git_commit" in skills
 
     def test_detect_nothing(self, learning_system: LearningSystem):
-        text = "Ahoj Daniel, ako sa máš?"
+        text = "Ahoj owner, ako sa máš?"
         skills = learning_system._detect_skills_in_text(text)
         assert skills == []
 

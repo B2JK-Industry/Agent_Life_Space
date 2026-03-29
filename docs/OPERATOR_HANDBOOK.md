@@ -65,7 +65,7 @@ Ak niečo vyzerá zle:
 |------|--------|---------|
 | observed | Agent videl priamo | "Test prešiel" |
 | user_asserted | Používateľ povedal | "Server má 16GB RAM" |
-| inferred | Agent odvodil | "Daniel preferuje krátke odpovede" |
+| inferred | Agent odvodil | "owner preferuje krátke odpovede" |
 | verified | Overené | "Python 3.12 nainštalovaný" (po 5+ prístupoch) |
 | stale | Zastarané | "Server IP: 10.0.1.100" (neprístupné 30 dní) |
 

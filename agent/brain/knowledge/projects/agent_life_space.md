@@ -1,14 +1,13 @@
 # Agent Life Space — hlavný projekt
-_Kategória: projects | Tags: main, agent, john | Aktualizované: 2026-03-26_
+_Kategória: projects | Tags: main, agent, runtime | Aktualizované: 2026-03-29_
 
 ## Čo to je
-Autonómny AI agent (John) bežiaci na vlastnom serveri. Nie chatbot — bytosť s pamäťou, úlohami, rozpočtom a zdravím.
+Autonómny AI agent bežiaci na vlastnom serveri. Nie chatbot — bytosť s pamäťou, úlohami, rozpočtom a zdravím.
 
 ## Stav
-- Verzia: 3.0.0
-- Fáza: aktívny vývoj, production-ready core
-- Všetky moduly: healthy
-- Testy: 696+ (unit + integration + e2e + security audit)
+- Self-hosted agent v aktívnom vývoji
+- Runtime identita je deployment-specific
+- Verzia, test counts a release stav patria do release notes a changelogu, nie do natvrdo zapečeného knowledge súboru
 
 ## Čo funguje
 - **LLM:** Provider-agnostic (Claude CLI, Anthropic API, OpenAI, Ollama)
@@ -27,10 +26,10 @@ Autonómny AI agent (John) bežiaci na vlastnom serveri. Nie chatbot — bytosť
 - **Git/GitHub:** B2JK-Industry, CI/CD, releases
 
 ## Čo chýba / plánované
-- Email + X.com účty (Daniel musí vytvoriť)
-- Earning modul (agent hľadá prácu, navrhne, Daniel schváli)
+- Email + X.com účty (operátor ich musí vytvoriť)
+- Earning modul (agent hľadá prácu, navrhne, operátor schváli)
 - Discord, Slack kanály (Channel ABC pripravené)
 - Vlastná iniciatíva (GoalManager, proaktívne konanie)
 
 ## Cieľ
-John sa má stať plne autonómnym agentom, ktorý vie riešiť úlohy, zarábať, učiť sa, a komunikovať cez viaceré kanály.
+Agent sa má stať plne autonómnym systémom, ktorý vie riešiť úlohy, učiť sa, a komunikovať cez viaceré kanály bez toho, aby bol viazaný na konkrétnu upstream identitu.

@@ -28,79 +28,79 @@ from typing import Any
 
 import structlog
 
+from agent.core.identity import get_agent_identity
 from agent.memory.store import MemoryEntry, MemoryStore, MemoryType, ProvenanceStatus
 
 logger = structlog.get_logger(__name__)
 
+def _get_pattern_extractors() -> dict[str, dict[str, Any]]:
+    owner_name = get_agent_identity().owner_name.lower()
+    owner_full_name = get_agent_identity().owner_full_name.lower()
+    owner_tokens = {t for t in [owner_name, owner_full_name] if t and t != "owner"}
+    owner_pref_triggers = [
+        "owner chce", "owner preferuje", "owner zdôraznil", "owner povedal",
+        "owner mi", "owner sa", "majiteľ", "operator", "admin",
+        "user wants", "user prefers", "the owner said",
+    ]
+    owner_pref_triggers.extend(owner_tokens)
 
-# Patterns to detect in episodic memories
-PATTERN_EXTRACTORS = {
-    # User preferences (SK + EN)
-    "user_preference": {
-        "triggers": [
-            "daniel chce", "daniel preferuje", "daniel zdôraznil", "daniel povedal",
-            "daniel mi", "daniel sa", "majiteľ", "owner", "admin",
-        ],
-        "target_type": MemoryType.SEMANTIC,
-        "tag": "user_preference",
-    },
-    # Skill results (SK + EN)
-    "skill_learned": {
-        "triggers": [
-            "skill", "funguje", "otestoval", "úspech", "mastered", "learned",
-            "success", "confidence", "works", "tested", "passed", "ok",
-            "curl", "git", "docker", "pytest", "python",
-        ],
-        "target_type": MemoryType.PROCEDURAL,
-        "tag": "skill_procedure",
-    },
-    # System knowledge (SK + EN)
-    "system_fact": {
-        "triggers": [
-            "server", "cpu", "ram", "disk", "ubuntu", "port", "ip",
-            "uptime", "healthy", "module", "process", "pid", "service",
-            "b2jk", "agentlifespace",
-        ],
-        "target_type": MemoryType.SEMANTIC,
-        "tag": "system_fact",
-    },
-    # Error patterns (SK + EN)
-    "error_pattern": {
-        "triggers": [
-            "chyba", "error", "timeout", "zlyhalo", "nefunguje", "failed",
-            "crash", "spadol", "neodpovedá", "rejected", "denied",
-        ],
-        "target_type": MemoryType.PROCEDURAL,
-        "tag": "error_handling",
-    },
-    # Workflow patterns (SK + EN)
-    "workflow": {
-        "triggers": [
-            "najprv", "potom", "postup", "kroky", "workflow", "pipeline",
-            "pull", "restart", "deploy", "commit", "push", "test",
-        ],
-        "target_type": MemoryType.PROCEDURAL,
-        "tag": "workflow",
-    },
-    # Communication patterns
-    "communication": {
-        "triggers": [
-            "telegram", "odpovedal", "napísal", "responded", "message",
-            "poslal", "received", "sent",
-        ],
-        "target_type": MemoryType.SEMANTIC,
-        "tag": "communication_pattern",
-    },
-    # Agent identity
-    "identity": {
-        "triggers": [
-            "john", "som", "ja ", "moje", "moja", "mám", "viem",
-            "bytosť", "agent", "identity",
-        ],
-        "target_type": MemoryType.SEMANTIC,
-        "tag": "self_knowledge",
-    },
-}
+    return {
+        "user_preference": {
+            "triggers": owner_pref_triggers,
+            "target_type": MemoryType.SEMANTIC,
+            "tag": "user_preference",
+        },
+        "skill_learned": {
+            "triggers": [
+                "skill", "funguje", "otestoval", "úspech", "mastered", "learned",
+                "success", "confidence", "works", "tested", "passed", "ok",
+                "curl", "git", "docker", "pytest", "python",
+            ],
+            "target_type": MemoryType.PROCEDURAL,
+            "tag": "skill_procedure",
+        },
+        "system_fact": {
+            "triggers": [
+                "server", "cpu", "ram", "disk", "ubuntu", "port", "ip",
+                "uptime", "healthy", "module", "process", "pid", "service",
+                "b2jk", "agentlifespace",
+            ],
+            "target_type": MemoryType.SEMANTIC,
+            "tag": "system_fact",
+        },
+        "error_pattern": {
+            "triggers": [
+                "chyba", "error", "timeout", "zlyhalo", "nefunguje", "failed",
+                "crash", "spadol", "neodpovedá", "rejected", "denied",
+            ],
+            "target_type": MemoryType.PROCEDURAL,
+            "tag": "error_handling",
+        },
+        "workflow": {
+            "triggers": [
+                "najprv", "potom", "postup", "kroky", "workflow", "pipeline",
+                "pull", "restart", "deploy", "commit", "push", "test",
+            ],
+            "target_type": MemoryType.PROCEDURAL,
+            "tag": "workflow",
+        },
+        "communication": {
+            "triggers": [
+                "telegram", "odpovedal", "napísal", "responded", "message",
+                "poslal", "received", "sent",
+            ],
+            "target_type": MemoryType.SEMANTIC,
+            "tag": "communication_pattern",
+        },
+        "identity": {
+            "triggers": [
+                "john", "som", "ja ", "moje", "moja", "mám", "viem",
+                "bytosť", "agent", "identity",
+            ],
+            "target_type": MemoryType.SEMANTIC,
+            "tag": "self_knowledge",
+        },
+    }
 
 
 class MemoryConsolidation:
@@ -130,7 +130,7 @@ class MemoryConsolidation:
 
         # 1. Pattern matching — hľadaj opakujúce sa témy
         for entry in episodic:
-            for _pattern_name, pattern in PATTERN_EXTRACTORS.items():
+            for _pattern_name, pattern in _get_pattern_extractors().items():
                 content_lower = entry.content.lower()
                 if any(trigger in content_lower for trigger in pattern["triggers"]):
                     # Check if we already have this as semantic/procedural

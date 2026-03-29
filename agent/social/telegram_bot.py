@@ -27,6 +27,8 @@ from typing import Any
 import aiohttp
 import structlog
 
+from agent.core.identity import capture_owner_identity_from_telegram, get_agent_identity
+
 logger = structlog.get_logger(__name__)
 
 # Telegram Bot API base URL
@@ -185,7 +187,16 @@ class TelegramBot:
         text = message.get("text", "")
         raw_username = message.get("from", {}).get("username", "")
         first_name = message.get("from", {}).get("first_name", "")
+        last_name = message.get("from", {}).get("last_name", "")
         is_owner = bool(self._allowed_users and user_id in self._allowed_users)
+        if is_owner:
+            profile = capture_owner_identity_from_telegram(
+                telegram_user_id=user_id,
+                telegram_username=raw_username,
+                telegram_first_name=first_name,
+                telegram_last_name=last_name,
+            )
+            self._owner_name = str(profile.get("owner_name", "")) or get_agent_identity().owner_name
         username = raw_username or first_name or (self._owner_name if is_owner else "unknown")
 
         # In groups, only respond if mentioned or replied to

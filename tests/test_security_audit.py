@@ -601,7 +601,7 @@ class TestEnvVarSecurity:
             for match in matches:
                 default_val = match.group(1)
                 # Skip known safe defaults
-                if default_val in ("Daniel", "unknown", "agent-life-space"):
+                if default_val in ("owner", "unknown", "agent-life-space"):
                     continue
                 line_num = source[:match.start()].count("\n") + 1
                 pytest.fail(

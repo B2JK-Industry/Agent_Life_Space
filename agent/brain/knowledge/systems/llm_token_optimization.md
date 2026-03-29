@@ -20,7 +20,7 @@ Namiesto volania LLM na klasifikáciu intentu sa user query embeduje do vektora 
 2. **Semantic router** — embedding similarity pre známe intenty (92-96% presnosť)
 3. **LLM fallback** — len pre nejednoznačné alebo neznáme prípady
 
-### Implementácia pre Johna
+### Implementácia pre agenta
 - Model: `paraphrase-multilingual-MiniLM-L12-v2` (384 dim, 50+ jazykov vrátane slovenčiny)
 - ~470MB RAM, rýchly inference na CPU
 - In-memory vector store (nie DB — máme <20 intentov)
@@ -43,7 +43,7 @@ Anthropic prompt caching: ak system prompt zostáva rovnaký medzi volaniami, ca
 - System prompt + tool definície sa cachujú automaticky
 - Reálna úspora 20-30% z celkového účtu
 
-### Implementácia pre Johna
+### Implementácia pre agenta
 - Štruktúrovať system prompt ako stabilnú prefix + dynamický suffix
 - Tool definície vždy na začiatku (cache-friendly)
 - Anthropic API to robí automaticky pri konzistentnom prefixe
@@ -63,7 +63,7 @@ Cache LLM odpovedí indexovaný podľa sémantickej podobnosti query (nie exact 
 - Elimínuje duplicitné alebo podobné LLM volania
 - Zvlášť efektívne pre opakujúce sa otázky
 
-### Implementácia pre Johna
+### Implementácia pre agenta
 - Embedding model: ten istý `MiniLM-L12-v2` ako pre routing
 - Storage: SQLite + numpy vektory (alebo FAISS ak treba rýchlejšie)
 - Threshold: 0.90 pre začiatok, tunovať podľa false positive rate
@@ -87,7 +87,7 @@ Namiesto posielania celej konverzácie/histórie do LLM, posielať len relevantn
 - **Selective tool output** — z tool output extrahovať len relevantné časti
 - **RAG namiesto stuffing** — retrieval relevantných chunkov namiesto celých dokumentov
 
-### Implementácia pre Johna
+### Implementácia pre agenta
 - Max 5 posledných správ v kontexte
 - Tool output: truncate na max 500 tokenov, extrahovať kľúčové info programaticky
 - Pamäť (memories.db): retrieval cez embedding search, nie dump celej DB
@@ -108,7 +108,7 @@ Jednoduché úlohy → lacný model, komplexné → drahý model.
 - Claude Opus: $15/1M input, $75/1M output
 - Rozdiel: 12-60x medzi Haiku a Opus
 
-### Routing pravidlá pre Johna
+### Routing pravidlá pre agenta
 - **Haiku**: klasifikácia, extrakcia, formátovanie, jednoduché Q&A, sumarizácia
 - **Sonnet**: plánovanie, code generation, komplexné rozhodovanie
 - **Opus**: len pre kritické rozhodnutia (ak vôbec)
@@ -132,7 +132,7 @@ Microsoft LLMLingua komprimuje prompty odstránením redundantných tokenov. Dos
 - LLMLingua-2: 3-6x rýchlejší, trénovaný cez data distillation z GPT-4
 - Integrovaný do LangChain a LlamaIndex
 
-### Pre Johna
+### Pre agenta
 - Užitočné hlavne pre RAG context a dlhé tool outputy
 - Model: `llmlingua-2-bert-base-multilingual-cased-meetingbank-coarse`
 - ~440MB RAM
@@ -153,7 +153,7 @@ Lokálne bežiaci SLM pre jednoduché úlohy namiesto API volaní.
 - **Llama 3.2 3B**: dobrý na routing, klasifikáciu, jednoduché úlohy
 - **Mistral 7B**: tesne sa zmestí, pomalší
 
-### Pre Johna
+### Pre agenta
 - Ollama na jednoduché úlohy: sumarizácia logov, formátovanie, extrakcia
 - Ušetrí API volania pre rutinné operácie
 - POZOR: 8GB RAM = embedding model + lokálny LLM + Python = tesné
@@ -176,7 +176,7 @@ Algoritmické rozhodovanie pre predvídateľné situácie bez LLM.
 - **Template responses**: predpripravené odpovede pre FAQ
 - **Workflow automation**: cron jobs, scheduled tasks bez LLM
 
-### Pre Johna (decision_engine.py)
+### Pre agenta (decision_engine.py)
 - `/status`, `/tasks`, `/budget` → priamo, bez LLM
 - Systémové alerty (disk full, high CPU) → template správy
 - Scheduled reports → generovať programaticky
@@ -198,7 +198,7 @@ Namiesto always-retrieve alebo never-retrieve, model sa rozhodne či retrieval p
 - Ak áno → retrieve → validate relevance → generate
 - Ak nie → generate priamo
 
-### Pre Johna
+### Pre agenta
 - Pred LLM call: je odpoveď v knowledge base? → semantic search
 - Ak match > 0.92 → vráť priamo bez LLM
 - Ak match 0.75-0.92 → retrieval + LLM
@@ -215,7 +215,7 @@ Namiesto always-retrieve alebo never-retrieve, model sa rozhodne či retrieval p
 ### Čo to je
 Anthropic/OpenAI batch API: 50% zľava za ne-urgentné úlohy (24h turnaround).
 
-### Pre Johna
+### Pre agenta
 - Nočné reporty
 - Bulk analýza logov
 - Spracovanie knowledge base updates
@@ -254,7 +254,7 @@ Očakávaná úspora: **ďalších 10-15%** tokenov
 
 ---
 
-## ARCHITEKTÚRA PRE JOHNA — DECISION FLOW
+## ARCHITEKTÚRA PRE AGENTA — DECISION FLOW
 
 ```
 User Message

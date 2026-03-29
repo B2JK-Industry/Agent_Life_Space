@@ -6,7 +6,7 @@ Všetky bežia — over cez `/runtime`.
 
 1. **Health check** (1h) — CPU, RAM, alerty → Telegram ak problém
 2. **Memory maintenance** (6h) — decay, cleanup starých spomienok
-3. **Morning report** (8:00 UTC) — ranný stav pre Daniela
+3. **Morning report** (8:00 UTC) — ranný stav pre ownera
 4. **Task review** (4h) — kontrola fronty úloh
 5. **Server maintenance** (3h) — cache cleanup, stale procesy
 6. **Memory consolidation** (2h) — episodic → semantic/procedural
@@ -39,4 +39,4 @@ Po odpovedi z Haiku sa vyhodnotí kvalita:
 ## Persistent Conversation
 Správy sa ukladajú do SQLite (conversations.db):
 - Core memory (fakty), rolling summary, recent messages
-- Prežije reštart — John si pamätá o čom sa bavil
+- Prežije reštart — agent si pamätá o čom sa bavil

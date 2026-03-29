@@ -73,6 +73,7 @@ def _remove_pidfile() -> None:
 
 async def run_agent(data_dir: str = "agent") -> None:
     """Main agent loop with graceful shutdown."""
+    os.environ.setdefault("AGENT_DATA_DIR", data_dir)
     _check_pidfile()
 
     agent = AgentOrchestrator(data_dir=data_dir)
