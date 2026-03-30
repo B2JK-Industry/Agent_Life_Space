@@ -27,9 +27,36 @@ _PATH_PATTERNS = [
     re.compile(r'[A-Z]:\\(?:Users|Documents)[^\s"\'`\]]+'),  # Windows
 ]
 
-_HOSTNAME_PATTERNS = [
-    re.compile(r'\b(?:b2jk-\w+|agent-?life-?space)\b', re.IGNORECASE),
-]
+def _build_hostname_patterns() -> list[re.Pattern[str]]:
+    """Build hostname redaction patterns from runtime identity + project name."""
+    patterns: list[str] = []
+    try:
+        from agent.core.identity import get_agent_identity
+        identity = get_agent_identity()
+        server_name = identity.server_name.strip()
+        if server_name and server_name.lower() not in ("server", "self-hosted server", "a self-hosted server", ""):
+            escaped = re.escape(server_name)
+            patterns.append(escaped)
+            for token in server_name.replace("-", " ").replace("_", " ").split():
+                if len(token) > 2:
+                    patterns.append(re.escape(token) + r"-\w+")
+    except Exception:
+        pass
+    # Always match the project name pattern
+    patterns.append(r"agent-?life-?space")
+    combined = "|".join(patterns)
+    return [re.compile(rf"\b(?:{combined})\b", re.IGNORECASE)]
+
+
+# Module-level patterns: built once at import, includes dynamic server identity.
+# For deployments with configured AGENT_SERVER_NAME, their hostname tokens are
+# automatically redacted. The project name "agent-life-space" is always matched.
+_HOSTNAME_PATTERNS = _build_hostname_patterns()
+
+
+def add_hostname_pattern(pattern: str) -> None:
+    """Add an additional hostname pattern for redaction (e.g., from test setup)."""
+    _HOSTNAME_PATTERNS.append(re.compile(rf"\b{pattern}\b", re.IGNORECASE))
 
 _SECRET_PATTERNS = [
     re.compile(r'(?i)(api[_-]?key|api[_-]?secret|password|token|secret)\s*=\s*["\'][^"\']{8,}["\']'),

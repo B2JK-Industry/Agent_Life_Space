@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 |---------|---------------------|
-| v1.17.x | Yes                |
+| v1.21.x | Yes                |
+| v1.17.x-v1.20.x | Upgrade recommended |
 | v1.0.x  | End-of-life (EOL)  |
 
 ## Reporting a Vulnerability
