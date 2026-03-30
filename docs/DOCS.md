@@ -61,9 +61,14 @@ python -m pytest tests/ -q   # Testy
 
 ## Verzia
 
-Aktuálna: **v1.18.0** — Telegram identity and language default fix release.
+Aktuálna: **v1.19.0** — Phase 3 kickoff: operator Telegram surface.
 
-Nové v `v1.18.0`:
+Nové v `v1.19.0`:
+- `/intake` — unified operator intake z Telegramu (qualify → plan → execute)
+- `/report` — operator report s inbox a budget views
+- `/build` — shortcut pre build intake
+
+Predchádzajúce v `v1.18.0`:
 - fresh install už nededí hardcoded owner identitu ani povinnú
   slovenčinu v promptoch
 - Telegram owner flow zachováva reálne Telegram meno a explicitne odovzdáva

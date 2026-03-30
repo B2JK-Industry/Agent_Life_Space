@@ -24,7 +24,7 @@ Important:
 | T1 Platform Foundation | `in_progress` | 96% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted job/plan/trace/delivery records, retention-aware artifact records with prune flow, first-class workspace joins, and explicit environment profiles for review/build/acquisition/export flows. | No unified cross-domain action layer yet. |
 | T2 Reviewer Product | `complete_for_phase` | 96% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, converged Telegram and structured API review entrypoints, shared delivery lifecycle state, and reusable handoff summary artifacts now flow through the shared runtime. | LLM analysis and richer external delivery automation are v2. |
 | T3 Builder Product | `complete_for_phase` | 99% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery across Python/Node/Make/CI signals, source-aware execution policy traces and blocking, deterministic patch/diff, richer verification/acceptance delivery evidence, a bounded local implementation engine with copy/move-aware capability guardrails, implementation-backed acceptance criteria, release-readiness gating, and an explicit gateway send path for approved build bundles. | No general code generation yet and no semantic requirement engine. |
-| T4 Operator Product | `in_progress` | 96% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report/CLI surfaces, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware delivery reporting, and release-readiness traces now exist. | No live backend/UI and no richer active provider-specific operator workflow yet. |
+| T4 Operator Product | `in_progress` | 97% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report/CLI surfaces, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware delivery reporting, release-readiness traces, and Telegram operator surface with /report, /intake, and /build commands now exist. | No live backend/UI and no richer active provider-specific operator workflow yet. |
 | T5 Security, Governance, And Policy | `in_progress` | 99% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, capability-scoped builder guardrails, explicit gateway defaults, provider-aware gateway routing decisions, provider receipt validation, provider-outcome classification, deterministic release-readiness thresholds, and structured denial payloads now exist across build/review/tool/web/social/finance-facing blocked flows. | Build execution and broader runtime action flow still sit outside one unified policy enforcement boundary. |
 | T6 Cost, Usage, And Observability | `in_progress` | 99% | UsageSummary, a durable per-job cost ledger, persisted job duration/retry/failure telemetry, runtime hard/soft/stop-loss budget posture, budget-aware escalation controls, durable plan/trace/delivery/gateway/release telemetry, shared runtime job/artifact/workspace queries, richer operator reporting, approval backlog plus retention posture summaries, review-eval smoke coverage, golden review cases, runtime quality telemetry with release labels, duration, and previous-baseline trend deltas, plus a CLI/CI release-readiness gate now exist. | No live operator UI or broader longitudinal dashboards yet. |
 | T7 External Capability Gateway | `in_progress` | 95% | Runtime model and policy layer now expose explicit gateway defaults, separate handoff and API-call contracts, a concrete `obolos.tech` provider catalog, readiness-aware capability routes, env/vault-backed auth resolution, documented buyer-side marketplace catalog or wallet or slug-call access, provider-specific request payload shaping, parsed provider receipts, persisted request/response artifacts, provider-outcome classification, and fallback-capable delivery sends with gateway traces and cost entries. | Only one provider exists so far, and seller publishing, x402 payment flow, file-upload calls, and broader downstream provider workflow still remain future scope. |
@@ -241,7 +241,7 @@ Stories:
 ## Theme T4: Operator Product
 
 - status: `in_progress`
-- approx_progress: 94%
+- approx_progress: 97%
 
 Goal: coordinate work end-to-end and support repeatable client delivery.
 
@@ -316,6 +316,26 @@ Stories:
   - status: `complete_for_phase`
   - current_state: Build and review delivery now persist lifecycle state (`prepared`, `awaiting_approval`, `approved`, `rejected`, `handed_off`) plus explicit audit events for gateway request, success, and failure, and provider-specific outcomes now flow into delivery summaries, operator report summaries, inbox attention, and recent provider-delivery views.
   - missing: Broader active operator workflow and live UI remain future scope.
+
+### Epic T4-E4: Operator Telegram Surface
+
+- status: `complete_for_phase`
+- approx_progress: 100%
+- remaining_gap: Telegram surface delegates to existing operator services; richer interactive flows and live UI remain future scope.
+
+Stories:
+- T4-E4-S1: /report Telegram command
+  - status: `complete_for_phase`
+  - current_state: Operator report accessible from Telegram with overview/inbox/budget views.
+  - missing: Live interactive drill-down and richer formatting remain future scope.
+- T4-E4-S2: /intake Telegram command
+  - status: `complete_for_phase`
+  - current_state: Unified intake qualify→plan→execute flow accessible from Telegram.
+  - missing: Richer conversational intake and multi-step Telegram approval remain future scope.
+- T4-E4-S3: /build Telegram shortcut
+  - status: `complete_for_phase`
+  - current_state: Build intake shortcut delegates to unified /intake.
+  - missing: Direct build-specific Telegram options remain future scope.
 
 ## Theme T5: Security, Governance, And Policy
 

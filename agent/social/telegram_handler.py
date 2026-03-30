@@ -203,6 +203,9 @@ class TelegramHandler:
             "/wallet": self._cmd_wallet,
             "/projects": self._cmd_projects,
             "/runtime": self._cmd_runtime,
+            "/intake": self._cmd_intake,
+            "/report": self._cmd_report,
+            "/build": self._cmd_build,
             "/help": self._cmd_help,
         }
 
@@ -242,6 +245,9 @@ class TelegramHandler:
             "/runtime — čo beží na pozadí (cron, API, watchdog)\n"
             "/usage — spotreba tokenov a náklady\n"
             "/queue — stav pracovnej fronty\n"
+            "/intake — spusti review alebo build cez unified intake\n"
+            "/build — shortcut pre build intake\n"
+            "/report — operator report a inbox\n"
             "/help — tento help\n\n"
             "Alebo napíš čokoľvek — premýšľam a konám."
         )
@@ -1189,6 +1195,207 @@ class TelegramHandler:
         except Exception as e:
             logger.error("john_error", error=str(e))
             return f"Chyba: {e!s}"
+
+    # --- Phase 3: Operator commands ---
+
+    async def _cmd_report(self, args: str) -> str:
+        """Operator report — stručný prehľad pre Telegram."""
+        try:
+            report = self._agent.reporting.get_report(limit=10)
+        except Exception as e:
+            return f"*Report error:* {e!s}"
+
+        summary = report.get("summary", {})
+        inbox = report.get("inbox", [])
+
+        section = args.strip().lower()
+
+        if section == "inbox":
+            if not inbox:
+                return "*Inbox:* Žiadne attention items. ✓"
+            lines = ["*Operator Inbox:*"]
+            for item in inbox[:15]:
+                kind = item.get("kind", "?")
+                title = item.get("title", item.get("detail", "?"))
+                lines.append(f"• `{kind}` — {title}")
+            return "\n".join(lines)
+
+        if section == "budget":
+            bp = report.get("budget_posture", {})
+            return (
+                f"*Budget Posture:*\n"
+                f"Daily spent: ${bp.get('daily_spent_usd', 0):.2f} "
+                f"/ ${bp.get('daily_hard_cap', 50):.0f}\n"
+                f"Monthly spent: ${bp.get('monthly_spent_usd', 0):.2f} "
+                f"/ ${bp.get('monthly_hard_cap', 500):.0f}\n"
+                f"Pending proposals: {bp.get('pending_proposals', 0)}"
+            )
+
+        # Default: stručný overview
+        lines = [
+            "*Operator Report:*",
+            f"Jobs: {summary.get('total_jobs', 0)} "
+            f"({summary.get('completed_jobs', 0)} done, "
+            f"{summary.get('blocked_jobs', 0)} blocked, "
+            f"{summary.get('failed_jobs', 0)} failed)",
+            f"Artifacts: {summary.get('total_artifacts', 0)}",
+            f"Approvals pending: {summary.get('pending_approvals', 0)}",
+            f"Deliveries: {summary.get('total_deliveries', 0)}",
+            f"Cost ledger: ${summary.get('total_recorded_cost_usd', 0):.4f}",
+            f"Inbox items: {len(inbox)}",
+        ]
+        if inbox:
+            lines.append("\n*Top attention:*")
+            for item in inbox[:5]:
+                kind = item.get("kind", "?")
+                title = item.get("title", item.get("detail", "?"))
+                lines.append(f"• `{kind}` — {title}")
+        else:
+            lines.append("\nŽiadne attention items. ✓")
+        lines.append("\n`/report inbox` | `/report budget`")
+        return "\n".join(lines)
+
+    async def _cmd_intake(self, args: str) -> str:
+        """Unified operator intake — qualify, plan, and execute review or build jobs."""
+        if not args.strip():
+            return (
+                "*Použitie:*\n"
+                "`/intake [cesta] --description \"popis\"`\n"
+                "`/intake . --description \"security audit\"`\n"
+                "`/intake agent/build/ --type build --description \"add tests\"`\n"
+                "`/intake --git URL --description \"audit repo\"`\n\n"
+                "Parametre:\n"
+                "• `--type review|build` (default: auto)\n"
+                "• `--description \"...\"` (povinné)\n"
+                "• `--git URL` (pre vzdialené repo)"
+            )
+
+        from agent.control.intake import OperatorIntake
+
+        # Simple argument parsing (no argparse — it calls sys.exit on error)
+        tokens = args.strip().split()
+        repo_path = ""
+        git_url = ""
+        work_type = "auto"
+        description = ""
+
+        i = 0
+        positional_done = False
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok == "--type" and i + 1 < len(tokens):
+                work_type = tokens[i + 1]
+                i += 2
+                positional_done = True
+            elif tok == "--git" and i + 1 < len(tokens):
+                git_url = tokens[i + 1]
+                i += 2
+                positional_done = True
+            elif tok == "--description":
+                # Collect everything after --description as the description
+                description = " ".join(tokens[i + 1:])
+                break
+            elif not positional_done and not tok.startswith("--"):
+                repo_path = tok
+                i += 1
+                positional_done = True
+            else:
+                i += 1
+
+        if not description:
+            return "Chýba `--description`. Použi: `/intake . --description \"čo chceš\"`"
+
+        # Resolve repo_path relative to project root
+        if repo_path and not repo_path.startswith("/") and not git_url:
+            from pathlib import Path as _Path
+            resolved = _Path(get_project_root()) / repo_path
+            if resolved.exists():
+                repo_path = str(resolved)
+            else:
+                return f"Cesta `{repo_path}` neexistuje."
+
+        intake = OperatorIntake(
+            repo_path=repo_path,
+            git_url=git_url,
+            work_type=work_type,
+            description=description,
+            requester=self._current_sender or "telegram",
+        )
+
+        try:
+            result = await asyncio.wait_for(
+                self._agent.submit_operator_intake(intake),
+                timeout=90.0,
+            )
+        except TimeoutError:
+            return "Intake trvá príliš dlho (>90s). Skús menší scope."
+        except Exception as e:
+            logger.error("intake_error", error=str(e))
+            return f"*Intake error:* {e!s}"
+
+        status = result.get("status", "unknown")
+        qualification = result.get("qualification", {})
+        plan = result.get("plan", {})
+
+        lines = [f"*Intake — {status}*"]
+
+        if status == "blocked":
+            error = result.get("error", "Unknown block reason")
+            lines.append(f"Blokované: {error}")
+            return "\n".join(lines)
+
+        if status == "awaiting_approval":
+            lines.append("Čaká na schválenie.")
+            req = result.get("approval_request", {})
+            if req:
+                lines.append(f"Approval ID: `{req.get('approval_request_id', '?')}`")
+            return "\n".join(lines)
+
+        # Completed or submitted
+        job_kind = result.get("job_kind", "?")
+        job_id = result.get("job_id", "?")
+        work = qualification.get("resolved_work_type", "?")
+        risk = qualification.get("risk_level", "?")
+        cost = plan.get("budget", {}).get("estimated_cost_usd", 0)
+
+        lines.extend([
+            f"Typ: {work} | Risk: {risk}",
+            f"Job: `{job_id}` ({job_kind})",
+            f"Estimated cost: ${cost:.2f}",
+        ])
+
+        # Show job result if available
+        job_data = result.get("job", {})
+        if job_data:
+            job_status = job_data.get("status", "?")
+            lines.append(f"Job status: {job_status}")
+            metadata = job_data.get("metadata", {})
+            if metadata.get("verdict"):
+                lines.append(f"Verdict: {metadata['verdict']}")
+            if metadata.get("finding_counts"):
+                fc = metadata["finding_counts"]
+                counts = " ".join(f"{v}{k[0].upper()}" for k, v in fc.items() if v > 0)
+                if counts:
+                    lines.append(f"Findings: {counts}")
+
+        return "\n".join(lines)
+
+    async def _cmd_build(self, args: str) -> str:
+        """Shortcut pre /intake --type build."""
+        if not args.strip():
+            return (
+                "*Použitie:*\n"
+                "`/build [cesta] --description \"čo chceš postaviť\"`\n"
+                "`/build agent/review/ --description \"add verification tests\"`\n\n"
+                "Skratka pre `/intake [cesta] --type build --description ...`"
+            )
+        # Inject --type build BEFORE --description so it gets parsed
+        if "--type" not in args:
+            if "--description" in args:
+                args = args.replace("--description", "--type build --description", 1)
+            else:
+                args = f"{args} --type build"
+        return await self._cmd_intake(args)
 
     async def _build_context_json(self, text: str) -> dict:
         """Build LEAN JSON context — only what's needed for this message."""
