@@ -77,7 +77,7 @@ class BuildStorage:
 
     def save_job(self, job: BuildJob) -> None:
         if not self._db:
-            return None  # type: ignore[return-value]
+            return
         data = json.dumps(job.to_dict())
         self._db.execute(
             "INSERT OR REPLACE INTO build_jobs (id, data, status, build_type, created_at) "
@@ -101,7 +101,7 @@ class BuildStorage:
         self, status: str = "", limit: int = 20
     ) -> list[dict[str, Any]]:
         if not self._db:
-            return None  # type: ignore[return-value]
+            return []
         if status:
             rows = self._db.execute(
                 "SELECT data FROM build_jobs WHERE status = ? "
@@ -117,7 +117,7 @@ class BuildStorage:
 
     def save_artifact(self, artifact: BuildArtifact) -> None:
         if not self._db:
-            return None  # type: ignore[return-value]
+            return
         content = artifact.content
         if len(content) > _MAX_ARTIFACT_BYTES:
             content = content[:_MAX_ARTIFACT_BYTES]
@@ -140,7 +140,7 @@ class BuildStorage:
 
     def get_artifacts(self, job_id: str) -> list[dict[str, Any]]:
         if not self._db:
-            return None  # type: ignore[return-value]
+            return []
         rows = self._db.execute(
             "SELECT id, artifact_kind, content, content_json, format, created_at "
             "FROM build_artifacts WHERE job_id = ?",
@@ -169,7 +169,7 @@ class BuildStorage:
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         if not self._db:
-            return None  # type: ignore[return-value]
+            return []
         if job_id and artifact_kind:
             rows = self._db.execute(
                 "SELECT id, job_id, artifact_kind, content, content_json, format, created_at "

@@ -354,6 +354,7 @@ class JobRunner:
 
     def _store_dead_letter(self, record: JobRecord) -> None:
         """Store dead-lettered job with bounded history."""
+        self._tasks.pop(record.id, None)
         if len(self._dead_letters) >= self._max_dead:
             oldest_id = next(iter(self._dead_letters))
             del self._dead_letters[oldest_id]

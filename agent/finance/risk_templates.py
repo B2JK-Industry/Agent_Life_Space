@@ -150,9 +150,9 @@ def export_audit_trail(transactions: list[dict[str, Any]]) -> str:
     if not transactions:
         return "id,type,status,amount_usd,description,category,created_at\n"
 
-    def _csv_field(value: str) -> str:
+    def _csv_field(value: str, *, numeric: bool = False) -> str:
         s = str(value)
-        if s.startswith(("=", "+", "-", "@")):
+        if not numeric and s.startswith(("=", "+", "-", "@")):
             s = "'" + s
         return '"' + s.replace('"', '""') + '"'
 
@@ -162,7 +162,7 @@ def export_audit_trail(transactions: list[dict[str, Any]]) -> str:
             _csv_field(tx.get("id", "")),
             _csv_field(tx.get("type", "")),
             _csv_field(tx.get("status", "")),
-            _csv_field(str(tx.get("amount_usd", 0))),
+            _csv_field(str(tx.get("amount_usd", 0)), numeric=True),
             _csv_field(tx.get("description", "")),
             _csv_field(tx.get("category", "")),
             _csv_field(tx.get("created_at", "")),
