@@ -800,13 +800,19 @@ class ControlPlaneStateService:
         return UsageSummary()
 
     def _expires_at(self, *, created_at: str, retain_days: int) -> str:
-        created = datetime.fromisoformat(created_at)
+        try:
+            created = datetime.fromisoformat(created_at)
+        except (ValueError, TypeError):
+            return ""
         return (created + timedelta(days=retain_days)).isoformat()
 
     def _refresh_retention_record(self, record: ArtifactRetentionRecord) -> bool:
         if record.status == ArtifactRetentionStatus.PRUNED or not record.expires_at:
             return False
-        expires_at = datetime.fromisoformat(record.expires_at)
+        try:
+            expires_at = datetime.fromisoformat(record.expires_at)
+        except (ValueError, TypeError):
+            return False
         if expires_at <= datetime.now(UTC):
             if record.status != ArtifactRetentionStatus.EXPIRED:
                 record.status = ArtifactRetentionStatus.EXPIRED

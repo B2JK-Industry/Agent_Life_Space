@@ -104,6 +104,16 @@ class DockerSandbox:
         timeout = min(timeout or self._timeout, _MAX_TIMEOUT)
 
         if packages:
+            import re
+            _SAFE_PKG = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*(\[.*\])?$")
+            for p in packages:
+                if not _SAFE_PKG.match(p):
+                    return SandboxResult(
+                        success=False,
+                        stderr=f"Invalid package name rejected: {p!r}",
+                        exit_code=1,
+                        image="python:3.12-slim",
+                    )
             pip_install = " && ".join(f"pip install -q {p}" for p in packages)
             cmd = ["bash", "-c", f"{pip_install} && python3"]
         else:

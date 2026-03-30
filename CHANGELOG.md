@@ -10,6 +10,47 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.18.0] — 2026-03-30
+
+Security hardening and conservative bug fixes from codebase audit.
+
+### Security
+- **sandbox**: Package names now validated against safe regex before shell interpolation
+  (prevents command injection via crafted pip package names)
+- **learning**: Shell-quoted `_PROJECT_ROOT` in skill test commands via `shlex.quote()`
+  (prevents injection if project root contains special characters)
+- **finance**: CSV export now properly escapes all fields (RFC 4180 + formula injection
+  guard for Excel/Google Sheets)
+
+### Bug Fixes
+- **memory/consolidation**: `promote_inferred_to_verified` and `detect_stale_facts` now
+  use `MemoryStore.update_entry()` instead of bypassing store abstraction with direct DB access
+- **control/state**: `datetime.fromisoformat()` calls wrapped in try/except to prevent
+  crashes on malformed retention timestamps
+- **control/evidence_export**: Cost sum uses safe `.get()` chain to prevent KeyError on
+  incomplete cost entries
+- **telegram**: `_cmd_runtime` conversation count now reads per-chat buffers instead of
+  deprecated empty list
+- **telegram**: Log `original_type` now captures value before reassignment
+
+### Corrections
+- **action.py**: Docstring corrected from "Immutable record" to "Mutable lifecycle record"
+- **router.py**: Docstring updated — persistence exists (SQLite), not "in-memory only"
+- **agent.py**: Comment "Every 6 hours: memory decay" corrected to "Every hour"
+- **build/storage.py**: Replaced `assert self._db` with graceful null checks (consistent
+  with review/control storage pattern)
+- **rag.py**: Docstring corrected — indexes knowledge base .md files, not SQLite memory
+
+### Documentation
+- docs/OPERATOR_HANDBOOK.md: "7-layer" corrected to "9-layer"
+- docs/DOCS.md: version updated to v1.18.0
+- docs/SECURITY_MODEL.md: removed stale TODOs (budget policy and approval inbox are implemented)
+- README.md: line count updated from ~17,300 to ~39,000
+
+### Config
+- CI performance gate raised from 1000 to 1300 tests
+- docker-compose.yml: removed deprecated `version: "3.8"` key
+
 ## [1.17.0] — 2026-03-30
 
 Audit-driven quality release: 7 bug fixes, documentation sync, clean Phase 3 foundation.

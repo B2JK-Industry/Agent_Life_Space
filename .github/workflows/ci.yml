@@ -81,8 +81,8 @@ jobs:
           if echo "$OUTPUT" | grep -q "passed"; then
             TEST_COUNT=$(echo "$OUTPUT" | grep -oP '\d+ passed' | grep -oP '\d+')
             echo "Test count: $TEST_COUNT"
-            if [ "$TEST_COUNT" -lt 1000 ]; then
-              echo "FAIL: Test count below 1000 (got $TEST_COUNT)" && exit 1
+            if [ "$TEST_COUNT" -lt 1300 ]; then
+              echo "FAIL: Test count below 1300 (got $TEST_COUNT)" && exit 1
             fi
           else
             echo "FAIL: Tests did not complete" && exit 1

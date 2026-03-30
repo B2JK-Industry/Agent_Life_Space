@@ -15,7 +15,7 @@ What it does:
 What it does NOT do:
     - No content-aware routing (does not inspect MessageType)
     - No load balancing (single handler per module)
-    - No persistence (in-memory only — messages lost on crash)
+    - Persistence is SQLite-backed (crash recovery via MessagePersistence)
 """
 
 from __future__ import annotations

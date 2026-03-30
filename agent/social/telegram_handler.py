@@ -603,7 +603,7 @@ class TelegramHandler:
         lines.append("\n*Agent API:* port 8420 (aktívny)")
 
         # Conversation buffer
-        lines.append(f"*Conversation buffer:* {len(self._conversation)} správ")
+        lines.append(f"*Conversation buffer:* {sum(len(v) for v in self._conversations.values())} správ")
 
         # Memory
         mem_stats = self._agent.memory.get_stats()
@@ -954,11 +954,12 @@ class TelegramHandler:
             # Ak existuje konverzácia a správa je krátka/vágna,
             # eskaluj na chat (nie simple/factual) aby agent použil kontext
             if task_type in ("simple", "factual") and len(text.split()) <= 8:
+                original_task_type = task_type
                 task_type = "chat"
                 from agent.core.models import get_model
                 model = get_model(task_type)
                 logger.info("conversation_context_escalation",
-                            original_type=task_type, reason="short msg with conversation history")
+                            original_type=original_task_type, reason="short msg with conversation history")
 
         # Store user message in per-chat conversation buffer
         chat_conv.append({"role": "user", "content": text, "sender": ctx.sender})

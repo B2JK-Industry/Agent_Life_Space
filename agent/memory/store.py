@@ -461,6 +461,28 @@ class MemoryStore:
             return True
         return False
 
+    async def update_entry(self, entry: MemoryEntry) -> None:
+        """Persist in-memory entry state to database."""
+        if self._db:
+            await self._db.execute(
+                "UPDATE memories SET content=?, provenance=?, metadata=?, kind=?, "
+                "confidence=?, importance=?, decay_factor=?, last_accessed=?, "
+                "access_count=? WHERE id=?",
+                (
+                    entry.content,
+                    entry.provenance.value,
+                    orjson.dumps(entry.metadata).decode(),
+                    entry.kind.value,
+                    entry.confidence,
+                    entry.importance,
+                    entry.decay_factor,
+                    entry.last_accessed,
+                    entry.access_count,
+                    entry.id,
+                ),
+            )
+            await self._db.commit()
+
     async def apply_decay(self, decay_rate: float = 0.01) -> int:
         """
         Apply time-based decay to all memories.
