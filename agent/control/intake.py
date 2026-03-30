@@ -20,7 +20,11 @@ from agent.build.models import (
     BuildOperation,
 )
 from agent.control.acquisition import inspect_git_url
-from agent.control.policy import get_delivery_policy, get_review_gate_policy
+from agent.control.policy import (
+    get_delivery_policy,
+    get_review_gate_policy,
+    select_review_execution_policy,
+)
 from agent.finance.budget_policy import BudgetPolicy
 from agent.review.models import ReviewIntake, ReviewJobType
 
@@ -1175,19 +1179,30 @@ class OperatorIntakeService:
             return assignments
 
         review_type = "pr_review_v1" if intake.diff_spec else "repo_audit_v1"
+        review_policy = select_review_execution_policy(
+            review_type=intake.diff_spec and "pr_review" or "repo_audit",
+            diff_spec=intake.diff_spec,
+            source="telegram",
+        )
+        delivery_policy = get_delivery_policy("approval_required")
         assignments.extend(
             [
                 JobPlanCapability(
                     phase=PlanPhase.REVIEW,
                     capability_id=review_type,
                     label="Review Workflow",
-                    source="planner_profile",
+                    source="execution_policy",
                     reason=(
                         "Diff-scoped review selected."
                         if intake.diff_spec
                         else "Repository-wide review selected."
                     ),
-                    metadata={"environment_profile_id": "review_host_read_only"},
+                    metadata={
+                        "environment_profile_id": "review_host_read_only",
+                        "execution_policy_id": review_policy.id,
+                        "allow_host_read": review_policy.allow_host_read,
+                        "allow_git_subprocess": review_policy.allow_git_subprocess,
+                    },
                 ),
                 JobPlanCapability(
                     phase=PlanPhase.VERIFY,
@@ -1201,9 +1216,13 @@ class OperatorIntakeService:
                     phase=PlanPhase.DELIVER,
                     capability_id="review_handoff_bundle_v1",
                     label="Review Handoff Bundle",
-                    source="planner_profile",
+                    source="delivery_policy",
                     reason="Prepare recovery-safe review artifacts for operator consumption.",
-                    metadata={"environment_profile_id": "delivery_export_only"},
+                    metadata={
+                        "environment_profile_id": "delivery_export_only",
+                        "delivery_policy_id": delivery_policy.id,
+                        "approval_required": delivery_policy.approval_required,
+                    },
                 ),
             ]
         )
