@@ -10,6 +10,29 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.20.0] — 2026-03-30
+
+Phase 3: runtime capability binding and operator delivery workflow.
+
+### Operator Commands
+- **`/jobs`** — list product jobs (review + build) and view job detail from Telegram
+- **`/deliver`** — delivery listing, detail, and gateway send from Telegram
+  (`/deliver <job_id> send` triggers actual gateway delivery)
+
+### Runtime Capability Binding (T4-E2-S3)
+- Review workflow planner phase now binds to execution policy with
+  `execution_policy_id`, `allow_host_read`, and `allow_git_subprocess`
+  metadata (not just a planner profile label)
+- Review delivery phase now binds to delivery policy with
+  `delivery_policy_id` and `approval_required` metadata
+- Review verify phase remains a planner profile (internal step, no policy)
+- Capability assignment `source` field now reflects the binding type:
+  `execution_policy`, `delivery_policy`, or `planner_profile`
+
+### Strategy
+- T4-E2-S3 closed: review/verify/deliver phases enriched with runtime binding
+- T4-E4-S4 (/jobs) and T4-E4-S5 (/deliver) stories added and completed
+
 ## [1.19.0] — 2026-03-30
 
 Phase 3 kickoff: operator Telegram surface. Existing runtime capabilities

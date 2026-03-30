@@ -5,18 +5,14 @@ This file is the near-term execution backlog derived from the current state of
 
 Assessment basis:
 - branch: `main`
-- interpretation date: `2026-03-30`
+- interpretation date: `2026-03-26`
 - baseline: after the documented buyer-side Obolos API-call slice
 
 ## Ready Now
 
 ### P0
 
-1. `T4-E2-S3` Bind review, verify, and deliver planner phases to stronger runtime capabilities.
-   Why now: Phase 2 builder closure is now good enough that the next honest gap
-   is operatorization, not more builder mechanics.
-
-2. `T4-E3-S4` Finish provider-specific operator delivery workflow.
+1. `T4-E3-S4` Finish provider-specific operator delivery workflow.
    Why now: provider receipts, provider outcomes, and release readiness now
    exist, but the operator flow still stops at report/CLI detail instead of a
    richer active workflow.
@@ -91,6 +87,10 @@ Assessment basis:
   Telegram commands now delegate to the unified operator services, providing
   overview/inbox/budget reporting and qualify→plan→execute intake flow directly
   from Telegram (v1.19.0).
+
+- `T4-E2-S3` Review/verify/deliver planner phases now bind to execution policies
+  and delivery policies (not just planner profiles). Execution policy enrichment
+  completed alongside `/jobs` and `/deliver` Telegram commands (v1.20.0).
 
 ## Exit Criteria For The Next Backlog Slice
 

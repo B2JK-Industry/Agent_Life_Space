@@ -206,6 +206,8 @@ class TelegramHandler:
             "/intake": self._cmd_intake,
             "/report": self._cmd_report,
             "/build": self._cmd_build,
+            "/jobs": self._cmd_jobs,
+            "/deliver": self._cmd_deliver,
             "/help": self._cmd_help,
         }
 
@@ -247,6 +249,8 @@ class TelegramHandler:
             "/queue — stav pracovnej fronty\n"
             "/intake — spusti review alebo build cez unified intake\n"
             "/build — shortcut pre build intake\n"
+            "/jobs — zoznam product jobov (review, build)\n"
+            "/deliver — delivery status a odoslanie cez gateway\n"
             "/report — operator report a inbox\n"
             "/help — tento help\n\n"
             "Alebo napíš čokoľvek — premýšľam a konám."
@@ -1396,6 +1400,129 @@ class TelegramHandler:
             else:
                 args = f"{args} --type build"
         return await self._cmd_intake(args)
+
+    async def _cmd_jobs(self, args: str) -> str:
+        """List recent product jobs or show detail for a specific job."""
+        args_stripped = args.strip()
+
+        if args_stripped:
+            # Detail pre konkrétny job
+            job = self._agent.get_product_job(args_stripped)
+            if job is None:
+                return f"Job `{args_stripped}` nenájdený."
+            lines = [
+                f"*Job {job['id']}*",
+                f"Kind: {job.get('kind', '?')} | Status: {job.get('status', '?')}",
+                f"Created: {job.get('created_at', '?')[:19]}",
+            ]
+            metadata = job.get("metadata", {})
+            if metadata.get("verdict"):
+                lines.append(f"Verdict: {metadata['verdict']}")
+            if metadata.get("finding_counts"):
+                fc = metadata["finding_counts"]
+                counts = " ".join(f"{v}{k[0].upper()}" for k, v in fc.items() if v > 0)
+                if counts:
+                    lines.append(f"Findings: {counts}")
+            if metadata.get("acceptance_met") is not None:
+                lines.append(f"Acceptance: {metadata['acceptance_met']}/{metadata.get('acceptance_total', '?')}")
+            if job.get("error"):
+                lines.append(f"Error: {job['error'][:200]}")
+            return "\n".join(lines)
+
+        # List recent jobs
+        try:
+            jobs = self._agent.list_product_jobs(limit=10)
+        except Exception as e:
+            return f"*Jobs error:* {e!s}"
+
+        if not jobs:
+            return "Žiadne joby. Použi `/intake` na spustenie review alebo build."
+
+        lines = ["*Recent Jobs:*"]
+        for job in jobs:
+            status = job.get("status", "?")
+            kind = job.get("kind", "?")
+            jid = job.get("id", "?")[:12]
+            created = job.get("created_at", "")[:10]
+            lines.append(f"• `{jid}` {kind} — {status} ({created})")
+        lines.append("\n`/jobs <id>` pre detail")
+        return "\n".join(lines)
+
+    async def _cmd_deliver(self, args: str) -> str:
+        """Delivery status, listing, and gateway send for operator workflow."""
+        parts = args.strip().split()
+
+        if not parts:
+            # List recent deliveries
+            try:
+                deliveries = self._agent.list_delivery_records(limit=10)
+            except Exception as e:
+                return f"*Delivery error:* {e!s}"
+
+            if not deliveries:
+                return "Žiadne delivery záznamy. Deliveries sa vytvárajú po dokončení jobov."
+
+            lines = ["*Recent Deliveries:*"]
+            for d in deliveries:
+                status = d.get("status", "?")
+                job_id = d.get("job_id", "?")[:12]
+                kind = d.get("job_kind", "?")
+                title = d.get("title", "")[:50] or f"{kind} delivery"
+                lines.append(f"• `{job_id}` {title} — {status}")
+            lines.append("\n`/deliver <job_id>` pre detail | `/deliver <job_id> send` pre odoslanie")
+            return "\n".join(lines)
+
+        job_id = parts[0]
+        action = parts[1] if len(parts) > 1 else ""
+
+        if action == "send":
+            # Trigger gateway delivery
+            try:
+                # Try review first, then build
+                result = None
+                review_bundle = self._agent.get_review_delivery_bundle(job_id)
+                if review_bundle:
+                    result = await self._agent.send_review_delivery_via_gateway(job_id=job_id)
+                else:
+                    build_bundle = self._agent.get_build_delivery_bundle(job_id)
+                    if build_bundle:
+                        result = await self._agent.send_build_delivery_via_gateway(job_id=job_id)
+
+                if result is None:
+                    return f"Job `{job_id}` nemá delivery bundle. Skontroluj `/jobs {job_id}`."
+
+                ok = result.get("ok", False)
+                if ok:
+                    return f"*Delivery sent* pre job `{job_id}` ✓\nProvider: {result.get('provider_id', '?')}"
+                error = result.get("error", "Unknown delivery error")
+                return f"*Delivery failed* pre job `{job_id}`\n{error}"
+            except Exception as e:
+                return f"*Delivery send error:* {e!s}"
+
+        # Show delivery detail for job_id
+        try:
+            deliveries = self._agent.list_delivery_records(job_id=job_id, limit=5)
+        except Exception as e:
+            return f"*Delivery error:* {e!s}"
+
+        if not deliveries:
+            return f"Žiadne delivery záznamy pre job `{job_id}`."
+
+        d = deliveries[0]  # Most recent
+        lines = [
+            f"*Delivery — {d.get('status', '?')}*",
+            f"Job: `{d.get('job_id', '?')}` ({d.get('job_kind', '?')})",
+            f"Title: {d.get('title', '?')}",
+        ]
+        if d.get("approval_request_id"):
+            lines.append(f"Approval: `{d['approval_request_id']}`")
+        events = d.get("events", [])
+        if events:
+            lines.append(f"\n*Events ({len(events)}):*")
+            for event in events[-5:]:
+                lines.append(f"• {event.get('event_type', '?')} — {event.get('status', '?')}")
+        lines.append(f"\n`/deliver {job_id} send` na odoslanie cez gateway")
+        return "\n".join(lines)
 
     async def _build_context_json(self, text: str) -> dict:
         """Build LEAN JSON context — only what's needed for this message."""

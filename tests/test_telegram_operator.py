@@ -197,6 +197,81 @@ class TestBuildCommand:
         assert str(intake_arg.work_type) in ("build", "OperatorWorkType.BUILD")
 
 
+class TestJobsCommand:
+
+    async def test_jobs_no_args_lists_jobs(self, handler, mock_agent):
+        mock_agent.list_product_jobs.return_value = [
+            {"id": "job1abcdef12", "kind": "review", "status": "completed", "created_at": "2026-03-30T10:00:00"},
+            {"id": "job2abcdef34", "kind": "build", "status": "failed", "created_at": "2026-03-30T09:00:00"},
+        ]
+        result = await handler.handle("/jobs", user_id=1, chat_id=1)
+        assert "Recent Jobs" in result
+        assert "job1abcdef12" in result
+        assert "review" in result
+
+    async def test_jobs_empty(self, handler, mock_agent):
+        mock_agent.list_product_jobs.return_value = []
+        result = await handler.handle("/jobs", user_id=1, chat_id=1)
+        assert "Žiadne joby" in result
+
+    async def test_jobs_detail(self, handler, mock_agent):
+        mock_agent.get_product_job.return_value = {
+            "id": "job123",
+            "kind": "review",
+            "status": "completed",
+            "created_at": "2026-03-30T10:00:00",
+            "metadata": {"verdict": "pass", "finding_counts": {"critical": 0, "high": 1}},
+        }
+        result = await handler.handle("/jobs job123", user_id=1, chat_id=1)
+        assert "Job job123" in result
+        assert "pass" in result
+        assert "1H" in result
+
+    async def test_jobs_not_found(self, handler, mock_agent):
+        mock_agent.get_product_job.return_value = None
+        result = await handler.handle("/jobs nonexistent", user_id=1, chat_id=1)
+        assert "nenájdený" in result
+
+
+class TestDeliverCommand:
+
+    async def test_deliver_no_args_lists(self, handler, mock_agent):
+        mock_agent.list_delivery_records.return_value = [
+            {"job_id": "j1", "job_kind": "review", "status": "prepared", "title": "Review delivery"},
+        ]
+        result = await handler.handle("/deliver", user_id=1, chat_id=1)
+        assert "Recent Deliveries" in result
+        assert "j1" in result
+
+    async def test_deliver_empty(self, handler, mock_agent):
+        mock_agent.list_delivery_records.return_value = []
+        result = await handler.handle("/deliver", user_id=1, chat_id=1)
+        assert "Žiadne delivery" in result
+
+    async def test_deliver_detail(self, handler, mock_agent):
+        mock_agent.list_delivery_records.return_value = [
+            {
+                "job_id": "j1",
+                "job_kind": "review",
+                "status": "awaiting_approval",
+                "title": "Review handoff",
+                "approval_request_id": "apr123",
+                "events": [
+                    {"event_type": "created", "status": "prepared"},
+                ],
+            },
+        ]
+        result = await handler.handle("/deliver j1", user_id=1, chat_id=1)
+        assert "awaiting_approval" in result
+        assert "apr123" in result
+
+    async def test_deliver_send_no_bundle(self, handler, mock_agent):
+        mock_agent.get_review_delivery_bundle.return_value = None
+        mock_agent.get_build_delivery_bundle.return_value = None
+        result = await handler.handle("/deliver j1 send", user_id=1, chat_id=1)
+        assert "nemá delivery bundle" in result
+
+
 class TestHelpIncludes:
 
     async def test_help_shows_new_commands(self, handler):
@@ -204,3 +279,5 @@ class TestHelpIncludes:
         assert "/intake" in result
         assert "/build" in result
         assert "/report" in result
+        assert "/jobs" in result
+        assert "/deliver" in result

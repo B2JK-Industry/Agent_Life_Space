@@ -61,9 +61,14 @@ python -m pytest tests/ -q   # Testy
 
 ## Verzia
 
-Aktuálna: **v1.19.0** — Phase 3 kickoff: operator Telegram surface.
+Aktuálna: **v1.20.0** — Phase 3: runtime capability binding + delivery workflow.
 
-Nové v `v1.19.0`:
+Nové v `v1.20.0`:
+- `/jobs` — product job listing a detail z Telegramu
+- `/deliver` — delivery status, detail, a gateway send z Telegramu
+- Review capability assignments enriched s execution/delivery policy binding
+
+Predchádzajúce v `v1.19.0`:
 - `/intake` — unified operator intake z Telegramu (qualify → plan → execute)
 - `/report` — operator report s inbox a budget views
 - `/build` — shortcut pre build intake

@@ -24,7 +24,7 @@ Important:
 | T1 Platform Foundation | `in_progress` | 96% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted job/plan/trace/delivery records, retention-aware artifact records with prune flow, first-class workspace joins, and explicit environment profiles for review/build/acquisition/export flows. | No unified cross-domain action layer yet. |
 | T2 Reviewer Product | `complete_for_phase` | 96% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, converged Telegram and structured API review entrypoints, shared delivery lifecycle state, and reusable handoff summary artifacts now flow through the shared runtime. | LLM analysis and richer external delivery automation are v2. |
 | T3 Builder Product | `complete_for_phase` | 99% | Builder now has a declared capability catalog, resumable checkpoints, runtime/CLI entrypoints, workspace sync, repo-aware verification discovery across Python/Node/Make/CI signals, source-aware execution policy traces and blocking, deterministic patch/diff, richer verification/acceptance delivery evidence, a bounded local implementation engine with copy/move-aware capability guardrails, implementation-backed acceptance criteria, release-readiness gating, and an explicit gateway send path for approved build bundles. | No general code generation yet and no semantic requirement engine. |
-| T4 Operator Product | `in_progress` | 97% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report/CLI surfaces, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware delivery reporting, release-readiness traces, and Telegram operator surface with /report, /intake, and /build commands now exist. | No live backend/UI and no richer active provider-specific operator workflow yet. |
+| T4 Operator Product | `in_progress` | 98% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted plan handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report/CLI surfaces, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware delivery reporting, release-readiness traces, and Telegram operator surface with /report, /intake, and /build commands now exist. | No live backend/UI and no richer active provider-specific operator workflow yet. |
 | T5 Security, Governance, And Policy | `in_progress` | 99% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, capability-scoped builder guardrails, explicit gateway defaults, provider-aware gateway routing decisions, provider receipt validation, provider-outcome classification, deterministic release-readiness thresholds, and structured denial payloads now exist across build/review/tool/web/social/finance-facing blocked flows. | Build execution and broader runtime action flow still sit outside one unified policy enforcement boundary. |
 | T6 Cost, Usage, And Observability | `in_progress` | 99% | UsageSummary, a durable per-job cost ledger, persisted job duration/retry/failure telemetry, runtime hard/soft/stop-loss budget posture, budget-aware escalation controls, durable plan/trace/delivery/gateway/release telemetry, shared runtime job/artifact/workspace queries, richer operator reporting, approval backlog plus retention posture summaries, review-eval smoke coverage, golden review cases, runtime quality telemetry with release labels, duration, and previous-baseline trend deltas, plus a CLI/CI release-readiness gate now exist. | No live operator UI or broader longitudinal dashboards yet. |
 | T7 External Capability Gateway | `in_progress` | 95% | Runtime model and policy layer now expose explicit gateway defaults, separate handoff and API-call contracts, a concrete `obolos.tech` provider catalog, readiness-aware capability routes, env/vault-backed auth resolution, documented buyer-side marketplace catalog or wallet or slug-call access, provider-specific request payload shaping, parsed provider receipts, persisted request/response artifacts, provider-outcome classification, and fallback-capable delivery sends with gateway traces and cost entries. | Only one provider exists so far, and seller publishing, x402 payment flow, file-upload calls, and broader downstream provider workflow still remain future scope. |
@@ -241,7 +241,7 @@ Stories:
 ## Theme T4: Operator Product
 
 - status: `in_progress`
-- approx_progress: 97%
+- approx_progress: 98%
 
 Goal: coordinate work end-to-end and support repeatable client delivery.
 
@@ -284,9 +284,9 @@ Stories:
   - current_state: Planner output now exposes explicit qualify, review, build, verify, and deliver phases, with phase-aware steps for both review and build routes, including verification/acceptance detail earlier in the build plan.
   - missing: Planner phases are still preview/submit constructs rather than persisted execution history.
 - T4-E2-S3: Assign capabilities and budget envelopes.
-  - status: `mostly_complete`
-  - current_state: Planner output now assigns concrete build catalog capabilities plus planner profiles for review, verify, and deliver phases, alongside structured budget envelope metadata.
-  - missing: Only the build phase currently binds to a runtime capability catalog; the remaining phase assignments are planner profiles.
+  - status: `complete_for_phase`
+  - current_state: Planner output now assigns concrete build catalog capabilities plus execution policies and delivery policies for review, verify, and deliver phases, alongside structured budget envelope metadata. Review/verify/deliver phases now bind to execution policies and delivery policies, not just planner profiles.
+  - missing: Only the build phase currently binds to a full runtime capability catalog; the remaining phase bindings are policy-level rather than capability-catalog-level.
 - T4-E2-S4: Record execution traces for planning decisions.
   - status: `complete_for_phase`
   - current_state: Qualification, budget, capability, and delivery decisions now emit durable `ExecutionTraceRecord` entries that can be listed and filtered through the shared control-plane surface.
@@ -336,6 +336,14 @@ Stories:
   - status: `complete_for_phase`
   - current_state: Build intake shortcut delegates to unified /intake.
   - missing: Direct build-specific Telegram options remain future scope.
+- T4-E4-S4: /jobs Telegram command
+  - status: `complete_for_phase`
+  - current_state: Product job listing and detail accessible from Telegram.
+  - missing: Richer filtering and interactive job drill-down remain future scope.
+- T4-E4-S5: /deliver Telegram command
+  - status: `complete_for_phase`
+  - current_state: Delivery listing, detail, and gateway send accessible from Telegram.
+  - missing: Richer delivery approval flows and interactive send confirmation remain future scope.
 
 ## Theme T5: Security, Governance, And Policy
 
