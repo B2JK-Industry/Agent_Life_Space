@@ -10,6 +10,25 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.19.0] — 2026-03-30
+
+Phase 3 kickoff: operator Telegram surface. Existing runtime capabilities
+(intake, planning, reporting) are now accessible from Telegram chat.
+
+### Operator Commands
+- **`/intake`** — unified operator intake: qualify, plan, and execute review or
+  build jobs from Telegram with `--type`, `--description`, `--git` parameters
+- **`/report`** — operator report with overview, inbox, and budget views
+  (`/report inbox`, `/report budget`)
+- **`/build`** — shortcut for build intake (delegates to `/intake --type build`)
+
+### Strategy
+- Added Theme T4-E4 "Operator Telegram Surface" with 3 stories (all complete)
+- Updated backlog progress, next backlog, and backlog seed for Phase 3
+
+### Testing
+- Added 14 new tests for operator Telegram commands (test_telegram_operator.py)
+
 ## [1.18.0] — 2026-03-30
 
 Security hardening and conservative bug fixes from codebase audit.

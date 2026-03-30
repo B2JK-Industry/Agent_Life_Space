@@ -7,7 +7,7 @@ packages = ["agent"]
 
 [project]
 name = "agent-life-space"
-version = "1.18.0"
+version = "1.19.0"
 description = "Self-hosted autonomous agent environment"
 requires-python = ">=3.11"
 dependencies = [

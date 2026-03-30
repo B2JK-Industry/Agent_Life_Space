@@ -1,4 +1,4 @@
-version: 3
+version: 4
 source_of_truth: docs/strategy/MASTER_SOURCE_OF_TRUTH.md
 seed_note: >
   Machine-friendly backlog seed aligned to current main. Mirrors
@@ -6,12 +6,12 @@ seed_note: >
 
 progress_snapshot:
   assessed_state_note: "Snapshot after the documented buyer-side Obolos API-call slice."
-  interpretation_date: "2026-03-28"
+  interpretation_date: "2026-03-30"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
     T2: { status: complete_for_phase, approx_progress: 96 }
     T3: { status: complete_for_phase, approx_progress: 99 }
-    T4: { status: in_progress, approx_progress: 96 }
+    T4: { status: in_progress, approx_progress: 97 }
     T5: { status: in_progress, approx_progress: 99 }
     T6: { status: in_progress, approx_progress: 99 }
     T7: { status: in_progress, approx_progress: 95 }
@@ -330,8 +330,8 @@ themes:
     name: Operator Product
     goal: Coordinate end-to-end work and delivery.
     status: in_progress
-    approx_progress: 96
-    current_state: Unified intake routing, phase-aware JobPlan preview and submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, workspace joins, richer operator report service, internal and client-safe evidence export, shared build and review delivery lifecycle, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware operator reporting, and release-readiness traces now exist alongside CI typecheck.
+    approx_progress: 97
+    current_state: Unified intake routing, phase-aware JobPlan preview and submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, workspace joins, richer operator report service, internal and client-safe evidence export, shared build and review delivery lifecycle, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware operator reporting, release-readiness traces, and Telegram operator surface with /report, /intake, and /build commands now exist alongside CI typecheck.
     main_gap: No live backend/UI and no richer active provider-specific operator workflow yet.
     epics:
       - id: T4-E1
@@ -409,6 +409,27 @@ themes:
             status: complete_for_phase
             current_state: Build and review delivery now persist lifecycle state (prepared, awaiting_approval, approved, rejected, handed_off) plus explicit audit events for gateway request, success, and failure, and provider-specific outcomes now flow into delivery summaries, operator report summaries, inbox attention, and recent provider-delivery views.
             missing: Broader active operator workflow and live UI remain future scope.
+      - id: T4-E4
+        name: Operator Telegram Surface
+        status: complete_for_phase
+        approx_progress: 100
+        remaining_gap: Telegram surface delegates to existing operator services; richer interactive flows and live UI remain future scope.
+        stories:
+          - id: T4-E4-S1
+            name: "/report Telegram command"
+            status: complete_for_phase
+            current_state: Operator report accessible from Telegram with overview/inbox/budget views.
+            missing: Live interactive drill-down and richer formatting remain future scope.
+          - id: T4-E4-S2
+            name: "/intake Telegram command"
+            status: complete_for_phase
+            current_state: "Unified intake qualify→plan→execute flow accessible from Telegram."
+            missing: Richer conversational intake and multi-step Telegram approval remain future scope.
+          - id: T4-E4-S3
+            name: "/build Telegram shortcut"
+            status: complete_for_phase
+            current_state: Build intake shortcut delegates to unified /intake.
+            missing: Direct build-specific Telegram options remain future scope.
 
   - id: T5
     name: Security, Governance, And Policy

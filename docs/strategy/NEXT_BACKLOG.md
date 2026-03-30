@@ -5,7 +5,7 @@ This file is the near-term execution backlog derived from the current state of
 
 Assessment basis:
 - branch: `main`
-- interpretation date: `2026-03-28`
+- interpretation date: `2026-03-30`
 - baseline: after the documented buyer-side Obolos API-call slice
 
 ## Ready Now
@@ -86,6 +86,11 @@ Assessment basis:
   events.
 - `T8-E2-S4` Controlled-environment deployment documentation now exists for the
   vault, gateway, runtime profile, and release-readiness path.
+
+- `T4-E4` Operator Telegram Surface: `/report`, `/intake`, and `/build`
+  Telegram commands now delegate to the unified operator services, providing
+  overview/inbox/budget reporting and qualify→plan→execute intake flow directly
+  from Telegram (v1.19.0).
 
 ## Exit Criteria For The Next Backlog Slice
 
