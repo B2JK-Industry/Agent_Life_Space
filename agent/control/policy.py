@@ -1533,3 +1533,141 @@ def allow_budget_escalation(
     if policy.block_on_soft_cap and bool(status.get("soft_cap_hit")):
         return False, "Budget soft cap blocks model escalation."
     return True, ""
+
+
+# ─────────────────────────────────────────────
+# Unified Runtime Policy Boundary
+# ─────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class RuntimeActionRequest:
+    """Unified description of a runtime action for policy evaluation."""
+
+    action_type: str  # "review", "build", "deliver", "gateway_send", "api_call"
+    job_kind: str = ""
+    source: str = ""
+    build_type: str = ""
+    review_type: str = ""
+    diff_spec: str = ""
+    target_url: str = ""
+    export_mode: str = ""
+    estimated_cost_usd: float = 0.0
+    approval_status: str = ""
+    auth_provided: bool = False
+    target_kind: str = ""
+    policy_overrides: dict[str, str] = ()  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if isinstance(self.policy_overrides, tuple):
+            object.__setattr__(self, "policy_overrides", {})
+
+
+@dataclass
+class RuntimePolicyDecision:
+    """Combined result from evaluating all relevant policies."""
+
+    allowed: bool
+    blocking_policies: list[str]
+    warnings: list[str]
+    applied_policies: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "allowed": self.allowed,
+            "blocking_policies": self.blocking_policies,
+            "warnings": self.warnings,
+            "applied_policies": self.applied_policies,
+        }
+
+
+def evaluate_runtime_action(action: RuntimeActionRequest) -> RuntimePolicyDecision:
+    """
+    Unified entry point for policy evaluation.
+
+    Dispatches to the relevant subset of existing policy functions based on
+    action_type. Existing individual evaluate functions remain the internal
+    implementation — this function composes them into a single decision.
+    """
+    blocking: list[str] = []
+    warnings: list[str] = []
+    applied: list[str] = []
+
+    if action.action_type == "review":
+        review_type = action.review_type or ("pr_review" if action.diff_spec else "repo_audit")
+        policy = select_review_execution_policy(
+            review_type=review_type,
+            diff_spec=action.diff_spec,
+            source=action.source or "manual",
+        )
+        applied.append(f"review_execution:{policy.id}")
+        if not policy.allow_host_read:
+            blocking.append(f"review_execution:{policy.id}")
+
+    elif action.action_type == "build":
+        build_type = action.build_type or "implementation"
+        policy = select_build_execution_policy(
+            build_type=build_type,
+            source=action.source or "manual",
+        )
+        applied.append(f"build_execution:{policy.id}")
+        if not policy.allow_workspace_mutation:
+            blocking.append(f"build_execution:{policy.id}")
+
+    elif action.action_type == "gateway_send":
+        gateway_policy_id = action.policy_overrides.get(
+            "gateway_policy_id", "approval_before_gateway",
+        )
+        allowed, reason, gw_policy = evaluate_external_gateway_access(
+            policy_id=gateway_policy_id,
+            target_kind=action.target_kind or "delivery",
+            target_url=action.target_url,
+            approval_status=action.approval_status,
+            auth_token_provided=action.auth_provided,
+        )
+        applied.append(f"gateway:{gw_policy.id}")
+        if not allowed:
+            blocking.append(f"gateway:{gw_policy.id}")
+            warnings.append(reason)
+
+    elif action.action_type == "deliver":
+        delivery_policy_id = action.policy_overrides.get(
+            "delivery_policy_id", "approval_required",
+        )
+        delivery_policy = get_delivery_policy(delivery_policy_id)
+        applied.append(f"delivery:{delivery_policy.id}")
+        if delivery_policy.approval_required and action.approval_status != "approved":
+            blocking.append(f"delivery:{delivery_policy.id}")
+            warnings.append("Delivery requires approval before handoff.")
+
+    elif action.action_type == "api_call":
+        gateway_policy_id = action.policy_overrides.get(
+            "gateway_policy_id", "owner_api_call",
+        )
+        allowed, reason, gw_policy = evaluate_external_gateway_access(
+            policy_id=gateway_policy_id,
+            target_kind=action.target_kind or "api_call",
+            target_url=action.target_url,
+            approval_status=action.approval_status,
+            auth_token_provided=action.auth_provided,
+        )
+        applied.append(f"gateway:{gw_policy.id}")
+        if not allowed:
+            blocking.append(f"gateway:{gw_policy.id}")
+            warnings.append(reason)
+
+    # Budget check (applies to all action types if cost is specified)
+    if action.estimated_cost_usd > 0:
+        budget_policy_id = action.policy_overrides.get(
+            "escalation_budget_policy_id", "cost_guarded",
+        )
+        # Budget status is not available here (caller must provide it separately),
+        # so we only record that budget policy applies.
+        applied.append(f"budget:{budget_policy_id}")
+
+    return RuntimePolicyDecision(
+        allowed=len(blocking) == 0,
+        blocking_policies=blocking,
+        warnings=warnings,
+        applied_policies=applied,
+    )

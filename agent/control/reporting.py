@@ -416,6 +416,7 @@ class OperatorReportService:
             "recent_deliveries": recent_deliveries[:limit],
             "recent_persisted_jobs": recent_persisted_jobs[:limit],
             "recent_retained_artifacts": recent_retained_artifacts[:limit],
+            "cost_accuracy": self._control_plane_state.get_cost_accuracy(limit=limit) if self._control_plane_state else {},
             "recent_cost_entries": recent_cost_entries[:limit],
             "recent_workspace_records": recent_workspace_records[:limit],
             "pending_approvals": pending_approvals[:limit],

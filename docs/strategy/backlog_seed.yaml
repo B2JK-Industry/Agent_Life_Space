@@ -1,4 +1,4 @@
-version: 5
+version: 6
 source_of_truth: docs/strategy/MASTER_SOURCE_OF_TRUTH.md
 seed_note: >
   Machine-friendly backlog seed aligned to current main. Mirrors
@@ -26,17 +26,9 @@ next_execution_backlog:
     title: "Add documented seller-side Obolos publishing and wallet-topup flow"
     why_now: "Buyer-side catalog, wallet balance, and slug calls now exist, so the next honest gap is completing the documented Obolos surface before generalizing to more providers."
   - priority: P1
-    story_id: T5-E1-S1
-    title: "Push policy toward one broader runtime action boundary"
-    why_now: "Builder guardrails, review execution policy, and gateway policy are all deterministic now, so the next architectural move is unifying them more deeply instead of adding another isolated policy branch."
-  - priority: P1
     story_id: T6-E2-S1
     title: "Deepen persisted runtime telemetry beyond current product-job summaries"
     why_now: "Release readiness, provider outcomes, and product-job telemetry now exist, so operatorization needs richer ongoing runtime history."
-  - priority: P1
-    story_id: T6-E1-S1
-    title: "Improve real cost estimation and operator cost feedback"
-    why_now: "Runtime cost ledger is durable enough that the next useful step is improving quality of estimates, not just recording more of the same."
   - priority: P2
     story_id: T7-E1-S1
     title: "Expand the gateway contract beyond one-provider Phase 2 semantics"
@@ -452,9 +444,9 @@ themes:
         stories:
           - id: T5-E1-S1
             name: Extend policy model to job, artifact, delivery, and gateway decisions
-            status: mostly_complete
-            current_state: Shared policy now covers deterministic job-persistence, artifact-retention, delivery, review-gate, and external-gateway defaults, and those policies surface through control-plane persistence, artifact queries, reporting, and delivery metadata.
-            missing: Repository/diff execution and broader runtime actions are still not enforced through one shared policy engine.
+            status: complete_for_phase
+            current_state: Shared policy now covers deterministic job-persistence, artifact-retention, delivery, review-gate, and external-gateway defaults, and those policies surface through control-plane persistence, artifact queries, reporting, and delivery metadata. RuntimeActionRequest and evaluate_runtime_action() now provide a broader runtime action boundary for policy evaluation.
+            missing: Full cross-domain enforcement engine remains separate scope.
           - id: T5-E1-S2
             name: Keep policy deny-by-default across execution modes
             status: mostly_complete
@@ -536,9 +528,9 @@ themes:
         stories:
           - id: T6-E1-S1
             name: Record per-job model usage and token cost
-            status: mostly_complete
-            current_state: Build and review jobs now persist per-job usage, token, and cost data into the shared control-plane ledger, and the orchestrator, CLI, and operator report expose recent ledger entries plus total recorded cost.
-            missing: Budgets, escalation controls, and operator margin hints still sit outside the ledger.
+            status: complete_for_phase
+            current_state: Build and review jobs now persist per-job usage, token, and cost data into the shared control-plane ledger, and the orchestrator, CLI, and operator report expose recent ledger entries plus total recorded cost. A cost accuracy feedback loop now validates estimates against actual recorded costs.
+            missing: Richer real-time cost accuracy dashboards remain future scope.
           - id: T6-E1-S2
             name: Add hard budget, soft budget, and stop-loss behavior
             status: complete_for_phase

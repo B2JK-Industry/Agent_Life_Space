@@ -357,9 +357,9 @@ Goal: ensure all valuable workflows remain controlled and auditable.
 Stories:
 - T5-E1-S1: Extend policy model to job, artifact, delivery, and external gateway
   decisions.
-  - status: `mostly_complete`
-  - current_state: Shared policy now covers deterministic job-persistence, artifact-retention, delivery, review-gate, and external-gateway defaults, and those policies surface through control-plane persistence, artifact queries, reporting, and delivery metadata.
-  - missing: Repository/diff execution and broader runtime actions are still not enforced through one shared policy engine.
+  - status: `complete_for_phase`
+  - current_state: Shared policy now covers deterministic job-persistence, artifact-retention, delivery, review-gate, and external-gateway defaults, and those policies surface through control-plane persistence, artifact queries, reporting, and delivery metadata. RuntimeActionRequest and evaluate_runtime_action() now provide a broader runtime action boundary for policy evaluation.
+  - missing: Full cross-domain enforcement engine remains separate scope.
 - T5-E1-S2: Keep policy deny-by-default across execution modes.
   - status: `mostly_complete`
   - current_state: Deny-by-default is now explicit across review execution,
@@ -429,7 +429,7 @@ Stories:
 ## Theme T6: Cost, Usage, And Observability
 
 - status: `in_progress`
-- approx_progress: 91%
+- approx_progress: 93%
 
 Goal: make the system operable, measurable, and economically sane.
 
@@ -437,9 +437,9 @@ Goal: make the system operable, measurable, and economically sane.
 
 Stories:
 - T6-E1-S1: Record per-job model usage and token cost.
-  - status: `mostly_complete`
-  - current_state: Build and review jobs now persist per-job usage, token, and cost data into the shared control-plane ledger, and the orchestrator/CLI/operator report expose recent ledger entries and total recorded cost.
-  - missing: Budgets, escalation controls, and operator margin hints still sit outside the ledger.
+  - status: `complete_for_phase`
+  - current_state: Build and review jobs now persist per-job usage, token, and cost data into the shared control-plane ledger, and the orchestrator/CLI/operator report expose recent ledger entries and total recorded cost. A cost accuracy feedback loop now validates estimates against actual recorded costs.
+  - missing: Richer real-time cost accuracy dashboards remain future scope.
 - T6-E1-S2: Add hard budget, soft budget, and stop-loss behavior.
   - status: `complete_for_phase`
   - current_state: `BudgetPolicy` now drives hard-cap, soft-cap, stop-loss, and
