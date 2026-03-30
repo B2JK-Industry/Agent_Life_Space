@@ -99,7 +99,7 @@ Response -> Telegram + memory + learning
 | `control/` | Control-plane queries, runtime model, release readiness gate | Stable |
 | `work/` | Isolated workspaces | Beta |
 
-~17,300 lines of code. Details: **[Modules wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Modules)**
+~39,000 lines of code. Details: **[Modules wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Modules)**
 
 ## Security
 

@@ -88,7 +88,7 @@ Každý tool má capability manifest:
 - Každá transakcia: propose → approve → complete
 - Human-in-the-loop povinný
 - Žiadne smart contracty, DeFi, trading
-- Budget policy (zatiaľ nie implementované): hard cap, soft cap, approval cap
+- Budget policy (implementované v agent/finance/budget_policy.py): hard cap, soft cap, approval cap
 
 ## Čo agent NIKDY nesmie robiť
 
@@ -103,7 +103,7 @@ Každý tool má capability manifest:
 ## Známe limity
 
 - Tool policy je statická — žiadne runtime learning na security rules
-- Approval inbox zatiaľ neexistuje (TODO)
+- Approval inbox implementovaný v agent/core/approval.py + approval_storage.py
 - Audit log je in-memory ring buffer, nie persistent
 - Red-team test suite zatiaľ nie je (TODO)
 - Multi-step escalation attacks nie sú testované (TODO)

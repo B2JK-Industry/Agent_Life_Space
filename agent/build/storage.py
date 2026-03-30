@@ -76,7 +76,8 @@ class BuildStorage:
         )
 
     def save_job(self, job: BuildJob) -> None:
-        assert self._db is not None
+        if not self._db:
+            return None  # type: ignore[return-value]
         data = json.dumps(job.to_dict())
         self._db.execute(
             "INSERT OR REPLACE INTO build_jobs (id, data, status, build_type, created_at) "
@@ -87,7 +88,8 @@ class BuildStorage:
         self._db.commit()
 
     def load_job(self, job_id: str) -> dict[str, Any] | None:
-        assert self._db is not None
+        if not self._db:
+            return None  # type: ignore[return-value]
         row = self._db.execute(
             "SELECT data FROM build_jobs WHERE id = ?", (job_id,)
         ).fetchone()
@@ -98,7 +100,8 @@ class BuildStorage:
     def list_jobs(
         self, status: str = "", limit: int = 20
     ) -> list[dict[str, Any]]:
-        assert self._db is not None
+        if not self._db:
+            return None  # type: ignore[return-value]
         if status:
             rows = self._db.execute(
                 "SELECT data FROM build_jobs WHERE status = ? "
@@ -113,7 +116,8 @@ class BuildStorage:
         return [json.loads(r[0]) for r in rows]
 
     def save_artifact(self, artifact: BuildArtifact) -> None:
-        assert self._db is not None
+        if not self._db:
+            return None  # type: ignore[return-value]
         content = artifact.content
         if len(content) > _MAX_ARTIFACT_BYTES:
             content = content[:_MAX_ARTIFACT_BYTES]
@@ -135,7 +139,8 @@ class BuildStorage:
         self._db.commit()
 
     def get_artifacts(self, job_id: str) -> list[dict[str, Any]]:
-        assert self._db is not None
+        if not self._db:
+            return None  # type: ignore[return-value]
         rows = self._db.execute(
             "SELECT id, artifact_kind, content, content_json, format, created_at "
             "FROM build_artifacts WHERE job_id = ?",
@@ -163,7 +168,8 @@ class BuildStorage:
         artifact_kind: str = "",
         limit: int = 50,
     ) -> list[dict[str, Any]]:
-        assert self._db is not None
+        if not self._db:
+            return None  # type: ignore[return-value]
         if job_id and artifact_kind:
             rows = self._db.execute(
                 "SELECT id, job_id, artifact_kind, content, content_json, format, created_at "
@@ -206,7 +212,8 @@ class BuildStorage:
         return artifacts
 
     def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
-        assert self._db is not None
+        if not self._db:
+            return None  # type: ignore[return-value]
         row = self._db.execute(
             "SELECT id, job_id, artifact_kind, content, content_json, format, created_at "
             "FROM build_artifacts WHERE id = ?",

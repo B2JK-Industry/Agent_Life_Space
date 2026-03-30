@@ -38,7 +38,7 @@ class ActionPhase(str, Enum):
 @dataclass
 class ActionEnvelope:
     """
-    Immutable record of a single agent action.
+    Mutable lifecycle record of a single agent action.
     Created at request time, updated through each phase.
     """
 

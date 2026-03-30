@@ -2,9 +2,7 @@
 Agent Life Space — Self-RAG (Retrieval Augmented Generation)
 
 Pred LLM volaním hľadaj v lokálnych dátach:
-    1. Knowledge base (.md súbory) — zakódované cez embeddingy
-    2. Semantic memory (SQLite) — fakty a vzory
-    3. Procedural memory — postupy
+    - Knowledge base (.md súbory z agent/brain/knowledge/) — zakódované cez embeddingy
 
 Ak nájdeme dostatočne relevantný match:
     - HIGH (>0.85): vráť priamo, žiadne LLM

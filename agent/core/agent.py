@@ -503,7 +503,7 @@ class AgentOrchestrator:
     async def _maintenance_loop(self) -> None:
         """Periodic maintenance tasks."""
         while self._running:
-            # Every 6 hours: memory decay
+            # Every hour: memory decay
             await self.job_runner.schedule(
                 "memory_decay",
                 config=JobConfig(timeout_seconds=30, max_retries=1),

@@ -132,7 +132,7 @@ class EvidenceExportService:
                 "workspace_count": len(workspaces),
                 "cost_entry_count": len(cost_entries),
                 "recorded_cost_usd": round(
-                    sum(item["usage"]["total_cost_usd"] for item in cost_entries),
+                    sum(item.get("usage", {}).get("total_cost_usd", 0.0) for item in cost_entries),
                     6,
                 ),
             },

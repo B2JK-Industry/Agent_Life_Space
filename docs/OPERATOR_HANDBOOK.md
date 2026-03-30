@@ -6,7 +6,7 @@ Praktický sprievodca pre vlastníka Agent Life Space.
 
 | Schopnosť | Stav | Poznámka |
 |-----------|------|----------|
-| Odpovedať na otázky (SK/EN) | Stable | 7-layer cascade |
+| Odpovedať na otázky (SK/EN) | Stable | 9-layer cascade |
 | Spúšťať kód v sandboxe | Stable | Docker, 256MB, no network |
 | Pamätať si fakty | Stable | Provenance model, FTS5 |
 | Spravovať úlohy | Stable | Create/list/complete |

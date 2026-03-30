@@ -150,16 +150,22 @@ def export_audit_trail(transactions: list[dict[str, Any]]) -> str:
     if not transactions:
         return "id,type,status,amount_usd,description,category,created_at\n"
 
+    def _csv_field(value: str) -> str:
+        s = str(value)
+        if s.startswith(("=", "+", "-", "@")):
+            s = "'" + s
+        return '"' + s.replace('"', '""') + '"'
+
     lines = ["id,type,status,amount_usd,description,category,created_at"]
     for tx in transactions:
         line = ",".join([
-            tx.get("id", ""),
-            tx.get("type", ""),
-            tx.get("status", ""),
-            str(tx.get("amount_usd", 0)),
-            f'"{tx.get("description", "")}"',
-            tx.get("category", ""),
-            tx.get("created_at", ""),
+            _csv_field(tx.get("id", "")),
+            _csv_field(tx.get("type", "")),
+            _csv_field(tx.get("status", "")),
+            _csv_field(str(tx.get("amount_usd", 0))),
+            _csv_field(tx.get("description", "")),
+            _csv_field(tx.get("category", "")),
+            _csv_field(tx.get("created_at", "")),
         ])
         lines.append(line)
     return "\n".join(lines)

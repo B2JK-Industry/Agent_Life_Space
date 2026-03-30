@@ -274,19 +274,8 @@ class MemoryConsolidation:
         for entry in inferred:
             if entry.access_count >= min_access_count and entry.confidence >= 0.7:
                 entry.verify(source="consolidation_promotion")
-                if self._store._db:
-                    await self._store._db.execute(
-                        "UPDATE memories SET provenance=?, metadata=? WHERE id=?",
-                        (
-                            entry.provenance.value,
-                            __import__("orjson").dumps(entry.metadata).decode(),
-                            entry.id,
-                        ),
-                    )
+                await self._store.update_entry(entry)
                 promoted += 1
-
-        if self._store._db and promoted:
-            await self._store._db.commit()
 
         if promoted:
             logger.info("memory_promoted", count=promoted, threshold=min_access_count)
@@ -314,19 +303,8 @@ class MemoryConsolidation:
                 and entry.last_accessed < cutoff
             ):
                 entry.mark_stale(reason=f"not accessed in {max_age_days} days")
-                if self._store._db:
-                    await self._store._db.execute(
-                        "UPDATE memories SET provenance=?, metadata=? WHERE id=?",
-                        (
-                            entry.provenance.value,
-                            __import__("orjson").dumps(entry.metadata).decode(),
-                            entry.id,
-                        ),
-                    )
+                await self._store.update_entry(entry)
                 stale_count += 1
-
-        if self._store._db and stale_count:
-            await self._store._db.commit()
 
         if stale_count:
             logger.info("memory_stale_detected", count=stale_count)

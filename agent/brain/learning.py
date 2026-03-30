@@ -20,6 +20,7 @@ Toto je most medzi "myslím" a "viem".
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 from typing import Any
 
@@ -31,27 +32,28 @@ from agent.core.paths import get_project_root
 
 logger = structlog.get_logger(__name__)
 
-# Project root — resolved from env, no hardcoded path
+# Project root — resolved from env, shell-quoted for safe interpolation
 _PROJECT_ROOT = get_project_root()
+_SAFE_ROOT = shlex.quote(str(_PROJECT_ROOT))
 
 # Test commands for each skill — used by try_skill()
 _SKILL_TESTS: dict[str, str] = {
     "file_write": "echo 'john_test' > /tmp/john_skill_test.txt && cat /tmp/john_skill_test.txt && rm /tmp/john_skill_test.txt",
     "file_read": "cat /etc/hostname",
-    "git_commit": f"cd {_PROJECT_ROOT} && git status",
-    "git_status": f"cd {_PROJECT_ROOT} && git status",
+    "git_commit": f"cd {_SAFE_ROOT} && git status",
+    "git_status": f"cd {_SAFE_ROOT} && git status",
     "system_health": "free -h && df -h /",
     "process_check": "ps aux --sort=-%mem | head -5",
     "curl": "curl -s -o /dev/null -w '%{http_code}' https://httpbin.org/get",
     "python_run": "python3 -c 'print(\"hello from john\")'",
-    "pytest": f"cd {_PROJECT_ROOT} && python3 -m pytest tests/ -q --tb=no 2>&1 | tail -1",
+    "pytest": f"cd {_SAFE_ROOT} && python3 -m pytest tests/ -q --tb=no 2>&1 | tail -1",
     "pip_install": "pip3 list 2>/dev/null | head -3",
     "docker_run": "docker --version 2>/dev/null || echo 'docker not available'",
     "maintenance": "python3 -c 'import psutil; print(f\"CPU: {psutil.cpu_percent()}%, RAM: {psutil.virtual_memory().percent}%\")'",
     "telegram_send": "echo 'telegram_send: ok'",
-    "memory_store": f"cd {_PROJECT_ROOT} && python3 -c 'print(\"memory_store: ok\")'",
-    "memory_query": f"cd {_PROJECT_ROOT} && python3 -c 'print(\"memory_query: ok\")'",
-    "task_create": f"cd {_PROJECT_ROOT} && python3 -c 'print(\"task_create: ok\")'",
+    "memory_store": f"cd {_SAFE_ROOT} && python3 -c 'print(\"memory_store: ok\")'",
+    "memory_query": f"cd {_SAFE_ROOT} && python3 -c 'print(\"memory_query: ok\")'",
+    "task_create": f"cd {_SAFE_ROOT} && python3 -c 'print(\"task_create: ok\")'",
     "web_scraping": "curl -s -o /dev/null -w '%{http_code}' https://example.com",
     "github_api": "curl -s -o /dev/null -w '%{http_code}' https://api.github.com",
     "github_create_issue": "echo 'requires token — skip auto-test'",
