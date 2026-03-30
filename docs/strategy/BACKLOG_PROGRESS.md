@@ -7,7 +7,7 @@ This file tracks current strategic execution progress against:
 
 Assessment basis:
 - branch: `main` (after the documented buyer-side Obolos API-call slice)
-- interpretation date: `2026-03-26`
+- interpretation date: `2026-03-30`
 
 Important:
 - this is a product-and-architecture progress snapshot, not a merge history log
@@ -225,6 +225,9 @@ Status legend:
 - v1.20.0 adds execution policy enrichment for review/verify/deliver planner
   phases, plus `/jobs` and `/deliver` Telegram commands for product job listing
   and delivery management directly from Telegram.
+- v1.21.0 adds RuntimeActionRequest and evaluate_runtime_action() for broader
+  runtime action policy evaluation (T5-E1-S1), plus a cost accuracy feedback
+  loop for validating cost estimates against actual recorded costs (T6-E1-S1).
 
 ## Theme Status
 
@@ -279,7 +282,7 @@ Status legend:
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T5-E1 Policy Control Plane | in_progress | 99% | Tool policy deny-by-default now sits alongside deterministic build review-gate, delivery, review-execution, source-aware build-execution policy profiles, capability-scoped builder guardrails, shared job-persistence, artifact-retention, external-gateway policy models, explicit provider receipt validation, provider-outcome classification, deterministic release-readiness thresholds, and structured denial payloads across tool, web, social/API, finance-budget, build, review, export, and reporting flows. | Build and broader runtime execution are still not governed by one shared enforcement engine. |
+| T5-E1 Policy Control Plane | in_progress | 99% | Tool policy deny-by-default now sits alongside deterministic build review-gate, delivery, review-execution, source-aware build-execution policy profiles, capability-scoped builder guardrails, shared job-persistence, artifact-retention, external-gateway policy models, explicit provider receipt validation, provider-outcome classification, deterministic release-readiness thresholds, RuntimeActionRequest and evaluate_runtime_action() for broader runtime action policy, and structured denial payloads across tool, web, social/API, finance-budget, build, review, export, and reporting flows. | Full cross-domain enforcement engine remains separate scope. |
 | T5-E2 Approval Model | in_progress | 90% | Approval queue, strict delivery approval, persistent ApprovalStorage, and query filters now cover job/artifact/workspace/bundle linkage across review and build delivery flows, and unified intake/build/review delivery can now require multi-step approval for budget-sensitive, high-risk, or higher-severity work. | Broader policy/action unification and richer approval chains remain partial. |
 | T5-E3 Client-Safe Output | mostly_complete | 70% | Full redaction pipeline, requester/source stripped | Wider system outputs beyond reviewer |
 
@@ -287,7 +290,7 @@ Status legend:
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T6-E1 Cost Ledger | in_progress | 84% | Per-job usage, token, and cost entries now persist into the shared control-plane ledger for build and review jobs, finance budget state exposes hard/soft/stop-loss posture plus warnings/forecast, unified intake enforces runtime budget blocks, brain-side escalation is budget-aware, and the operator report surfaces budget posture, approval caps, and margin hints. | No live operator UI or richer real-cost estimation yet |
+| T6-E1 Cost Ledger | in_progress | 86% | Per-job usage, token, and cost entries now persist into the shared control-plane ledger for build and review jobs, finance budget state exposes hard/soft/stop-loss posture plus warnings/forecast, unified intake enforces runtime budget blocks, brain-side escalation is budget-aware, cost accuracy feedback loop validates estimates against actuals, and the operator report surfaces budget posture, approval caps, and margin hints. | No live operator UI yet |
 | T6-E2 Runtime Observability | in_progress | 92% | Status and traces exist locally, including orchestrator-visible build/review counters, persisted plan/trace/delivery telemetry, shared job/artifact/workspace queries, approval backlog visibility with blocked reasons, operator-facing report output, plus workspace health, worker execution, persisted job, retention posture, cost, and product-job duration/retry/failure summaries. | No live UI, push updates, or deeper cross-runtime telemetry yet |
 | T6-E3 Quality Evals | mostly_complete | 99% | Tests are strong, review-eval smoke coverage guards handoff artifacts and client-safe redaction in CI, durable golden review verdict cases pin clean, secret, and unsafe-repo outcomes, runtime quality evaluation now records precision, false-positive/false-negative counts, release labels, duration, and regression deltas against the previous baseline into the control plane and operator report, and the same telemetry now drives a deterministic CLI/CI release-readiness gate. | No live longitudinal dashboard or broader non-review latency trend surface yet |
 

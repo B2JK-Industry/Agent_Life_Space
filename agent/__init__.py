@@ -1,3 +1,3 @@
 # Agent Life Space
 # Self-hosted autonomous agent environment
-__version__ = "1.20.0"
+__version__ = "1.21.0"

@@ -1235,6 +1235,25 @@ class TelegramHandler:
                 f"Pending proposals: {bp.get('pending_proposals', 0)}"
             )
 
+        if section == "cost":
+            ca = report.get("cost_accuracy", {})
+            if not ca or ca.get("sample_size", 0) == 0:
+                return "*Cost Accuracy:* Žiadne dáta. Spusti joby cez `/intake` aby sa zbierali odhady vs skutočné náklady."
+            lines = [
+                "*Cost Accuracy:*",
+                f"Sample: {ca['sample_size']} jobov",
+                f"Celkový odhad: ${ca['total_estimated_usd']:.2f}",
+                f"Skutočné náklady: ${ca['total_actual_usd']:.2f}",
+                f"Priemerný pomer: {ca['avg_ratio']:.2f}x",
+                f"Presnosť: {ca['accuracy_pct']:.0f}%",
+            ]
+            for comp in ca.get("comparisons", [])[:5]:
+                lines.append(
+                    f"• `{comp['job_id'][:12]}` est=${comp['estimated_usd']:.2f} "
+                    f"act=${comp['actual_usd']:.2f} ({comp['ratio']:.2f}x)"
+                )
+            return "\n".join(lines)
+
         # Default: stručný overview
         lines = [
             "*Operator Report:*",
@@ -1256,7 +1275,7 @@ class TelegramHandler:
                 lines.append(f"• `{kind}` — {title}")
         else:
             lines.append("\nŽiadne attention items. ✓")
-        lines.append("\n`/report inbox` | `/report budget`")
+        lines.append("\n`/report inbox` | `/report budget` | `/report cost`")
         return "\n".join(lines)
 
     async def _cmd_intake(self, args: str) -> str:

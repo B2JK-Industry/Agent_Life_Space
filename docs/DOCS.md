@@ -61,9 +61,13 @@ python -m pytest tests/ -q   # Testy
 
 ## Verzia
 
-Aktuálna: **v1.20.0** — Phase 3: runtime capability binding + delivery workflow.
+Aktuálna: **v1.21.0** — Phase 3: cost feedback + unified policy boundary.
 
-Nové v `v1.20.0`:
+Nové v `v1.21.0`:
+- Cost accuracy feedback — estimated vs actual porovnanie (`/report cost`)
+- Unified policy boundary — `evaluate_runtime_action()` entry point
+
+Predchádzajúce v `v1.20.0`:
 - `/jobs` — product job listing a detail z Telegramu
 - `/deliver` — delivery status, detail, a gateway send z Telegramu
 - Review capability assignments enriched s execution/delivery policy binding

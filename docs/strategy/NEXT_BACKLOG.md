@@ -5,7 +5,7 @@ This file is the near-term execution backlog derived from the current state of
 
 Assessment basis:
 - branch: `main`
-- interpretation date: `2026-03-26`
+- interpretation date: `2026-03-30`
 - baseline: after the documented buyer-side Obolos API-call slice
 
 ## Ready Now
@@ -24,18 +24,9 @@ Assessment basis:
    exist, so the next honest provider gap is completing more of the documented
    Obolos surface before we generalize to more marketplaces.
 
-4. `T5-E1-S1` Push policy toward one broader runtime action boundary.
-   Why now: builder guardrails, review execution policy, and gateway policy are
-   all deterministic now, so the next architectural move is unifying them more
-   deeply instead of adding another isolated policy branch.
-
-5. `T6-E2-S1` Deepen persisted runtime telemetry beyond current product-job summaries.
+4. `T6-E2-S1` Deepen persisted runtime telemetry beyond current product-job summaries.
    Why now: release readiness, provider outcomes, and product-job telemetry now
    exist, so operatorization needs richer ongoing runtime history.
-
-6. `T6-E1-S1` Improve real cost estimation and operator cost feedback.
-   Why now: runtime cost ledger is durable enough that the next useful step is
-   improving quality of estimates, not just recording more of the same.
 
 ### P2
 
@@ -91,6 +82,13 @@ Assessment basis:
 - `T4-E2-S3` Review/verify/deliver planner phases now bind to execution policies
   and delivery policies (not just planner profiles). Execution policy enrichment
   completed alongside `/jobs` and `/deliver` Telegram commands (v1.20.0).
+
+- `T5-E1-S1` Policy model now includes RuntimeActionRequest and
+  evaluate_runtime_action(), pushing policy toward a broader runtime action
+  boundary instead of isolated per-domain branches (v1.21.0).
+- `T6-E1-S1` Per-job cost recording now includes a cost accuracy feedback loop
+  that validates estimates against actual recorded costs, improving operator
+  cost posture beyond raw ledger entries (v1.21.0).
 
 ## Exit Criteria For The Next Backlog Slice
 

@@ -10,6 +10,27 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.21.0] — 2026-03-30
+
+Phase 3: cost estimation feedback loop and unified runtime policy boundary.
+
+### Cost Estimation Feedback (T6-E1-S1)
+- `ControlPlaneStateService.get_cost_accuracy()` joins plan records with cost
+  ledger entries to compare estimated vs actual costs per job
+- Operator report now includes `cost_accuracy` section with sample size,
+  avg/median ratio, accuracy percentage, and per-job comparisons
+- `/report cost` Telegram subcommand for operator cost accuracy visibility
+- New `TraceRecordKind.COST_ACCURACY` for recording accuracy snapshots
+
+### Unified Policy Boundary (T5-E1-S1)
+- `RuntimeActionRequest` frozen dataclass describes any runtime action
+  (review, build, deliver, gateway_send, api_call) in a policy-neutral way
+- `evaluate_runtime_action()` dispatches to existing policy functions based on
+  action_type and returns a unified `RuntimePolicyDecision` with
+  allowed/blocked/warnings/applied_policies
+- Existing individual policy evaluate functions remain untouched as internal
+  implementation — no callers migrated, no interfaces changed
+
 ## [1.20.0] — 2026-03-30
 
 Phase 3: runtime capability binding and operator delivery workflow.

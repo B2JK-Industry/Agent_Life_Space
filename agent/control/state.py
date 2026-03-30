@@ -702,6 +702,65 @@ class ControlPlaneStateService:
             "recorded_cost_usd": total_recorded_cost,
         }
 
+    def get_cost_accuracy(self, *, limit: int = 50) -> dict[str, Any]:
+        """Compare estimated vs actual costs across recent jobs."""
+        self.initialize()
+        plans = self._storage.list_plan_records(status="", limit=limit)
+        cost_entries = self.list_cost_entries(limit=500)
+
+        # Index cost entries by job_id
+        cost_by_job: dict[str, float] = {}
+        for entry in cost_entries:
+            cost_by_job[entry.job_id] = cost_by_job.get(entry.job_id, 0.0) + entry.usage.total_cost_usd
+
+        comparisons: list[dict[str, Any]] = []
+        for plan_data in plans:
+            plan = JobPlanRecord.from_dict(plan_data) if isinstance(plan_data, dict) else plan_data
+            job_id = plan.linked_job_id
+            if not job_id or job_id not in cost_by_job:
+                continue
+            estimated = plan.plan.get("budget", {}).get("estimated_cost_usd", 0.0) if isinstance(plan.plan, dict) else 0.0
+            if estimated <= 0:
+                continue
+            actual = cost_by_job[job_id]
+            ratio = actual / estimated if estimated > 0 else 0.0
+            comparisons.append({
+                "plan_id": plan.plan_id,
+                "job_id": job_id,
+                "estimated_usd": round(estimated, 4),
+                "actual_usd": round(actual, 4),
+                "ratio": round(ratio, 3),
+                "delta_usd": round(actual - estimated, 4),
+            })
+
+        if not comparisons:
+            return {
+                "comparisons": [],
+                "total_estimated_usd": 0.0,
+                "total_actual_usd": 0.0,
+                "avg_ratio": 0.0,
+                "accuracy_pct": 0.0,
+                "sample_size": 0,
+            }
+
+        total_estimated = sum(c["estimated_usd"] for c in comparisons)
+        total_actual = sum(c["actual_usd"] for c in comparisons)
+        avg_ratio = total_actual / total_estimated if total_estimated > 0 else 0.0
+        ratios = sorted(c["ratio"] for c in comparisons)
+        median_ratio = ratios[len(ratios) // 2] if ratios else 0.0
+        # Accuracy: 100% means perfect estimate; <100% means under-estimate, >100% over-estimate
+        accuracy_pct = round((1.0 - abs(1.0 - avg_ratio)) * 100, 1) if avg_ratio > 0 else 0.0
+
+        return {
+            "comparisons": comparisons,
+            "total_estimated_usd": round(total_estimated, 4),
+            "total_actual_usd": round(total_actual, 4),
+            "avg_ratio": round(avg_ratio, 3),
+            "median_ratio": round(median_ratio, 3),
+            "accuracy_pct": accuracy_pct,
+            "sample_size": len(comparisons),
+        }
+
     def _append_delivery_event(
         self,
         record: DeliveryRecord,
