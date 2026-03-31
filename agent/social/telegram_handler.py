@@ -1323,7 +1323,7 @@ class TelegramHandler:
 
         if section == "margin":
             try:
-                ms = self._agent.control_plane_state.get_margin_summary(limit=50)
+                ms = self._agent.control_plane.get_margin_summary(limit=50)
             except Exception as e:
                 return f"*Margin error:* {e!s}"
             if ms.get("total_jobs", 0) == 0:
@@ -1350,7 +1350,7 @@ class TelegramHandler:
                 return f"*Error:* '{parts[3]}' nie je platná suma."
             source = parts[4] if len(parts) > 4 else "manual"
             try:
-                job = self._agent.control_plane_state.record_job_revenue(
+                job = self._agent.control_plane.record_job_revenue(
                     job_id=job_id, revenue_usd=revenue, source=source,
                 )
             except Exception as e:
@@ -1584,7 +1584,7 @@ class TelegramHandler:
             from agent.control.recurring import RecurringWorkflowManager
 
             self._agent.recurring_workflows = RecurringWorkflowManager(
-                control_plane_state=getattr(self._agent, "control_plane_state", None),
+                control_plane_state=getattr(self._agent, "control_plane", None),
             )
         mgr = self._agent.recurring_workflows
         parts = args.strip().split(maxsplit=1)
@@ -1755,7 +1755,7 @@ class TelegramHandler:
             if args.strip().isdigit():
                 window_hours = max(1, min(168, int(args.strip())))  # 1h-7d
 
-            ts = self._agent.control_plane_state.get_telemetry_summary(
+            ts = self._agent.control_plane.get_telemetry_summary(
                 window_hours=window_hours,
             )
         except Exception as e:

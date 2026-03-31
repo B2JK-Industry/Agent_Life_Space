@@ -32,7 +32,7 @@ def mock_agent():
     agent.send_review_delivery_via_gateway = AsyncMock()
     agent.send_build_delivery_via_gateway = AsyncMock()
     # Control plane state for telemetry
-    agent.control_plane_state = MagicMock()
+    agent.control_plane = MagicMock()
     return agent
 
 
@@ -292,7 +292,7 @@ class TestReportDelivery:
 class TestTelemetryCommand:
 
     async def test_telemetry_no_data(self, handler, mock_agent):
-        mock_agent.control_plane_state.get_telemetry_summary.return_value = {
+        mock_agent.control_plane.get_telemetry_summary.return_value = {
             "snapshots": 0,
             "latest": None,
             "window_hours": 24,
@@ -301,7 +301,7 @@ class TestTelemetryCommand:
         assert "Žiadne dáta" in result
 
     async def test_telemetry_with_latest_only(self, handler, mock_agent):
-        mock_agent.control_plane_state.get_telemetry_summary.return_value = {
+        mock_agent.control_plane.get_telemetry_summary.return_value = {
             "snapshots": 0,
             "latest": TelemetrySnapshot(
                 jobs_completed=10,
@@ -317,7 +317,7 @@ class TestTelemetryCommand:
         assert "1 failed" in result
 
     async def test_telemetry_with_full_summary(self, handler, mock_agent):
-        mock_agent.control_plane_state.get_telemetry_summary.return_value = {
+        mock_agent.control_plane.get_telemetry_summary.return_value = {
             "snapshots": 5,
             "window_hours": 24,
             "trend": "stable",
@@ -348,18 +348,18 @@ class TestTelemetryCommand:
         assert "Aggregated" in result
 
     async def test_telemetry_custom_window(self, handler, mock_agent):
-        mock_agent.control_plane_state.get_telemetry_summary.return_value = {
+        mock_agent.control_plane.get_telemetry_summary.return_value = {
             "snapshots": 0,
             "latest": None,
             "window_hours": 48,
         }
         await handler.handle("/telemetry 48", user_id=1, chat_id=1)
-        mock_agent.control_plane_state.get_telemetry_summary.assert_called_once_with(
+        mock_agent.control_plane.get_telemetry_summary.assert_called_once_with(
             window_hours=48,
         )
 
     async def test_telemetry_degrading_trend(self, handler, mock_agent):
-        mock_agent.control_plane_state.get_telemetry_summary.return_value = {
+        mock_agent.control_plane.get_telemetry_summary.return_value = {
             "snapshots": 6,
             "window_hours": 24,
             "trend": "degrading",
