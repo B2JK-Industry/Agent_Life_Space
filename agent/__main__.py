@@ -76,6 +76,15 @@ async def run_agent(data_dir: str = "agent") -> None:
     os.environ.setdefault("AGENT_DATA_DIR", data_dir)
     _check_pidfile()
 
+    # Redirect logs to file BEFORE anything else if terminal mode is active
+    enable_terminal = (
+        os.environ.get("AGENT_TERMINAL", "0") == "1"
+        or "--terminal" in sys.argv
+    )
+    if enable_terminal:
+        from agent.social.terminal_repl import redirect_logs_to_file
+        redirect_logs_to_file()
+
     agent = AgentOrchestrator(data_dir=data_dir)
 
     # Handle shutdown signals
