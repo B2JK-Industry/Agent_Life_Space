@@ -61,6 +61,7 @@ ignore = [
 "agent/**/__main__.py" = ["S603", "S607"]
 "agent/memory/persistent_conversation.py" = ["S101", "S608"]  # assert for DB preconditions; SQL built safely with params
 "agent/projects/manager.py" = ["S101"]  # assert for DB preconditions
+"agent/cli_client.py" = ["S310"]  # urllib.request — local API client, controlled URLs
 
 [tool.mypy]
 python_version = "3.11"
