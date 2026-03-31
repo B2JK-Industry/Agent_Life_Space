@@ -10,6 +10,22 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.21.1] — 2026-03-30
+
+Deployment portability and security fix.
+
+### Portability
+- **consolidation.py**: Identity and server triggers now derived dynamically from
+  `get_agent_identity()` instead of hardcoded "john", "b2jk", "agentlifespace"
+- **redaction.py**: Hostname redaction patterns now built dynamically from
+  `AGENT_SERVER_NAME` — non-default deployments no longer leak hostnames in
+  client-safe bundles
+- **Dockerfile**: Fixed build order — source copied before `pip install`
+- **docker-compose.yml**: Added 7 missing env vars (identity, API key, sandbox)
+- **.env.example**: Added `AGENT_SANDBOX_ONLY`, `LLM_BACKEND`, section headers
+- **pyproject.toml**: Removed 4 unused dependencies
+- **SECURITY.md**: Supported version updated to v1.21.x
+
 ## [1.21.0] — 2026-03-30
 
 Phase 3: cost estimation feedback loop and unified runtime policy boundary.

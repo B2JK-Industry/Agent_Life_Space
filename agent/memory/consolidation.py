@@ -34,8 +34,12 @@ from agent.memory.store import MemoryEntry, MemoryStore, MemoryType, ProvenanceS
 logger = structlog.get_logger(__name__)
 
 def _get_pattern_extractors() -> dict[str, dict[str, Any]]:
-    owner_name = get_agent_identity().owner_name.lower()
-    owner_full_name = get_agent_identity().owner_full_name.lower()
+    identity = get_agent_identity()
+    owner_name = identity.owner_name.lower()
+    owner_full_name = identity.owner_full_name.lower()
+    agent_name = identity.agent_name.lower()
+    server_name = identity.server_name.lower()
+
     owner_tokens = {t for t in [owner_name, owner_full_name] if t and t != "owner"}
     owner_pref_triggers = [
         "owner chce", "owner preferuje", "owner zdôraznil", "owner povedal",
@@ -43,6 +47,26 @@ def _get_pattern_extractors() -> dict[str, dict[str, Any]]:
         "user wants", "user prefers", "the owner said",
     ]
     owner_pref_triggers.extend(owner_tokens)
+
+    # Dynamic identity triggers from configured agent name
+    identity_triggers = [
+        "som", "ja ", "moje", "moja", "mám", "viem",
+        "bytosť", "agent", "identity",
+    ]
+    if agent_name and agent_name not in ("agent", "agent life space"):
+        identity_triggers.append(agent_name)
+
+    # Dynamic server triggers from configured server name
+    system_triggers = [
+        "server", "cpu", "ram", "disk", "ubuntu", "port", "ip",
+        "uptime", "healthy", "module", "process", "pid", "service",
+    ]
+    if server_name and server_name not in ("server", "self-hosted server"):
+        # Add server name and its tokens (e.g., "b2jk-agentlifespace" → "b2jk", "agentlifespace")
+        system_triggers.append(server_name)
+        for token in server_name.replace("-", " ").replace("_", " ").split():
+            if len(token) > 2 and token not in system_triggers:
+                system_triggers.append(token)
 
     return {
         "user_preference": {
@@ -60,11 +84,7 @@ def _get_pattern_extractors() -> dict[str, dict[str, Any]]:
             "tag": "skill_procedure",
         },
         "system_fact": {
-            "triggers": [
-                "server", "cpu", "ram", "disk", "ubuntu", "port", "ip",
-                "uptime", "healthy", "module", "process", "pid", "service",
-                "b2jk", "agentlifespace",
-            ],
+            "triggers": system_triggers,
             "target_type": MemoryType.SEMANTIC,
             "tag": "system_fact",
         },
@@ -93,10 +113,7 @@ def _get_pattern_extractors() -> dict[str, dict[str, Any]]:
             "tag": "communication_pattern",
         },
         "identity": {
-            "triggers": [
-                "john", "som", "ja ", "moje", "moja", "mám", "viem",
-                "bytosť", "agent", "identity",
-            ],
+            "triggers": identity_triggers,
             "target_type": MemoryType.SEMANTIC,
             "tag": "self_knowledge",
         },

@@ -7,12 +7,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl docker.io \
     && rm -rf /var/lib/apt/lists/*
 
-# Python deps
+# Copy source first, then install (non-editable)
 COPY pyproject.toml .
-RUN pip install --no-cache-dir -e . && \
+COPY agent/ agent/
+COPY README.md .
+RUN pip install --no-cache-dir . && \
     pip install --no-cache-dir sentence-transformers
 
-# Copy source
+# Copy remaining files (docs, tests, config)
 COPY . .
 
 # Create data dirs

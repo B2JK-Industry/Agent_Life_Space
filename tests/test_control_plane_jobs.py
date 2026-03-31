@@ -1564,6 +1564,11 @@ class _DictRecord:
 
 
 class TestEvidenceExport:
+    @classmethod
+    def setup_class(cls):
+        from agent.review.redaction import add_hostname_pattern
+        add_hostname_pattern(r"b2jk-\w+")
+
     def test_export_job_links_artifacts_to_retention_approvals_and_workspaces(self):
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             control = ControlPlaneStateService(ControlPlaneStorage(db_path=f.name))

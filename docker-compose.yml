@@ -9,6 +9,13 @@ services:
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
       - AGENT_VAULT_KEY=${AGENT_VAULT_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - AGENT_NAME=${AGENT_NAME:-}
+      - AGENT_SERVER_NAME=${AGENT_SERVER_NAME:-}
+      - AGENT_OWNER_NAME=${AGENT_OWNER_NAME:-}
+      - AGENT_OWNER_FULL_NAME=${AGENT_OWNER_FULL_NAME:-}
+      - AGENT_DEFAULT_LANGUAGE=${AGENT_DEFAULT_LANGUAGE:-}
+      - AGENT_API_KEY=${AGENT_API_KEY:-}
+      - AGENT_SANDBOX_ONLY=${AGENT_SANDBOX_ONLY:-1}
     volumes:
       - agent-data:/app/agent/memory
       - agent-tasks:/app/agent/tasks

@@ -1119,6 +1119,12 @@ class TestClientSafeExport:
 class TestRedactionPolicy:
     """Redaction policy must be thorough and testable independently."""
 
+    @classmethod
+    def setup_class(cls):
+        """Register test hostname pattern for b2jk-* redaction tests."""
+        from agent.review.redaction import add_hostname_pattern
+        add_hostname_pattern(r"b2jk-\w+")
+
     def test_redact_paths(self):
         from agent.review.redaction import redact_paths
         assert "[PATH_REDACTED]" in redact_paths("file at /Users/daniel/code/app.py")
