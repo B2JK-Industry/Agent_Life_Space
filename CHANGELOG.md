@@ -10,6 +10,26 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.24.1] — 2026-03-31
+
+Runtime bug fixes for production deployment.
+
+### Fixed
+- **Bug #1**: "Zapamätaj si" / "Remember" messages now handled by dispatcher
+  instead of LLM — zero token cost, no errormaxturns on CLI backend
+- **Bug #2**: Dispatcher catches Slovak queries ("aký je tvoj stav",
+  "aké úlohy máš", "koľko máš peňazí") — saves ~$0.05/query
+- **Bug #3**: Runtime facts (tasks, memory, health, budget) injected into LLM
+  prompt to prevent confabulation about agent state
+- **Bug #4**: INTERNAL response class now allowed on FULL trust channels
+  (owner in private chat) — no more silent response filtering
+- **Bug #5**: `/queue` no longer crashes with KeyError 'total_processed' —
+  fixed to use 'total_attempted' from AgentLoop.get_status()
+- **Bug #6**: `/jobs` now shows correct job IDs and types instead of "? ?" —
+  fixed dict key mapping (job_id/job_kind vs id/kind)
+- **Bug #7**: `/report` now shows correct completed/failed job counts —
+  added completed_jobs and failed_jobs to report summary
+
 ## [1.24.0] — 2026-03-31
 
 Phase 3 completion: file upload support and x402 payment handling.
