@@ -571,6 +571,11 @@ class ProductJobRecord:
     retry_count: int = 0
     failure_count: int = 0
     usage: UsageSummary = field(default_factory=lambda: UsageSummary())
+    revenue_usd: float = 0.0
+    margin_usd: float = 0.0
+    revenue_source: str = ""
+    pipeline_id: str = ""
+    workflow_id: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -595,6 +600,11 @@ class ProductJobRecord:
             "retry_count": self.retry_count,
             "failure_count": self.failure_count,
             "usage": self.usage.to_dict(),
+            "revenue_usd": round(self.revenue_usd, 6),
+            "margin_usd": round(self.margin_usd, 6),
+            "revenue_source": self.revenue_source,
+            "pipeline_id": self.pipeline_id,
+            "workflow_id": self.workflow_id,
             "metadata": dict(self.metadata),
         }
 
@@ -621,6 +631,11 @@ class ProductJobRecord:
             retry_count=int(data.get("retry_count", 0)),
             failure_count=int(data.get("failure_count", 0)),
             usage=UsageSummary.from_dict(data.get("usage", {})),
+            revenue_usd=float(data.get("revenue_usd", 0.0)),
+            margin_usd=float(data.get("margin_usd", 0.0)),
+            revenue_source=data.get("revenue_source", ""),
+            pipeline_id=data.get("pipeline_id", ""),
+            workflow_id=data.get("workflow_id", ""),
             metadata=dict(data.get("metadata", {})),
         )
 
@@ -827,6 +842,163 @@ class TelemetrySnapshot:
             deliveries_delivered=int(data.get("deliveries_delivered", 0)),
             memory_percent=float(data.get("memory_percent", 0.0)),
             cpu_percent=float(data.get("cpu_percent", 0.0)),
+        )
+
+
+# ─────────────────────────────────────────────
+# Recurring Workflows — cron-triggered product jobs
+# ─────────────────────────────────────────────
+
+@dataclass
+class RecurringWorkflow:
+    """Scheduled recurring product job definition.
+
+    Enables "every Monday run security audit on repo X" patterns.
+    The cron loop checks for due workflows and submits intake automatically.
+    """
+
+    workflow_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    name: str = ""
+    job_kind: JobKind = JobKind.REVIEW
+    schedule: str = ""  # "daily", "weekly", "monthly", or cron-like "0 8 * * 1"
+    intake_template: dict[str, Any] = field(default_factory=dict)
+    status: str = "active"  # active, paused, failed
+    next_run_at: str = ""
+    last_run_at: str = ""
+    last_job_id: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    run_count: int = 0
+    error_count: int = 0
+    max_consecutive_errors: int = 3
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "workflow_id": self.workflow_id,
+            "name": self.name,
+            "job_kind": self.job_kind.value,
+            "schedule": self.schedule,
+            "intake_template": dict(self.intake_template),
+            "status": self.status,
+            "next_run_at": self.next_run_at,
+            "last_run_at": self.last_run_at,
+            "last_job_id": self.last_job_id,
+            "created_at": self.created_at,
+            "run_count": self.run_count,
+            "error_count": self.error_count,
+            "max_consecutive_errors": self.max_consecutive_errors,
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RecurringWorkflow:
+        return cls(
+            workflow_id=data.get("workflow_id", ""),
+            name=data.get("name", ""),
+            job_kind=JobKind(data.get("job_kind", "review")),
+            schedule=data.get("schedule", ""),
+            intake_template=dict(data.get("intake_template", {})),
+            status=data.get("status", "active"),
+            next_run_at=data.get("next_run_at", ""),
+            last_run_at=data.get("last_run_at", ""),
+            last_job_id=data.get("last_job_id", ""),
+            created_at=data.get("created_at", ""),
+            run_count=int(data.get("run_count", 0)),
+            error_count=int(data.get("error_count", 0)),
+            max_consecutive_errors=int(data.get("max_consecutive_errors", 3)),
+            metadata=dict(data.get("metadata", {})),
+        )
+
+
+# ─────────────────────────────────────────────
+# Job Pipelines — multi-job orchestration
+# ─────────────────────────────────────────────
+
+@dataclass
+class PipelineStage:
+    """Single stage in a multi-job pipeline."""
+
+    stage_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    name: str = ""
+    job_kind: JobKind = JobKind.REVIEW
+    intake_template: dict[str, Any] = field(default_factory=dict)
+    condition: str = "on_success"  # always, on_success, on_failure
+    status: str = "pending"  # pending, running, completed, failed, skipped
+    job_id: str = ""
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "stage_id": self.stage_id,
+            "name": self.name,
+            "job_kind": self.job_kind.value,
+            "intake_template": dict(self.intake_template),
+            "condition": self.condition,
+            "status": self.status,
+            "job_id": self.job_id,
+            "error": self.error,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PipelineStage:
+        return cls(
+            stage_id=data.get("stage_id", ""),
+            name=data.get("name", ""),
+            job_kind=JobKind(data.get("job_kind", "review")),
+            intake_template=dict(data.get("intake_template", {})),
+            condition=data.get("condition", "on_success"),
+            status=data.get("status", "pending"),
+            job_id=data.get("job_id", ""),
+            error=data.get("error", ""),
+        )
+
+
+@dataclass
+class JobPipeline:
+    """Multi-job pipeline: sequential stages with conditions.
+
+    Enables review→build→verify→deliver chains where each stage
+    executes based on the previous stage's outcome.
+    """
+
+    pipeline_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    name: str = ""
+    stages: list[PipelineStage] = field(default_factory=list)
+    status: str = "draft"  # draft, executing, completed, failed, cancelled
+    triggered_by: str = ""  # workflow_id or manual
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    started_at: str = ""
+    completed_at: str = ""
+    current_stage_index: int = 0
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pipeline_id": self.pipeline_id,
+            "name": self.name,
+            "stages": [s.to_dict() for s in self.stages],
+            "status": self.status,
+            "triggered_by": self.triggered_by,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "current_stage_index": self.current_stage_index,
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> JobPipeline:
+        return cls(
+            pipeline_id=data.get("pipeline_id", ""),
+            name=data.get("name", ""),
+            stages=[PipelineStage.from_dict(s) for s in data.get("stages", [])],
+            status=data.get("status", "draft"),
+            triggered_by=data.get("triggered_by", ""),
+            created_at=data.get("created_at", ""),
+            started_at=data.get("started_at", ""),
+            completed_at=data.get("completed_at", ""),
+            current_stage_index=int(data.get("current_stage_index", 0)),
+            metadata=dict(data.get("metadata", {})),
         )
 
 

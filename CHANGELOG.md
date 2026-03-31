@@ -10,6 +10,35 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.25.0] — 2026-03-31
+
+Phase 3 operatorization closure: recurring workflows, pipelines, margin tracking.
+
+### Recurring Workflows
+- `RecurringWorkflow` model with schedule (daily/weekly/monthly), intake
+  template, execution tracking, and auto-pause on consecutive errors
+- `RecurringWorkflowManager` with create/pause/activate/get_due_workflows
+- `/workflow` Telegram command: create, list, pause, activate workflows
+
+### Multi-Job Pipelines
+- `JobPipeline` and `PipelineStage` models with sequential execution,
+  condition-based stage gating (on_success/on_failure/always)
+- `PipelineOrchestrator` executes stages sequentially, tracks status per stage
+- `/pipeline` Telegram command: create, run, list pipelines
+- Pipeline stages link back to ProductJobRecord via pipeline_id
+
+### Margin Tracking
+- `ProductJobRecord` extended with revenue_usd, margin_usd, revenue_source,
+  pipeline_id, workflow_id fields
+- `record_job_revenue()` in state service calculates margin automatically
+- `get_margin_summary()` aggregates revenue/cost/margin across jobs
+- `/report margin` sub-command shows margin summary
+- `/report margin set <job_id> <usd>` records revenue for a job
+
+### Bug Fix
+- Channel policy: `get_channel_capabilities()` now recognizes "private",
+  "group", "supergroup" as Telegram channel types (was only "telegram")
+
 ## [1.24.1] — 2026-03-31
 
 Runtime bug fixes for production deployment.

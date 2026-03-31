@@ -762,6 +762,59 @@ class ControlPlaneStateService:
             "sample_size": len(comparisons),
         }
 
+    # ── Margin tracking ────────────────────────
+
+    def record_job_revenue(
+        self,
+        *,
+        job_id: str,
+        revenue_usd: float,
+        source: str = "",
+    ) -> ProductJobRecord | None:
+        """Record revenue for a job and recalculate margin."""
+        self.initialize()
+        job = self.get_product_job(job_id)
+        if job is None:
+            return None
+        job.revenue_usd = revenue_usd
+        job.revenue_source = source
+        job.margin_usd = revenue_usd - job.usage.total_cost_usd
+        job.updated_at = datetime.now(UTC).isoformat()
+        self._storage.save_product_job_record(job)
+        return job
+
+    def get_margin_summary(self, *, limit: int = 100) -> dict[str, Any]:
+        """Aggregate margin data across recent product jobs."""
+        self.initialize()
+        jobs = self.list_product_jobs(limit=limit)
+        if not jobs:
+            return {
+                "total_jobs": 0,
+                "total_revenue_usd": 0.0,
+                "total_cost_usd": 0.0,
+                "total_margin_usd": 0.0,
+                "avg_margin_pct": 0.0,
+                "profitable_jobs": 0,
+            }
+
+        total_revenue = sum(j.revenue_usd for j in jobs)
+        total_cost = sum(j.usage.total_cost_usd for j in jobs)
+        total_margin = total_revenue - total_cost
+        profitable = sum(1 for j in jobs if j.revenue_usd > j.usage.total_cost_usd)
+        avg_margin_pct = (
+            (total_margin / total_revenue * 100) if total_revenue > 0 else 0.0
+        )
+
+        return {
+            "total_jobs": len(jobs),
+            "total_revenue_usd": round(total_revenue, 4),
+            "total_cost_usd": round(total_cost, 4),
+            "total_margin_usd": round(total_margin, 4),
+            "avg_margin_pct": round(avg_margin_pct, 1),
+            "profitable_jobs": profitable,
+            "jobs_with_revenue": sum(1 for j in jobs if j.revenue_usd > 0),
+        }
+
     # ── Telemetry ──────────────────────────────
 
     def record_telemetry_snapshot(
