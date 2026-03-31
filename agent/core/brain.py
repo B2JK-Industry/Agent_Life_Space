@@ -261,18 +261,53 @@ class AgentBrain:
         if len(chat_conv) > self._max_conversation:
             chat_conv.pop(0)
 
+        # ── Layer 4.5: Memory retrieval — inject relevant stored facts ──
+        memory_context = ""
+        try:
+            from agent.memory.store import MemoryType
+
+            keywords = [w for w in text.split() if len(w) > 3][:3]
+            memory_results = []
+            for kw in keywords:
+                results = await self._agent.memory.query(
+                    keyword=kw, memory_type=MemoryType.SEMANTIC, limit=3,
+                )
+                for entry in results:
+                    if entry.content not in [m.content for m in memory_results]:
+                        memory_results.append(entry)
+            if not memory_results:
+                # Fallback: get recent semantic memories
+                memory_results = await self._agent.memory.query(
+                    memory_type=MemoryType.SEMANTIC, limit=5,
+                )
+            if memory_results:
+                facts = [m.content[:150] for m in memory_results[:5]]
+                memory_context = "Known facts from memory:\n" + "\n".join(f"- {f}" for f in facts)
+        except Exception:
+            pass
+
         # Build prompt based on task type
+        # Memory context block (shared across all prompt types)
+        memory_block = f"\n{memory_context}\n" if memory_context else ""
+
         if task_type == "programming":
             prompt = (
                 f"{active_prompt}\n"
                 f"Si programátor.\n\n"
+                f"{memory_block}"
                 f"ÚLOHA: {text}\n\n"
                 f"At the end always include a short summary. {get_response_language_instruction()}"
             )
         elif task_type in ("simple", "factual", "greeting"):
-            prompt = f"{get_simple_prompt()}\n{message.sender_name}: {text}\n"
+            prompt = (
+                f"{get_simple_prompt()}\n"
+                f"{memory_block}"
+                f"{message.sender_name}: {text}\n"
+            )
         else:
             prompt = f"{active_prompt}\n"
+            if memory_block:
+                prompt += memory_block
             if rag_context:
                 prompt += f"Relevantný kontext z knowledge base:\n{rag_context}\n\n"
             if persistent_context:
