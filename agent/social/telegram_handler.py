@@ -1558,13 +1558,12 @@ class TelegramHandler:
 
     async def _cmd_workflow(self, args: str) -> str:
         """Recurring workflow management."""
-        from agent.control.recurring import RecurringWorkflowManager
-
         if not hasattr(self._agent, "recurring_workflows"):
+            from agent.control.recurring import RecurringWorkflowManager
+
             self._agent.recurring_workflows = RecurringWorkflowManager(
                 control_plane_state=getattr(self._agent, "control_plane_state", None),
             )
-
         mgr = self._agent.recurring_workflows
         parts = args.strip().split(maxsplit=1)
         action = parts[0] if parts else ""
@@ -1650,11 +1649,10 @@ class TelegramHandler:
 
     async def _cmd_pipeline(self, args: str) -> str:
         """Multi-job pipeline management."""
-        from agent.control.pipeline import PipelineOrchestrator
-
         if not hasattr(self._agent, "pipeline_orchestrator"):
-            self._agent.pipeline_orchestrator = PipelineOrchestrator(agent=self._agent)
+            from agent.control.pipeline import PipelineOrchestrator
 
+            self._agent.pipeline_orchestrator = PipelineOrchestrator(agent=self._agent)
         orch = self._agent.pipeline_orchestrator
         parts = args.strip().split(maxsplit=1)
         action = parts[0] if parts else ""

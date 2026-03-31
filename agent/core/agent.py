@@ -206,6 +206,14 @@ class AgentOrchestrator:
             approval_queue=self.approval_queue,
             runtime_model=self.runtime_model,
         )
+        # Phase 3 operatorization services
+        from agent.control.pipeline import PipelineOrchestrator
+        from agent.control.recurring import RecurringWorkflowManager
+
+        self.recurring_workflows = RecurringWorkflowManager(
+            control_plane_state=self.control_plane,
+        )
+        self.pipeline_orchestrator = PipelineOrchestrator(agent=self)
 
         # Background tasks
         self._background_tasks: list[asyncio.Task[Any]] = []

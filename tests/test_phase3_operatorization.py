@@ -250,3 +250,119 @@ class TestChannelPolicyFix:
     def test_internal_blocked_for_api(self):
         caps = get_channel_capabilities("agent_api")
         assert not can_send_response(ResponseClass.INTERNAL, caps)
+
+
+# ─────────────────────────────────────────────
+# Cron integration: recurring workflow loop
+# ─────────────────────────────────────────────
+
+class TestCronWorkflowIntegration:
+    """Verify that the cron loop properly finds and executes due workflows."""
+
+    def test_workflow_becomes_due_after_next_run_passes(self):
+        mgr = RecurringWorkflowManager()
+        w = mgr.create(name="test-due", job_kind="review", schedule="daily", intake_template={"repo_path": "."})
+        # Not due yet (next_run_at is ~24h from now)
+        assert len(mgr.get_due_workflows()) == 0
+        # Make it due
+        w.next_run_at = "2020-01-01T00:00:00"
+        assert len(mgr.get_due_workflows()) == 1
+
+    def test_workflow_reschedules_after_success(self):
+        mgr = RecurringWorkflowManager()
+        w = mgr.create(name="test", job_kind="review", schedule="daily", intake_template={})
+        w.next_run_at = "2020-01-01T00:00:00"
+        mgr.record_execution(w.workflow_id, job_id="j1", success=True)
+        # next_run_at should now be in the future
+        assert w.next_run_at > "2026-01-01"
+
+    def test_paused_workflow_not_due(self):
+        mgr = RecurringWorkflowManager()
+        w = mgr.create(name="test", job_kind="review", schedule="daily", intake_template={})
+        w.next_run_at = "2020-01-01T00:00:00"
+        mgr.pause(w.workflow_id)
+        assert len(mgr.get_due_workflows()) == 0
+
+
+# ─────────────────────────────────────────────
+# Pipeline orchestration with mock agent
+# ─────────────────────────────────────────────
+
+class TestPipelineExecution:
+
+    async def test_pipeline_executes_stages_in_order(self):
+        """Pipeline with mock agent that tracks calls."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        agent = MagicMock()
+        call_log: list[str] = []
+
+        async def mock_submit(intake):
+            call_log.append(intake.work_type)
+            return {"status": "completed", "job_id": f"job-{len(call_log)}"}
+
+        agent.submit_operator_intake = AsyncMock(side_effect=mock_submit)
+
+        orch = PipelineOrchestrator(agent=agent)
+        p = orch.create_pipeline(
+            name="review-then-build",
+            stages=[
+                {"name": "review", "job_kind": "review", "intake_template": {"repo_path": ".", "work_type": "review", "description": "audit"}},
+                {"name": "build", "job_kind": "build", "intake_template": {"repo_path": ".", "work_type": "build", "description": "fix"}, "condition": "on_success"},
+            ],
+        )
+        result = await orch.execute_pipeline(p.pipeline_id)
+        assert result["ok"]
+        assert result["stages_executed"] == 2
+        assert call_log == ["review", "build"]
+
+    async def test_pipeline_skips_on_failure(self):
+        """Second stage skipped when first fails and condition is on_success."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        agent = MagicMock()
+        agent.submit_operator_intake = AsyncMock(return_value={"status": "blocked", "error": "denied"})
+
+        orch = PipelineOrchestrator(agent=agent)
+        p = orch.create_pipeline(
+            name="fail-pipeline",
+            stages=[
+                {"name": "review", "job_kind": "review", "intake_template": {"repo_path": ".", "work_type": "review", "description": "test"}},
+                {"name": "build", "job_kind": "build", "intake_template": {"repo_path": ".", "work_type": "build", "description": "test"}, "condition": "on_success"},
+            ],
+        )
+        result = await orch.execute_pipeline(p.pipeline_id)
+        assert not result["ok"]
+        stages = result["stages"]
+        assert stages[0]["status"] == "failed"
+        assert stages[1]["status"] == "skipped"
+
+    async def test_pipeline_always_condition_runs_after_failure(self):
+        """Stage with condition='always' runs even after previous failure."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        call_count = 0
+
+        async def mock_submit(intake):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"status": "blocked", "error": "denied"}
+            return {"status": "completed", "job_id": "j2"}
+
+        agent = MagicMock()
+        agent.submit_operator_intake = AsyncMock(side_effect=mock_submit)
+
+        orch = PipelineOrchestrator(agent=agent)
+        p = orch.create_pipeline(
+            name="always-pipeline",
+            stages=[
+                {"name": "review", "job_kind": "review", "intake_template": {"repo_path": ".", "work_type": "review", "description": "test"}},
+                {"name": "notify", "job_kind": "operate", "intake_template": {"repo_path": ".", "work_type": "review", "description": "notify"}, "condition": "always"},
+            ],
+        )
+        result = await orch.execute_pipeline(p.pipeline_id)
+        stages = result["stages"]
+        assert stages[0]["status"] == "failed"
+        assert stages[1]["status"] == "completed"
+        assert call_count == 2

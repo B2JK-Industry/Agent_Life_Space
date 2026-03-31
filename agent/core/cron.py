@@ -54,7 +54,8 @@ class AgentCron:
 
         self._tasks.append(asyncio.create_task(self._consolidation_loop()))
         self._tasks.append(asyncio.create_task(self._dead_man_switch_loop()))
-        logger.info("cron_started", jobs=7)
+        self._tasks.append(asyncio.create_task(self._recurring_workflow_loop()))
+        logger.info("cron_started", jobs=8)
 
     async def stop(self) -> None:
         self._running = False
@@ -334,3 +335,76 @@ class AgentCron:
                         warnings=len(warnings),
                         escalations=len(escalations),
                         cancelled=len(cancelled))
+
+    # --- Recurring Workflows (every 60s check) ---
+
+    async def _recurring_workflow_loop(self) -> None:
+        """Check for due recurring workflows and execute them."""
+        while self._running:
+            try:
+                await asyncio.sleep(60)  # Check every minute
+                await self._execute_due_workflows()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("cron_recurring_workflow_error")
+
+    async def _execute_due_workflows(self) -> None:
+        if not hasattr(self._agent, "recurring_workflows"):
+            return
+        mgr = self._agent.recurring_workflows
+        due = mgr.get_due_workflows()
+        if not due:
+            return
+
+        for workflow in due:
+            try:
+                logger.info(
+                    "recurring_workflow_executing",
+                    workflow_id=workflow.workflow_id,
+                    name=workflow.name,
+                )
+                # Build intake from template and submit
+                from agent.control.intake import OperatorIntake
+
+                template = dict(workflow.intake_template)
+                intake = OperatorIntake(
+                    repo_path=template.get("repo_path", ""),
+                    git_url=template.get("git_url", ""),
+                    work_type=template.get("work_type", workflow.job_kind.value),
+                    description=template.get(
+                        "description",
+                        f"Recurring {workflow.name}",
+                    ),
+                    requester="cron",
+                )
+                result = await self._agent.submit_operator_intake(intake)
+                job_id = result.get("job_id", "")
+                success = result.get("status") == "completed"
+                mgr.record_execution(
+                    workflow.workflow_id,
+                    job_id=job_id,
+                    success=success,
+                    error=result.get("error", ""),
+                )
+
+                # Notify operator
+                if self._bot and self._owner_chat_id:
+                    status_label = "completed" if success else "failed"
+                    await self._bot.send_message(
+                        self._owner_chat_id,
+                        f"*Recurring workflow:* {workflow.name}\n"
+                        f"Status: {status_label}\n"
+                        f"Job: `{job_id}`" if job_id else "",
+                    )
+            except Exception as e:
+                mgr.record_execution(
+                    workflow.workflow_id,
+                    success=False,
+                    error=str(e),
+                )
+                logger.error(
+                    "recurring_workflow_failed",
+                    workflow_id=workflow.workflow_id,
+                    error=str(e),
+                )

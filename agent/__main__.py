@@ -194,7 +194,7 @@ async def run_agent(data_dir: str = "agent") -> None:
             logger.info("agent_api_enabled", port=8420, bind=api_bind,
                        auth="key" if agent_api_keys else "NONE — SET AGENT_API_KEY!")
 
-            # Start cron (John's initiative)
+            # Start cron (agent's initiative)
             from agent.core.cron import AgentCron
             cron = AgentCron(agent, telegram_bot=bot, owner_chat_id=owner_id)
             cron_task = asyncio.create_task(cron.start())
@@ -203,11 +203,30 @@ async def run_agent(data_dir: str = "agent") -> None:
             work_loop = None
             agent.agent_loop = None
             work_loop_task = None
+            handler = None
             cron = None
             cron_task = None
             agent_api = None
             agent_api_task = None
             logger.info("telegram_bot_disabled", reason="no TELEGRAM_BOT_TOKEN")
+
+        # Start terminal REPL if requested
+        terminal_repl = None
+        terminal_task = None
+        enable_terminal = (
+            os.environ.get("AGENT_TERMINAL", "0") == "1"
+            or "--terminal" in sys.argv
+        )
+        if enable_terminal and handler is not None:
+            from agent.social.terminal_repl import TerminalREPL
+
+            owner_id_for_terminal = int(tg_user_id.split(",")[0]) if tg_user_id else 0
+            terminal_repl = TerminalREPL(
+                handler_callback=handler.handle,
+                owner_user_id=owner_id_for_terminal,
+            )
+            terminal_task = asyncio.create_task(terminal_repl.start())
+            logger.info("terminal_repl_enabled")
 
         # Wait for shutdown signal
         await shutdown_event.wait()
@@ -222,6 +241,11 @@ async def run_agent(data_dir: str = "agent") -> None:
             await cron.stop()
             if cron_task:
                 cron_task.cancel()
+
+        if terminal_repl:
+            await terminal_repl.stop()
+            if terminal_task:
+                terminal_task.cancel()
 
         if agent_api:
             await agent_api.stop()
