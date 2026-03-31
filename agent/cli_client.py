@@ -38,7 +38,7 @@ def send_message(base_url: str, api_key: str, text: str) -> str:
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             body = json.loads(resp.read().decode())
-            return body.get("response", body.get("text", str(body)))
+            return body.get("reply", body.get("response", body.get("text", str(body))))
     except urllib.error.HTTPError as e:
         error_body = e.read().decode() if e.fp else ""
         return f"Error {e.code}: {error_body[:200]}"
@@ -57,7 +57,12 @@ def check_status(base_url: str) -> bool:
 
 
 def strip_markdown(text: str) -> str:
-    return text.replace("*", "").replace("`", "").replace("_", "")
+    cleaned = text.replace("*", "").replace("`", "")
+    # Strip cost suffix (💰 $0.01 | haiku | ⬆... tokens)
+    idx = cleaned.find("\n💰")
+    if idx > 0:
+        cleaned = cleaned[:idx]
+    return cleaned.strip()
 
 
 def main() -> None:
