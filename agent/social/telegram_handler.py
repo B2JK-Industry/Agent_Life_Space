@@ -145,7 +145,9 @@ class TelegramHandler:
                 if cmd not in _SAFE_COMMANDS:
                     logger.warning("command_blocked_non_owner", command=cmd, sender=ctx.sender)
                     return f"Príkaz {cmd} je dostupný len pre ownera."
-            return await self._handle_command(text)
+            response = await self._handle_command(text)
+            self._mirror_to_terminal(ctx.chat_type, ctx.sender, text, response)
+            return response
 
         # Keep sending typing indicator while the agent thinks
         typing_task = None
@@ -170,10 +172,14 @@ class TelegramHandler:
                     is_owner=ctx.is_owner,
                     is_group=ctx.chat_type in ("group", "supergroup"),
                 )
-                return await self._brain.process(incoming)
+                response = await self._brain.process(incoming)
+                self._mirror_to_terminal(ctx.chat_type, ctx.sender, text, response)
+                return response
 
             # Fallback to legacy _handle_text (backward compat)
-            return await self._handle_text(text, ctx)
+            response = await self._handle_text(text, ctx)
+            self._mirror_to_terminal(ctx.chat_type, ctx.sender, text, response)
+            return response
         finally:
             if typing_task:
                 typing_task.cancel()
@@ -626,6 +632,22 @@ class TelegramHandler:
         lines.append(f"*Spomienky:* {mem_stats['total_memories']}")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _mirror_to_terminal(
+        channel_type: str, sender: str, text: str, response: str,
+    ) -> None:
+        """Show messages from other channels in the terminal REPL (if active)."""
+        if channel_type == "terminal":
+            return  # Don't echo terminal messages back
+        try:
+            from agent.social.terminal_repl import get_active_repl
+
+            repl = get_active_repl()
+            if repl is not None:
+                repl.show_remote_message(channel_type, sender, text, response)
+        except Exception:
+            pass
 
     def _sanitize_input(self, text: str) -> str | None:
         """
