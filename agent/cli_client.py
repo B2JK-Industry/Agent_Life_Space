@@ -29,7 +29,7 @@ def get_config() -> tuple[str, str, str]:
 def send_message(base_url: str, api_key: str, text: str) -> str:
     """Send a message to the running agent and return the response."""
     url = f"{base_url}/api/message"
-    payload = json.dumps({"text": text, "sender": "terminal"}).encode()
+    payload = json.dumps({"message": text, "sender": "terminal"}).encode()
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
