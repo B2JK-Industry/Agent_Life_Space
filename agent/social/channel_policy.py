@@ -100,7 +100,7 @@ def get_channel_capabilities(
     is_group: bool = False,
 ) -> ChannelCapabilities:
     """Resolve channel capabilities based on context."""
-    if channel_type == "telegram":
+    if channel_type in ("telegram", "private", "group", "supergroup"):
         if is_owner and not is_group:
             return CHANNEL_CAPABILITIES["telegram_owner"]
         return CHANNEL_CAPABILITIES["telegram_group"]

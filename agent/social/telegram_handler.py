@@ -209,6 +209,8 @@ class TelegramHandler:
             "/jobs": self._cmd_jobs,
             "/deliver": self._cmd_deliver,
             "/telemetry": self._cmd_telemetry,
+            "/workflow": self._cmd_workflow,
+            "/pipeline": self._cmd_pipeline,
             "/help": self._cmd_help,
         }
 
@@ -253,7 +255,9 @@ class TelegramHandler:
             "/jobs — zoznam product jobov (review, build)\n"
             "/deliver — delivery status, filter, retry a odoslanie\n"
             "/telemetry — runtime telemetry dashboard\n"
-            "/report — operator report a inbox\n"
+            "/workflow — recurring workflow management\n"
+            "/pipeline — multi-job pipeline orchestration\n"
+            "/report — operator report, inbox, margin\n"
             "/help — tento help\n\n"
             "Alebo napíš čokoľvek — premýšľam a konám."
         )
@@ -1295,6 +1299,47 @@ class TelegramHandler:
                 return "*Telemetry:* Žiadne dáta. Snapshots sa zbierajú pri dokončení jobov."
             return self._format_telemetry_summary(ts)
 
+        if section == "margin":
+            try:
+                ms = self._agent.control_plane_state.get_margin_summary(limit=50)
+            except Exception as e:
+                return f"*Margin error:* {e!s}"
+            if ms.get("total_jobs", 0) == 0:
+                return "*Margin:* Žiadne joby. Revenue sa zaznamenáva cez `/report margin set <job_id> <usd>`."
+            lines = [
+                "*Margin Summary:*",
+                f"Jobs: {ms['total_jobs']} ({ms.get('jobs_with_revenue', 0)} with revenue)",
+                f"Revenue: ${ms['total_revenue_usd']:.4f}",
+                f"Cost: ${ms['total_cost_usd']:.4f}",
+                f"Margin: ${ms['total_margin_usd']:.4f} ({ms['avg_margin_pct']:.1f}%)",
+                f"Profitable: {ms.get('profitable_jobs', 0)}/{ms['total_jobs']}",
+            ]
+            return "\n".join(lines)
+
+        if section.startswith("margin set"):
+            # /report margin set <job_id> <usd> [source]
+            parts = section.split()
+            if len(parts) < 4:
+                return "*Použitie:* `/report margin set <job_id> <usd> [source]`"
+            job_id = parts[2]
+            try:
+                revenue = float(parts[3])
+            except ValueError:
+                return f"*Error:* '{parts[3]}' nie je platná suma."
+            source = parts[4] if len(parts) > 4 else "manual"
+            try:
+                job = self._agent.control_plane_state.record_job_revenue(
+                    job_id=job_id, revenue_usd=revenue, source=source,
+                )
+            except Exception as e:
+                return f"*Error:* {e!s}"
+            if job is None:
+                return f"Job `{job_id}` nenájdený."
+            return (
+                f"*Revenue recorded:* ${revenue:.4f} pre job `{job_id}`\n"
+                f"Margin: ${job.margin_usd:.4f}"
+            )
+
         # Default: stručný overview
         lines = [
             "*Operator Report:*",
@@ -1316,7 +1361,7 @@ class TelegramHandler:
                 lines.append(f"• `{kind}` — {title}")
         else:
             lines.append("\nŽiadne attention items. ✓")
-        lines.append("\n`/report inbox` | `/report budget` | `/report cost` | `/report delivery` | `/report telemetry`")
+        lines.append("\n`/report inbox` | `/report budget` | `/report cost` | `/report delivery` | `/report telemetry` | `/report margin`")
         return "\n".join(lines)
 
     async def _cmd_intake(self, args: str) -> str:
@@ -1509,6 +1554,178 @@ class TelegramHandler:
             label = title or kind
             lines.append(f"• `{jid}` {label} — {status} ({created})")
         lines.append("\n`/jobs <id>` pre detail")
+        return "\n".join(lines)
+
+    async def _cmd_workflow(self, args: str) -> str:
+        """Recurring workflow management."""
+        from agent.control.recurring import RecurringWorkflowManager
+
+        if not hasattr(self._agent, "recurring_workflows"):
+            self._agent.recurring_workflows = RecurringWorkflowManager(
+                control_plane_state=getattr(self._agent, "control_plane_state", None),
+            )
+
+        mgr = self._agent.recurring_workflows
+        parts = args.strip().split(maxsplit=1)
+        action = parts[0] if parts else ""
+
+        if action == "create":
+            # /workflow create <name> --schedule daily --type review --repo .
+            tokens = (parts[1] if len(parts) > 1 else "").split()
+            name = ""
+            schedule = "daily"
+            work_type = "review"
+            repo_path = "."
+            description = ""
+            i = 0
+            while i < len(tokens):
+                if tokens[i] == "--schedule" and i + 1 < len(tokens):
+                    schedule = tokens[i + 1]
+                    i += 2
+                elif tokens[i] == "--type" and i + 1 < len(tokens):
+                    work_type = tokens[i + 1]
+                    i += 2
+                elif tokens[i] == "--repo" and i + 1 < len(tokens):
+                    repo_path = tokens[i + 1]
+                    i += 2
+                elif tokens[i] == "--description":
+                    description = " ".join(tokens[i + 1:])
+                    break
+                elif not name:
+                    name = tokens[i]
+                    i += 1
+                else:
+                    i += 1
+            if not name:
+                return (
+                    "*Použitie:*\n"
+                    "`/workflow create <name> --schedule daily|weekly|monthly "
+                    "--type review|build --repo . --description \"...\"`"
+                )
+            workflow = mgr.create(
+                name=name,
+                job_kind=work_type,
+                schedule=schedule,
+                intake_template={
+                    "repo_path": repo_path,
+                    "work_type": work_type,
+                    "description": description or f"Recurring {work_type}: {name}",
+                },
+            )
+            return (
+                f"*Workflow created:* `{workflow.workflow_id}`\n"
+                f"Name: {workflow.name}\n"
+                f"Schedule: {schedule}\n"
+                f"Next run: {workflow.next_run_at[:19]}"
+            )
+
+        if action == "pause" and len(parts) > 1:
+            wid = parts[1].strip()
+            if mgr.pause(wid):
+                return f"Workflow `{wid}` paused."
+            return f"Workflow `{wid}` nie je aktívny alebo neexistuje."
+
+        if action == "activate" and len(parts) > 1:
+            wid = parts[1].strip()
+            if mgr.activate(wid):
+                return f"Workflow `{wid}` activated."
+            return f"Workflow `{wid}` nie je pauznutý alebo neexistuje."
+
+        # Default: list workflows
+        workflows = mgr.list_workflows()
+        if not workflows:
+            return (
+                "*Recurring Workflows:* žiadne.\n"
+                "`/workflow create <name> --schedule daily --type review --repo .`"
+            )
+        lines = [f"*Recurring Workflows* ({len(workflows)}):"]
+        for w in workflows[:10]:
+            status_mark = {"active": "▶", "paused": "⏸", "failed": "✗"}.get(w.status, "?")
+            lines.append(
+                f"{status_mark} `{w.workflow_id}` {w.name} — {w.schedule} "
+                f"(runs: {w.run_count})"
+            )
+        lines.append("\n`/workflow create` | `/workflow pause <id>` | `/workflow activate <id>`")
+        return "\n".join(lines)
+
+    async def _cmd_pipeline(self, args: str) -> str:
+        """Multi-job pipeline management."""
+        from agent.control.pipeline import PipelineOrchestrator
+
+        if not hasattr(self._agent, "pipeline_orchestrator"):
+            self._agent.pipeline_orchestrator = PipelineOrchestrator(agent=self._agent)
+
+        orch = self._agent.pipeline_orchestrator
+        parts = args.strip().split(maxsplit=1)
+        action = parts[0] if parts else ""
+
+        if action == "create":
+            # /pipeline create <name> review:. build:.
+            rest = parts[1] if len(parts) > 1 else ""
+            tokens = rest.split()
+            if len(tokens) < 2:
+                return (
+                    "*Použitie:*\n"
+                    "`/pipeline create <name> review:<repo> build:<repo>`\n"
+                    "Príklad: `/pipeline create audit-and-fix review:. build:.`"
+                )
+            name = tokens[0]
+            stages = []
+            for token in tokens[1:]:
+                if ":" in token:
+                    kind, repo = token.split(":", 1)
+                    stages.append({
+                        "name": f"{kind} stage",
+                        "job_kind": kind,
+                        "intake_template": {
+                            "repo_path": repo or ".",
+                            "work_type": kind,
+                            "description": f"Pipeline {name}: {kind} stage",
+                        },
+                        "condition": "on_success",
+                    })
+            if not stages:
+                return "*Error:* Žiadne stages. Formát: `review:. build:.`"
+            pipeline = orch.create_pipeline(name=name, stages=stages)
+            lines = [
+                f"*Pipeline created:* `{pipeline.pipeline_id}`",
+                f"Name: {name}",
+                f"Stages: {len(pipeline.stages)}",
+            ]
+            for s in pipeline.stages:
+                lines.append(f"  • {s.name} ({s.job_kind.value}) [{s.condition}]")
+            lines.append(f"\n`/pipeline run {pipeline.pipeline_id}` na spustenie")
+            return "\n".join(lines)
+
+        if action == "run" and len(parts) > 1:
+            pid = parts[1].strip()
+            try:
+                result = await orch.execute_pipeline(pid)
+            except Exception as e:
+                return f"*Pipeline error:* {e!s}"
+            if result.get("ok"):
+                return (
+                    f"*Pipeline completed:* `{pid}`\n"
+                    f"Stages: {result['stages_executed']}/{result['stages_total']}"
+                )
+            return (
+                f"*Pipeline failed:* `{pid}`\n"
+                f"Stages: {result.get('stages_executed', 0)}/{result.get('stages_total', 0)}\n"
+                f"Error: {result.get('error', 'unknown')[:200]}"
+            )
+
+        # Default: list pipelines
+        pipelines = orch.list_pipelines()
+        if not pipelines:
+            return (
+                "*Pipelines:* žiadne.\n"
+                "`/pipeline create <name> review:<repo> build:<repo>`"
+            )
+        lines = [f"*Pipelines* ({len(pipelines)}):"]
+        for p in pipelines[:10]:
+            stage_summary = "/".join(s.job_kind.value[0].upper() for s in p.stages)
+            lines.append(f"• `{p.pipeline_id}` {p.name} [{stage_summary}] — {p.status}")
+        lines.append("\n`/pipeline create` | `/pipeline run <id>`")
         return "\n".join(lines)
 
     async def _cmd_telemetry(self, args: str) -> str:
