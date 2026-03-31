@@ -395,6 +395,7 @@ class TraceRecordKind(str, Enum):
     QUALITY = "quality"
     RELEASE = "release"
     COST_ACCURACY = "cost_accuracy"
+    TELEMETRY = "telemetry"
 
 
 @dataclass
@@ -740,6 +741,92 @@ class CostLedgerEntry:
             usage=UsageSummary.from_dict(data.get("usage", {})),
             source_type=data.get("source_type", "job_usage_snapshot"),
             metadata=dict(data.get("metadata", {})),
+        )
+
+
+# ─────────────────────────────────────────────
+# Telemetry Snapshot — periodic runtime metrics
+# ─────────────────────────────────────────────
+
+@dataclass
+class TelemetrySnapshot:
+    """Point-in-time runtime metrics for operator visibility.
+
+    Recorded periodically (e.g. every job completion or via cron)
+    to build longitudinal runtime history.
+    """
+
+    snapshot_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    recorded_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    # Job throughput
+    jobs_completed: int = 0
+    jobs_failed: int = 0
+    jobs_retried: int = 0
+    jobs_active: int = 0
+    # Timing
+    avg_duration_ms: float = 0.0
+    max_duration_ms: float = 0.0
+    p95_duration_ms: float = 0.0
+    # Cost
+    total_cost_usd: float = 0.0
+    avg_cost_per_job_usd: float = 0.0
+    # Resources
+    queue_depth: int = 0
+    circuit_breaker_open: bool = False
+    # Delivery
+    deliveries_total: int = 0
+    deliveries_pending: int = 0
+    deliveries_failed: int = 0
+    deliveries_delivered: int = 0
+    # System
+    memory_percent: float = 0.0
+    cpu_percent: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "snapshot_id": self.snapshot_id,
+            "recorded_at": self.recorded_at,
+            "jobs_completed": self.jobs_completed,
+            "jobs_failed": self.jobs_failed,
+            "jobs_retried": self.jobs_retried,
+            "jobs_active": self.jobs_active,
+            "avg_duration_ms": round(self.avg_duration_ms, 1),
+            "max_duration_ms": round(self.max_duration_ms, 1),
+            "p95_duration_ms": round(self.p95_duration_ms, 1),
+            "total_cost_usd": round(self.total_cost_usd, 6),
+            "avg_cost_per_job_usd": round(self.avg_cost_per_job_usd, 6),
+            "queue_depth": self.queue_depth,
+            "circuit_breaker_open": self.circuit_breaker_open,
+            "deliveries_total": self.deliveries_total,
+            "deliveries_pending": self.deliveries_pending,
+            "deliveries_failed": self.deliveries_failed,
+            "deliveries_delivered": self.deliveries_delivered,
+            "memory_percent": round(self.memory_percent, 1),
+            "cpu_percent": round(self.cpu_percent, 1),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TelemetrySnapshot:
+        return cls(
+            snapshot_id=data.get("snapshot_id", ""),
+            recorded_at=data.get("recorded_at", ""),
+            jobs_completed=int(data.get("jobs_completed", 0)),
+            jobs_failed=int(data.get("jobs_failed", 0)),
+            jobs_retried=int(data.get("jobs_retried", 0)),
+            jobs_active=int(data.get("jobs_active", 0)),
+            avg_duration_ms=float(data.get("avg_duration_ms", 0.0)),
+            max_duration_ms=float(data.get("max_duration_ms", 0.0)),
+            p95_duration_ms=float(data.get("p95_duration_ms", 0.0)),
+            total_cost_usd=float(data.get("total_cost_usd", 0.0)),
+            avg_cost_per_job_usd=float(data.get("avg_cost_per_job_usd", 0.0)),
+            queue_depth=int(data.get("queue_depth", 0)),
+            circuit_breaker_open=bool(data.get("circuit_breaker_open", False)),
+            deliveries_total=int(data.get("deliveries_total", 0)),
+            deliveries_pending=int(data.get("deliveries_pending", 0)),
+            deliveries_failed=int(data.get("deliveries_failed", 0)),
+            deliveries_delivered=int(data.get("deliveries_delivered", 0)),
+            memory_percent=float(data.get("memory_percent", 0.0)),
+            cpu_percent=float(data.get("cpu_percent", 0.0)),
         )
 
 

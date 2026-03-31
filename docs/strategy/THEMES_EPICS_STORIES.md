@@ -314,8 +314,8 @@ Stories:
   - missing: Richer approval chains and real external send remain future scope.
 - T4-E3-S4: Record delivery status and handoff audit events.
   - status: `complete_for_phase`
-  - current_state: Build and review delivery now persist lifecycle state (`prepared`, `awaiting_approval`, `approved`, `rejected`, `handed_off`) plus explicit audit events for gateway request, success, and failure, and provider-specific outcomes now flow into delivery summaries, operator report summaries, inbox attention, and recent provider-delivery views.
-  - missing: Broader active operator workflow and live UI remain future scope.
+  - current_state: Build and review delivery now persist lifecycle state (`prepared`, `awaiting_approval`, `approved`, `rejected`, `handed_off`) plus explicit audit events for gateway request, success, and failure. Provider-specific outcomes now flow into delivery summaries, operator report summaries, inbox attention, and recent provider-delivery views. `/deliver` detail now surfaces provider outcome, receipt, attention flags, and retry capability. `/deliver pending|failed|delivered` filters deliveries by outcome. `/report delivery` shows provider delivery summary with outcome/provider breakdown and attention items (v1.22.0).
+  - missing: Live UI and broader delivery automation remain future scope.
 
 ### Epic T4-E4: Operator Telegram Surface
 
@@ -326,7 +326,7 @@ Stories:
 Stories:
 - T4-E4-S1: /report Telegram command
   - status: `complete_for_phase`
-  - current_state: Operator report accessible from Telegram with overview/inbox/budget views.
+  - current_state: Operator report accessible from Telegram with overview/inbox/budget/cost/delivery/telemetry views.
   - missing: Live interactive drill-down and richer formatting remain future scope.
 - T4-E4-S2: /intake Telegram command
   - status: `complete_for_phase`
@@ -342,7 +342,7 @@ Stories:
   - missing: Richer filtering and interactive job drill-down remain future scope.
 - T4-E4-S5: /deliver Telegram command
   - status: `complete_for_phase`
-  - current_state: Delivery listing, detail, and gateway send accessible from Telegram.
+  - current_state: Delivery listing, enriched detail with provider outcome/receipt/attention/retry, gateway send, outcome-based filtering (`/deliver pending|failed|delivered`), and `/report delivery` provider summary now accessible from Telegram (v1.22.0).
   - missing: Richer delivery approval flows and interactive send confirmation remain future scope.
 
 ## Theme T5: Security, Governance, And Policy
@@ -457,14 +457,14 @@ Stories:
 
 ### Epic T6-E2: Runtime Observability
 
-- status: `in_progress`
-- approx_progress: 89%
+- status: `mostly_complete`
+- approx_progress: 97%
 
 Stories:
 - T6-E2-S1: Track job status, failures, retries, and durations.
-  - status: `mostly_complete`
-  - current_state: Persisted `ProductJobRecord` entries now track duration, retry count, and failure count, and the operator report summarizes failed jobs, retried jobs, and max observed duration across persisted product jobs.
-  - missing: Telemetry is strongest for persisted build/review jobs; deeper operate-runtime history remains separate.
+  - status: `complete_for_phase`
+  - current_state: Persisted `ProductJobRecord` entries track duration, retry count, and failure count. `TelemetrySnapshot` model captures point-in-time runtime metrics (job throughput, avg/max/p95 latency, cost, delivery health, system resources). `record_telemetry_snapshot()` builds snapshots from persisted data plus live worker/system stats, persisted as `TraceRecordKind.TELEMETRY` trace records. `get_telemetry_summary(window_hours)` aggregates over time windows with trend detection (stable/improving/degrading). `/telemetry [hours]` Telegram command and `/report telemetry` sub-command provide operator visibility (v1.22.0).
+  - missing: Live UI and push-based alerting remain future scope.
 - T6-E2-S2: Track worker execution and workspace health.
   - status: `mostly_complete`
   - current_state: `AgentOrchestrator.get_status()` now exposes workspace stats plus worker-execution snapshots, and `OperatorReportService` surfaces both in the operator report/inbox summary.

@@ -5,40 +5,29 @@ This file is the near-term execution backlog derived from the current state of
 
 Assessment basis:
 - branch: `main`
-- interpretation date: `2026-03-30`
+- interpretation date: `2026-03-31`
 - baseline: after the documented buyer-side Obolos API-call slice
 
 ## Ready Now
 
-### P0
-
-1. `T4-E3-S4` Finish provider-specific operator delivery workflow.
-   Why now: provider receipts, provider outcomes, and release readiness now
-   exist, but the operator flow still stops at report/CLI detail instead of a
-   richer active workflow.
-
 ### P1
 
-3. `T7-E2-S5` Add documented seller-side Obolos publishing and wallet-topup flow.
+1. `T7-E2-S5` Add documented seller-side Obolos publishing and wallet-topup flow.
    Why now: buyer-side catalog, wallet balance, and slug-based API calls now
    exist, so the next honest provider gap is completing more of the documented
    Obolos surface before we generalize to more marketplaces.
 
-4. `T6-E2-S1` Deepen persisted runtime telemetry beyond current product-job summaries.
-   Why now: release readiness, provider outcomes, and product-job telemetry now
-   exist, so operatorization needs richer ongoing runtime history.
-
 ### P2
 
-7. `T7-E1-S1` Expand the gateway contract beyond one-provider Phase 2 semantics.
+2. `T7-E1-S1` Expand the gateway contract beyond one-provider Phase 2 semantics.
    Why now: `obolos.tech` now spans both handoff and documented API-call
    semantics, so Phase 3 can start generalizing the gateway boundary.
 
-8. `T7-E2-S6` Add file-upload-safe and x402 payment-aware marketplace calls.
+3. `T7-E2-S6` Add file-upload-safe and x402 payment-aware marketplace calls.
    Why now: the new buyer-side API path covers JSON and query routes, but many
    useful marketplace APIs still need multipart uploads and richer payment flow.
 
-9. `T8-E1-S3` Add stronger architecture invariants for cross-domain boundaries.
+4. `T8-E1-S3` Add stronger architecture invariants for cross-domain boundaries.
    Why now: the runtime shape is now concrete enough that enforcement-level
    invariants matter more than additional descriptive docs alone.
 
@@ -89,6 +78,15 @@ Assessment basis:
 - `T6-E1-S1` Per-job cost recording now includes a cost accuracy feedback loop
   that validates estimates against actual recorded costs, improving operator
   cost posture beyond raw ledger entries (v1.21.0).
+
+- `T4-E3-S4` Provider delivery workflow now surfaces provider outcome, receipt,
+  attention flags, retry capability, and outcome-based filtering through
+  enriched `/deliver` commands and `/report delivery`, making provider outcomes
+  actionable operator workflow instead of just report detail (v1.22.0).
+- `T6-E2-S1` Runtime telemetry now captures point-in-time snapshots of job
+  throughput, latency percentiles, cost, delivery health, and system resources
+  as persisted trace records, with time-window aggregation, trend detection,
+  and `/telemetry` Telegram command for operator visibility (v1.22.0).
 
 ## Exit Criteria For The Next Backlog Slice
 

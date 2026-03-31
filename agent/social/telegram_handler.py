@@ -208,6 +208,7 @@ class TelegramHandler:
             "/build": self._cmd_build,
             "/jobs": self._cmd_jobs,
             "/deliver": self._cmd_deliver,
+            "/telemetry": self._cmd_telemetry,
             "/help": self._cmd_help,
         }
 
@@ -250,7 +251,8 @@ class TelegramHandler:
             "/intake — spusti review alebo build cez unified intake\n"
             "/build — shortcut pre build intake\n"
             "/jobs — zoznam product jobov (review, build)\n"
-            "/deliver — delivery status a odoslanie cez gateway\n"
+            "/deliver — delivery status, filter, retry a odoslanie\n"
+            "/telemetry — runtime telemetry dashboard\n"
             "/report — operator report a inbox\n"
             "/help — tento help\n\n"
             "Alebo napíš čokoľvek — premýšľam a konám."
@@ -1254,6 +1256,45 @@ class TelegramHandler:
                 )
             return "\n".join(lines)
 
+        if section == "delivery":
+            pds = report.get("provider_delivery_summary", {})
+            views = report.get("recent_provider_deliveries", [])
+            if not views:
+                return "*Provider Deliveries:* Žiadne provider deliveries."
+            lines = [
+                f"*Provider Delivery Summary* ({pds.get('total', 0)} total):",
+            ]
+            by_outcome = pds.get("by_outcome", {})
+            if by_outcome:
+                lines.append("*By outcome:*")
+                for outcome, count in sorted(by_outcome.items()):
+                    lines.append(f"  {outcome}: {count}")
+            by_provider = pds.get("by_provider", {})
+            if by_provider:
+                lines.append("*By provider:*")
+                for provider_id, count in sorted(by_provider.items()):
+                    lines.append(f"  {provider_id}: {count}")
+            attention_items = [v for v in views if v.get("attention_required")]
+            if attention_items:
+                lines.append(f"\n*Attention required ({len(attention_items)}):*")
+                for item in attention_items[:5]:
+                    job_id = item.get("job_id", "?")[:12]
+                    outcome = item.get("outcome", "?")
+                    lines.append(f"• `{job_id}` {item.get('title', '?')[:40]} — {outcome}")
+            lines.append(
+                "\n`/deliver pending` | `/deliver failed` | `/deliver delivered`"
+            )
+            return "\n".join(lines)
+
+        if section == "telemetry":
+            ts = report.get("telemetry_summary", {})
+            if not ts or ts.get("snapshots", 0) == 0:
+                latest = ts.get("latest")
+                if latest:
+                    return self._format_telemetry_snapshot(latest, note="Posledný snapshot (mimo okna)")
+                return "*Telemetry:* Žiadne dáta. Snapshots sa zbierajú pri dokončení jobov."
+            return self._format_telemetry_summary(ts)
+
         # Default: stručný overview
         lines = [
             "*Operator Report:*",
@@ -1275,7 +1316,7 @@ class TelegramHandler:
                 lines.append(f"• `{kind}` — {title}")
         else:
             lines.append("\nŽiadne attention items. ✓")
-        lines.append("\n`/report inbox` | `/report budget` | `/report cost`")
+        lines.append("\n`/report inbox` | `/report budget` | `/report cost` | `/report delivery` | `/report telemetry`")
         return "\n".join(lines)
 
     async def _cmd_intake(self, args: str) -> str:
@@ -1467,9 +1508,130 @@ class TelegramHandler:
         lines.append("\n`/jobs <id>` pre detail")
         return "\n".join(lines)
 
+    async def _cmd_telemetry(self, args: str) -> str:
+        """Runtime telemetry dashboard — throughput, latency, cost, delivery health."""
+        try:
+            window_hours = 24
+            if args.strip().isdigit():
+                window_hours = max(1, min(168, int(args.strip())))  # 1h-7d
+
+            ts = self._agent.control_plane_state.get_telemetry_summary(
+                window_hours=window_hours,
+            )
+        except Exception as e:
+            return f"*Telemetry error:* {e!s}"
+
+        if not ts or ts.get("snapshots", 0) == 0:
+            latest = ts.get("latest") if ts else None
+            if latest:
+                return self._format_telemetry_snapshot(latest, note="Posledný snapshot")
+            return (
+                "*Telemetry:* Žiadne dáta.\n"
+                "Snapshots sa zbierajú pri dokončení jobov.\n"
+                "Použi `/telemetry` po spustení jobov."
+            )
+
+        return self._format_telemetry_summary(ts)
+
+    def _format_telemetry_snapshot(
+        self,
+        snapshot: dict[str, Any],
+        *,
+        note: str = "",
+    ) -> str:
+        """Format a single telemetry snapshot for Telegram."""
+        lines = ["*Runtime Telemetry*"]
+        if note:
+            lines.append(f"_{note}_")
+        lines.extend([
+            "",
+            f"*Jobs:* {snapshot.get('jobs_completed', 0)} completed, "
+            f"{snapshot.get('jobs_failed', 0)} failed, "
+            f"{snapshot.get('jobs_retried', 0)} retried",
+            f"*Active:* {snapshot.get('jobs_active', 0)} "
+            f"| Queue: {snapshot.get('queue_depth', 0)}",
+        ])
+        avg_dur = snapshot.get("avg_duration_ms", 0)
+        p95_dur = snapshot.get("p95_duration_ms", 0)
+        if avg_dur > 0:
+            lines.append(f"*Latency:* avg={avg_dur:.0f}ms p95={p95_dur:.0f}ms")
+        total_cost = snapshot.get("total_cost_usd", 0)
+        avg_cost = snapshot.get("avg_cost_per_job_usd", 0)
+        lines.append(f"*Cost:* ${total_cost:.4f} total, ${avg_cost:.4f}/job")
+        dt = snapshot.get("deliveries_total", 0)
+        if dt > 0:
+            lines.append(
+                f"*Deliveries:* {dt} total "
+                f"({snapshot.get('deliveries_delivered', 0)} delivered, "
+                f"{snapshot.get('deliveries_pending', 0)} pending, "
+                f"{snapshot.get('deliveries_failed', 0)} failed)"
+            )
+        mem = snapshot.get("memory_percent", 0)
+        cpu = snapshot.get("cpu_percent", 0)
+        if mem > 0 or cpu > 0:
+            lines.append(f"*System:* CPU {cpu:.1f}% | RAM {mem:.1f}%")
+        if snapshot.get("circuit_breaker_open"):
+            lines.append("⚠️ *Circuit breaker is OPEN*")
+        return "\n".join(lines)
+
+    def _format_telemetry_summary(self, ts: dict[str, Any]) -> str:
+        """Format aggregated telemetry summary for Telegram."""
+        latest = ts.get("latest", {})
+        agg = ts.get("aggregated", {})
+        trend = ts.get("trend", "stable")
+        window = ts.get("window_hours", 24)
+        snapshot_count = ts.get("snapshots", 0)
+
+        trend_label = {"stable": "→ stable", "improving": "↑ improving", "degrading": "↓ degrading"}
+
+        lines = [
+            f"*Runtime Telemetry* ({window}h window, {snapshot_count} snapshots)",
+            f"Trend: {trend_label.get(trend, trend)}",
+        ]
+
+        if latest:
+            lines.append("")
+            lines.append("*Latest:*")
+            lines.append(
+                f"  Jobs: {latest.get('jobs_completed', 0)} done, "
+                f"{latest.get('jobs_failed', 0)} failed"
+            )
+            avg_dur = latest.get("avg_duration_ms", 0)
+            p95_dur = latest.get("p95_duration_ms", 0)
+            if avg_dur > 0:
+                lines.append(f"  Latency: avg={avg_dur:.0f}ms p95={p95_dur:.0f}ms")
+            lines.append(f"  Cost: ${latest.get('total_cost_usd', 0):.4f}")
+
+        if agg:
+            lines.append("")
+            lines.append(f"*Aggregated ({window}h):*")
+            lines.append(
+                f"  Max jobs completed: {agg.get('max_jobs_completed', 0)}"
+            )
+            lines.append(
+                f"  Max jobs failed: {agg.get('max_jobs_failed', 0)}"
+            )
+            avg_d = agg.get("avg_duration_ms", 0)
+            if avg_d > 0:
+                lines.append(f"  Avg duration: {avg_d:.0f}ms")
+            lines.append(f"  Max cost: ${agg.get('max_cost_usd', 0):.4f}")
+            fail_snapshots = agg.get("total_snapshots_with_failures", 0)
+            cb_triggered = agg.get("circuit_breaker_triggered", 0)
+            if fail_snapshots > 0:
+                lines.append(f"  Snapshots with failures: {fail_snapshots}")
+            if cb_triggered > 0:
+                lines.append(f"  Circuit breaker triggered: {cb_triggered}x")
+
+        lines.append("\n`/telemetry [hours]` na zmenu okna (default 24)")
+        return "\n".join(lines)
+
     async def _cmd_deliver(self, args: str) -> str:
-        """Delivery status, listing, and gateway send for operator workflow."""
+        """Delivery status, listing, filtering, retry, and gateway send."""
         parts = args.strip().split()
+
+        # Filter by provider outcome: /deliver pending|failed|delivered
+        if parts and parts[0] in ("pending", "failed", "delivered", "accepted", "unknown"):
+            return await self._deliver_filter(parts[0])
 
         if not parts:
             # List recent deliveries
@@ -1487,17 +1649,20 @@ class TelegramHandler:
                 job_id = d.get("job_id", "?")[:12]
                 kind = d.get("job_kind", "?")
                 title = d.get("title", "")[:50] or f"{kind} delivery"
-                lines.append(f"• `{job_id}` {title} — {status}")
-            lines.append("\n`/deliver <job_id>` pre detail | `/deliver <job_id> send` pre odoslanie")
+                provider_info = self._delivery_provider_badge(d)
+                lines.append(f"• `{job_id}` {title} — {status}{provider_info}")
+            lines.append(
+                "\n`/deliver <job_id>` detail"
+                " | `/deliver pending|failed|delivered` filter"
+            )
             return "\n".join(lines)
 
         job_id = parts[0]
         action = parts[1] if len(parts) > 1 else ""
 
-        if action == "send":
-            # Trigger gateway delivery
+        if action in ("send", "retry"):
+            # Trigger gateway delivery (retry = same as send, re-sends)
             try:
-                # Try review first, then build
                 result = None
                 review_bundle = self._agent.get_review_delivery_bundle(job_id)
                 if review_bundle:
@@ -1512,13 +1677,19 @@ class TelegramHandler:
 
                 ok = result.get("ok", False)
                 if ok:
-                    return f"*Delivery sent* pre job `{job_id}` ✓\nProvider: {result.get('provider_id', '?')}"
+                    provider_id = result.get("provider_id", "?")
+                    outcome = result.get("provider_outcome", "")
+                    label = "Retry sent" if action == "retry" else "Delivery sent"
+                    msg = f"*{label}* pre job `{job_id}` ✓\nProvider: {provider_id}"
+                    if outcome:
+                        msg += f"\nOutcome: {outcome}"
+                    return msg
                 error = result.get("error", "Unknown delivery error")
                 return f"*Delivery failed* pre job `{job_id}`\n{error}"
             except Exception as e:
                 return f"*Delivery send error:* {e!s}"
 
-        # Show delivery detail for job_id
+        # Show delivery detail for job_id (enriched with provider data)
         try:
             deliveries = self._agent.list_delivery_records(job_id=job_id, limit=5)
         except Exception as e:
@@ -1535,12 +1706,92 @@ class TelegramHandler:
         ]
         if d.get("approval_request_id"):
             lines.append(f"Approval: `{d['approval_request_id']}`")
+
+        # Provider delivery details (outcome, receipt, attention)
+        provider = d.get("summary", {}).get("provider_delivery", {})
+        if provider:
+            lines.append("")
+            outcome = provider.get("outcome", "unknown")
+            attention = provider.get("attention_required", False)
+            attention_mark = " ⚠️" if attention else ""
+            lines.append(f"*Provider:* {provider.get('provider_id', '?')}{attention_mark}")
+            lines.append(f"Outcome: {outcome}")
+            if provider.get("provider_status"):
+                lines.append(f"Provider status: {provider['provider_status']}")
+            if provider.get("route_id"):
+                lines.append(f"Route: {provider['route_id']}")
+            if provider.get("capability_id"):
+                lines.append(f"Capability: {provider['capability_id']}")
+            receipt = provider.get("receipt", {})
+            if receipt:
+                receipt_status = receipt.get("status", "")
+                receipt_ts = receipt.get("timestamp", "")
+                if receipt_status:
+                    lines.append(f"Receipt: {receipt_status}")
+                if receipt_ts:
+                    lines.append(f"Receipt time: {receipt_ts}")
+
         events = d.get("events", [])
         if events:
             lines.append(f"\n*Events ({len(events)}):*")
             for event in events[-5:]:
-                lines.append(f"• {event.get('event_type', '?')} — {event.get('status', '?')}")
-        lines.append(f"\n`/deliver {job_id} send` na odoslanie cez gateway")
+                event_type = event.get("event_type", "?")
+                event_status = event.get("status", "?")
+                event_detail = event.get("detail", "")
+                line = f"• {event_type} — {event_status}"
+                if event_detail:
+                    line += f" ({event_detail[:60]})"
+                lines.append(line)
+
+        # Action hints based on state
+        actions = []
+        if provider and provider.get("outcome") in ("failed", "unknown"):
+            actions.append(f"`/deliver {job_id} retry` na retry")
+        if d.get("status") not in ("handed_off",):
+            actions.append(f"`/deliver {job_id} send` na odoslanie")
+        if actions:
+            lines.append("\n" + " | ".join(actions))
+        return "\n".join(lines)
+
+    def _delivery_provider_badge(self, delivery: dict[str, Any]) -> str:
+        """Short provider outcome badge for delivery listing."""
+        provider = delivery.get("summary", {}).get("provider_delivery", {})
+        if not provider:
+            return ""
+        outcome = provider.get("outcome", "")
+        if not outcome:
+            return ""
+        attention = " ⚠️" if provider.get("attention_required") else ""
+        return f" [{outcome}{attention}]"
+
+    async def _deliver_filter(self, outcome_filter: str) -> str:
+        """Filter deliveries by provider outcome."""
+        try:
+            deliveries = self._agent.list_delivery_records(limit=50)
+        except Exception as e:
+            return f"*Delivery error:* {e!s}"
+
+        filtered = []
+        for d in deliveries:
+            provider = d.get("summary", {}).get("provider_delivery", {})
+            outcome = provider.get("outcome", "unknown") if provider else ""
+            if outcome == outcome_filter:
+                filtered.append(d)
+
+        if not filtered:
+            return f"Žiadne deliveries s outcome `{outcome_filter}`."
+
+        lines = [f"*Deliveries — {outcome_filter}* ({len(filtered)}):"]
+        for d in filtered[:15]:
+            job_id = d.get("job_id", "?")[:12]
+            title = d.get("title", "")[:50] or d.get("job_kind", "delivery")
+            provider = d.get("summary", {}).get("provider_delivery", {})
+            provider_id = provider.get("provider_id", "")
+            provider_part = f" via {provider_id}" if provider_id else ""
+            lines.append(f"• `{job_id}` {title}{provider_part}")
+        if len(filtered) > 15:
+            lines.append(f"... a {len(filtered) - 15} ďalších")
+        lines.append("\n`/deliver <job_id>` pre detail")
         return "\n".join(lines)
 
     async def _build_context_json(self, text: str) -> dict:

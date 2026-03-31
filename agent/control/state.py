@@ -24,6 +24,7 @@ from agent.control.models import (
     JobPlanRecord,
     PlanRecordStatus,
     ProductJobRecord,
+    TelemetrySnapshot,
     TraceRecordKind,
     UsageSummary,
 )
@@ -759,6 +760,189 @@ class ControlPlaneStateService:
             "median_ratio": round(median_ratio, 3),
             "accuracy_pct": accuracy_pct,
             "sample_size": len(comparisons),
+        }
+
+    # ── Telemetry ──────────────────────────────
+
+    def record_telemetry_snapshot(
+        self,
+        *,
+        status_provider: Any = None,
+        worker_stats: dict[str, Any] | None = None,
+    ) -> TelemetrySnapshot:
+        """Capture a point-in-time telemetry snapshot from current runtime state.
+
+        Builds snapshot from persisted product jobs, cost entries, deliveries,
+        plus optional live data from status_provider and worker_stats.
+        Records as a TELEMETRY trace for time-series querying.
+        """
+        self.initialize()
+
+        # Job metrics from persisted product jobs
+        product_jobs = self.list_product_jobs(limit=500)
+        completed = [j for j in product_jobs if j.status == "completed"]
+        failed = [j for j in product_jobs if j.failure_count > 0]
+        retried = [j for j in product_jobs if j.retry_count > 0]
+        durations = [j.duration_ms for j in completed if j.duration_ms and j.duration_ms > 0]
+        avg_duration = sum(durations) / len(durations) if durations else 0.0
+        max_duration = max(durations) if durations else 0.0
+        p95_duration = 0.0
+        if durations:
+            sorted_d = sorted(durations)
+            p95_idx = min(int(len(sorted_d) * 0.95), len(sorted_d) - 1)
+            p95_duration = sorted_d[p95_idx]
+
+        # Cost from ledger
+        cost_entries = self.list_cost_entries(limit=500)
+        total_cost = sum(e.usage.total_cost_usd for e in cost_entries)
+        avg_cost = total_cost / len(completed) if completed else 0.0
+
+        # Delivery metrics
+        deliveries = self.list_deliveries(limit=500)
+        delivery_outcomes: dict[str, int] = {}
+        for d in deliveries:
+            provider = d.summary.get("provider_delivery", {})
+            outcome = provider.get("outcome", "") if provider else ""
+            if outcome:
+                delivery_outcomes[outcome] = delivery_outcomes.get(outcome, 0) + 1
+
+        # Live data from worker/system
+        ws = worker_stats or {}
+        queue_depth = int(ws.get("queue_size", 0))
+        active_jobs = int(ws.get("active_jobs", 0))
+        circuit_breaker = bool(ws.get("circuit_breaker_open", False))
+
+        # System resources (best-effort)
+        memory_pct = 0.0
+        cpu_pct = 0.0
+        if status_provider and callable(status_provider):
+            try:
+                agent_status = status_provider()
+                health = agent_status.get("health", {})
+                memory_pct = float(health.get("memory_percent", 0.0))
+                cpu_pct = float(health.get("cpu_percent", 0.0))
+            except Exception:
+                pass
+
+        snapshot = TelemetrySnapshot(
+            jobs_completed=len(completed),
+            jobs_failed=len(failed),
+            jobs_retried=len(retried),
+            jobs_active=active_jobs,
+            avg_duration_ms=avg_duration,
+            max_duration_ms=max_duration,
+            p95_duration_ms=p95_duration,
+            total_cost_usd=total_cost,
+            avg_cost_per_job_usd=avg_cost,
+            queue_depth=queue_depth,
+            circuit_breaker_open=circuit_breaker,
+            deliveries_total=len(deliveries),
+            deliveries_pending=delivery_outcomes.get("pending", 0),
+            deliveries_failed=delivery_outcomes.get("failed", 0),
+            deliveries_delivered=delivery_outcomes.get("delivered", 0),
+            memory_percent=memory_pct,
+            cpu_percent=cpu_pct,
+        )
+
+        # Persist as trace record for time-series history
+        self.record_trace(
+            trace_kind=TraceRecordKind.TELEMETRY,
+            title="Runtime telemetry snapshot",
+            detail=(
+                f"jobs={len(completed)}/{len(failed)}f "
+                f"avg_dur={avg_duration:.0f}ms "
+                f"cost=${total_cost:.4f}"
+            ),
+            metadata=snapshot.to_dict(),
+        )
+
+        return snapshot
+
+    def get_telemetry_summary(
+        self,
+        *,
+        window_hours: int = 24,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Aggregate telemetry snapshots over a time window.
+
+        Returns summary stats: latest snapshot, trend direction,
+        aggregated metrics over the window.
+        """
+        self.initialize()
+        traces = self.list_traces(trace_kind="telemetry", limit=limit)
+        if not traces:
+            return {"snapshots": 0, "latest": None, "window_hours": window_hours}
+
+        cutoff = (datetime.now(UTC) - timedelta(hours=window_hours)).isoformat()
+        in_window = [
+            t for t in traces
+            if t.created_at >= cutoff
+        ]
+
+        snapshots = [
+            TelemetrySnapshot.from_dict(t.metadata)
+            for t in in_window
+            if t.metadata
+        ]
+
+        if not snapshots:
+            latest_trace = traces[0]
+            return {
+                "snapshots": 0,
+                "latest": TelemetrySnapshot.from_dict(latest_trace.metadata).to_dict()
+                if latest_trace.metadata else None,
+                "window_hours": window_hours,
+                "note": "No snapshots in the requested window",
+            }
+
+        latest = snapshots[0]  # Traces are returned newest-first
+
+        # Aggregate over window
+        all_completed = [s.jobs_completed for s in snapshots]
+        all_failed = [s.jobs_failed for s in snapshots]
+        all_costs = [s.total_cost_usd for s in snapshots]
+        all_durations = [s.avg_duration_ms for s in snapshots if s.avg_duration_ms > 0]
+
+        # Trend detection: compare first half vs second half of snapshots
+        trend = "stable"
+        if len(snapshots) >= 4:
+            mid = len(snapshots) // 2
+            recent_half = snapshots[:mid]
+            older_half = snapshots[mid:]
+            recent_fail_rate = (
+                sum(s.jobs_failed for s in recent_half)
+                / max(sum(s.jobs_completed for s in recent_half), 1)
+            )
+            older_fail_rate = (
+                sum(s.jobs_failed for s in older_half)
+                / max(sum(s.jobs_completed for s in older_half), 1)
+            )
+            if recent_fail_rate > older_fail_rate * 1.5:
+                trend = "degrading"
+            elif recent_fail_rate < older_fail_rate * 0.7:
+                trend = "improving"
+
+        return {
+            "snapshots": len(snapshots),
+            "window_hours": window_hours,
+            "latest": latest.to_dict(),
+            "trend": trend,
+            "aggregated": {
+                "max_jobs_completed": max(all_completed) if all_completed else 0,
+                "max_jobs_failed": max(all_failed) if all_failed else 0,
+                "max_cost_usd": round(max(all_costs), 6) if all_costs else 0.0,
+                "avg_duration_ms": (
+                    round(sum(all_durations) / len(all_durations), 1)
+                    if all_durations else 0.0
+                ),
+                "total_snapshots_with_failures": sum(
+                    1 for s in snapshots if s.jobs_failed > 0
+                ),
+                "circuit_breaker_triggered": sum(
+                    1 for s in snapshots if s.circuit_breaker_open
+                ),
+            },
         }
 
     def _append_delivery_event(

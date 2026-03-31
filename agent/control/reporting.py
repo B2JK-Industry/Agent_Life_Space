@@ -424,6 +424,11 @@ class OperatorReportService:
             "workspace_health": workspace_health,
             "worker_execution": worker_execution,
             "agent_status": agent_status,
+            "telemetry_summary": (
+                self._control_plane_state.get_telemetry_summary(window_hours=24)
+                if self._control_plane_state is not None
+                else {}
+            ),
         }
 
     def _approval_detail(self, approval: dict[str, Any]) -> str:

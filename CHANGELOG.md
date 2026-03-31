@@ -10,6 +10,35 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.22.0] — 2026-03-31
+
+Phase 3: provider-specific delivery workflow and runtime telemetry.
+
+### Provider Delivery Workflow (T4-E3-S4)
+- `/deliver <job_id>` now shows provider outcome, provider status, receipt,
+  capability, route, and attention-required flag — data that was already
+  recorded but not surfaced to the operator
+- `/deliver <job_id> retry` re-sends failed deliveries through the gateway
+- `/deliver pending|failed|delivered` filters deliveries by provider outcome
+- `/deliver` listing now shows provider outcome badge per delivery
+- `/report delivery` sub-command shows provider delivery summary with outcome
+  breakdown, per-provider counts, and attention-required items
+- Event detail (truncated) now visible in delivery event listing
+
+### Runtime Telemetry (T6-E2-S1)
+- `TelemetrySnapshot` model captures point-in-time runtime metrics: job
+  throughput, latency (avg/max/p95), cost, delivery health, system resources
+- `record_telemetry_snapshot()` builds snapshot from persisted product jobs,
+  cost ledger, deliveries, and optional live worker/system stats
+- `get_telemetry_summary(window_hours=24)` aggregates snapshots over a time
+  window with trend detection (stable/improving/degrading)
+- New `TraceRecordKind.TELEMETRY` — telemetry snapshots persisted as trace
+  records for time-series querying
+- `/telemetry [hours]` Telegram command shows runtime dashboard with
+  throughput, latency, cost, delivery health, system resources, and trend
+- `/report telemetry` sub-command for operator telemetry visibility
+- Telemetry summary included in operator report output
+
 ## [1.21.1] — 2026-03-30
 
 Deployment portability and security fix.

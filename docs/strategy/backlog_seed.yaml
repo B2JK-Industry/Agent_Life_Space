@@ -1,4 +1,4 @@
-version: 6
+version: 7
 source_of_truth: docs/strategy/MASTER_SOURCE_OF_TRUTH.md
 seed_note: >
   Machine-friendly backlog seed aligned to current main. Mirrors
@@ -6,33 +6,29 @@ seed_note: >
 
 progress_snapshot:
   assessed_state_note: "Snapshot after the documented buyer-side Obolos API-call slice."
-  interpretation_date: "2026-03-30"
+  interpretation_date: "2026-03-31"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
     T2: { status: complete_for_phase, approx_progress: 96 }
     T3: { status: complete_for_phase, approx_progress: 99 }
-    T4: { status: in_progress, approx_progress: 98 }
+    T4: { status: in_progress, approx_progress: 99 }
     T5: { status: in_progress, approx_progress: 99 }
-    T6: { status: in_progress, approx_progress: 99 }
+    T6: { status: complete_for_phase, approx_progress: 99 }
     T7: { status: in_progress, approx_progress: 95 }
     T8: { status: in_progress, approx_progress: 98 }
 next_execution_backlog:
-  - priority: P0
-    story_id: T4-E3-S4
-    title: "Finish provider-specific operator delivery workflow"
-    why_now: "Provider receipts, provider outcomes, and release readiness now exist, but the operator flow still stops at report or CLI detail instead of a richer active workflow."
   - priority: P1
     story_id: T7-E2-S5
     title: "Add documented seller-side Obolos publishing and wallet-topup flow"
     why_now: "Buyer-side catalog, wallet balance, and slug calls now exist, so the next honest gap is completing the documented Obolos surface before generalizing to more providers."
-  - priority: P1
-    story_id: T6-E2-S1
-    title: "Deepen persisted runtime telemetry beyond current product-job summaries"
-    why_now: "Release readiness, provider outcomes, and product-job telemetry now exist, so operatorization needs richer ongoing runtime history."
   - priority: P2
     story_id: T7-E1-S1
     title: "Expand the gateway contract beyond one-provider Phase 2 semantics"
     why_now: "obolos.tech now spans both handoff and documented API-call semantics, so Phase 3 can start generalizing the gateway boundary."
+  - priority: P2
+    story_id: T7-E2-S6
+    title: "Add file-upload-safe and x402 payment-aware marketplace calls"
+    why_now: "The buyer-side API path covers JSON and query routes, but many useful marketplace APIs still need multipart uploads and richer payment flow."
   - priority: P2
     story_id: T8-E1-S3
     title: "Add stronger architecture invariants for cross-domain boundaries"
