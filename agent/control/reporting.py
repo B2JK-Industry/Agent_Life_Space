@@ -325,9 +325,14 @@ class OperatorReportService:
 
         approval_backlog = self._approval_backlog(all_approvals)
 
+        completed_jobs = [j for j in jobs if j["status"] == "completed"]
+        failed_jobs_list = [j for j in jobs if j["status"] == "failed"]
+
         return {
             "summary": {
                 "total_jobs": len(jobs),
+                "completed_jobs": len(completed_jobs),
+                "failed_jobs": len(failed_jobs_list),
                 "total_artifacts": len(artifacts),
                 "blocked_jobs": len(blocked_jobs),
                 "pending_approvals": len(pending_approvals),

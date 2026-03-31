@@ -284,6 +284,13 @@ class AgentBrain:
                 f"{get_response_language_instruction()}"
             )
 
+        # ── Layer 5.5: Runtime facts injection (anti-confabulation) ──
+        # Inject verified runtime state into the prompt so the LLM has real data
+        # even when it cannot call agent tools (e.g. CLI backend).
+        runtime_facts = self._collect_runtime_facts()
+        if runtime_facts:
+            prompt += f"\n\nCurrent runtime state (verified, do not contradict):\n{runtime_facts}"
+
         # ── Layer 6: LLM call via provider ──
         from agent.core.llm_provider import GenerateRequest, get_provider
 
@@ -647,6 +654,58 @@ class AgentBrain:
                 )
         except Exception as e:
             logger.error("persistent_save_error", error=str(e))
+
+    def _collect_runtime_facts(self) -> str:
+        """Collect verified runtime facts for anti-confabulation injection.
+
+        Returns a compact string of current agent state. Injected into the LLM
+        prompt so responses about tasks/budget/health use real data instead of
+        confabulated answers.
+        """
+        facts: list[str] = []
+        try:
+            task_stats = self._agent.tasks.get_stats()
+            facts.append(
+                f"- Tasks: {task_stats['total_tasks']} total"
+                + (f" ({', '.join(f'{s}: {c}' for s, c in task_stats['by_status'].items())})"
+                   if task_stats.get("by_status") else "")
+            )
+        except Exception:
+            pass
+        try:
+            mem_stats = self._agent.memory.get_stats()
+            facts.append(f"- Memories: {mem_stats['total_memories']}")
+        except Exception:
+            pass
+        try:
+            health = self._agent.watchdog.get_system_health()
+            facts.append(
+                f"- System: CPU {health.cpu_percent:.0f}%, "
+                f"RAM {health.memory_percent:.0f}%, "
+                f"Disk {health.disk_percent:.0f}%"
+            )
+            if health.alerts:
+                facts.append(f"- Alerts: {', '.join(health.alerts)}")
+        except Exception:
+            pass
+        try:
+            job_stats = self._agent.get_status().get("jobs", {})
+            if job_stats:
+                facts.append(
+                    f"- Jobs: {job_stats.get('total_completed', 0)} completed, "
+                    f"{job_stats.get('total_failed', 0)} failed"
+                )
+        except Exception:
+            pass
+        try:
+            finance = self._agent.finance.get_stats()
+            facts.append(
+                f"- Budget: income ${finance['total_income']:.2f}, "
+                f"expenses ${finance['total_expenses']:.2f}"
+            )
+        except Exception:
+            pass
+        return "\n".join(facts)
 
     def get_usage(self) -> dict[str, Any]:
         return {

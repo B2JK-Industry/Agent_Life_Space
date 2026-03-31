@@ -84,9 +84,17 @@ class TestResponseSending:
         for caps in CHANNEL_CAPABILITIES.values():
             assert can_send_response(ResponseClass.SAFE, caps)
 
-    def test_internal_response_goes_nowhere(self):
-        for caps in CHANNEL_CAPABILITIES.values():
-            assert not can_send_response(ResponseClass.INTERNAL, caps)
+    def test_internal_response_allowed_for_full_trust_only(self):
+        """INTERNAL responses allowed only on FULL trust channels (owner private chat)."""
+        for name, caps in CHANNEL_CAPABILITIES.items():
+            if caps.trust_level == ChannelTrustLevel.FULL:
+                assert can_send_response(ResponseClass.INTERNAL, caps), (
+                    f"INTERNAL should be allowed on FULL trust channel: {name}"
+                )
+            else:
+                assert not can_send_response(ResponseClass.INTERNAL, caps), (
+                    f"INTERNAL should be blocked on non-FULL trust channel: {name}"
+                )
 
     def test_private_response_only_to_owner(self):
         owner_caps = get_channel_capabilities("telegram", is_owner=True)

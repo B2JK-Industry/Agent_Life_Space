@@ -43,6 +43,11 @@ class InternalDispatcher:
         if "http://" in text_lower or "https://" in text_lower or "www." in text_lower:
             return None
 
+        # Memory storage — handle BEFORE LLM to avoid CLI errormaxturns
+        memory_content = self._extract_remember_content(text_lower, text)
+        if memory_content is not None:
+            return await self._handle_remember(memory_content)
+
         # Exact/near-exact pattern matching only
         handlers = [
             (self._is_status_query, self._handle_status),
@@ -95,39 +100,80 @@ class InternalDispatcher:
 
     @staticmethod
     def _is_status_query(text: str) -> bool:
-        if len(text.split()) > 4:
+        if len(text.split()) > 6:
             return False
-        return bool(re.search(r"\b(stav|status)\b", text))
+        return bool(re.search(
+            r"\b(stav|status)\b"
+            r"|aký je tvoj stav"
+            r"|ako sa máš"
+            r"|si v poriadku"
+            r"|čo robíš"
+            r"|how are you"
+            r"|what.*status",
+            text,
+        ))
 
     @staticmethod
     def _is_health_query(text: str) -> bool:
-        if len(text.split()) > 4:
+        if len(text.split()) > 6:
             return False
-        return bool(re.search(r"\b(zdravie|health)\b", text))
+        return bool(re.search(
+            r"\b(zdravie|health)\b"
+            r"|system health"
+            r"|ako je server"
+            r"|stav servera",
+            text,
+        ))
 
     @staticmethod
     def _is_tasks_query(text: str) -> bool:
-        if len(text.split()) > 4:
+        if len(text.split()) > 6:
             return False
-        return bool(re.search(r"\b(úloh[ya]?|tasks?)\b", text))
+        return bool(re.search(
+            r"\b(úloh[ya]?|tasks?)\b"
+            r"|aké úlohy"
+            r"|čo máš v rade"
+            r"|zoznam úloh"
+            r"|čo riešiš"
+            r"|task list"
+            r"|what.*tasks",
+            text,
+        ))
 
     @staticmethod
     def _is_skills_query(text: str) -> bool:
-        if len(text.split()) > 4:
+        if len(text.split()) > 6:
             return False
-        return bool(re.search(r"\b(skills)\b", text))
+        return bool(re.search(
+            r"\b(skills|schopnost[ií])\b"
+            r"|čo vieš robiť"
+            r"|aké skills"
+            r"|what.*can you do",
+            text,
+        ))
 
     @staticmethod
     def _is_budget_query(text: str) -> bool:
-        if len(text.split()) > 4:
+        if len(text.split()) > 6:
             return False
-        return bool(re.search(r"\b(rozpočet|budget)\b", text))
+        return bool(re.search(
+            r"\b(rozpočet|budget)\b"
+            r"|koľko.*peňaz"
+            r"|finančn"
+            r"|financial",
+            text,
+        ))
 
     @staticmethod
     def _is_identity_query(text: str) -> bool:
-        if len(text.split()) > 4:
+        if len(text.split()) > 6:
             return False
-        return bool(re.search(r"\b(kto si|kto som)\b", text))
+        return bool(re.search(
+            r"\b(kto si|kto som|who are you)\b"
+            r"|predstav sa"
+            r"|introduce yourself",
+            text,
+        ))
 
     # --- Handlers: structured responses from modules ---
 
@@ -201,3 +247,40 @@ class InternalDispatcher:
         # Return first 2 sentences of centralized persona
         sentences = get_system_prompt().strip().split(".")
         return ".".join(sentences[:3]).strip() + "."
+
+    # --- Memory storage: bypass LLM entirely ---
+
+    _REMEMBER_PATTERNS = [
+        re.compile(r"zapam[äa]taj\s+si\s+(?:že\s+)?(.+)", re.IGNORECASE),
+        re.compile(r"zapam[äa]taj\s+si\s*:\s*(.+)", re.IGNORECASE),
+        re.compile(r"remember\s+(?:that\s+)?(.+)", re.IGNORECASE),
+        re.compile(r"ulož\s+(?:si\s+)?(?:do\s+pamäte\s+)?(?:že\s+)?(.+)", re.IGNORECASE),
+    ]
+
+    @staticmethod
+    def _extract_remember_content(text_lower: str, original_text: str) -> str | None:
+        """Extract content to remember, or None if not a remember request."""
+        for pattern in InternalDispatcher._REMEMBER_PATTERNS:
+            match = pattern.search(original_text)
+            if match:
+                content = match.group(1).strip().rstrip(".")
+                if len(content) >= 3:
+                    return content
+        return None
+
+    async def _handle_remember(self, content: str) -> str:
+        """Store user-asserted fact directly into memory. Zero LLM tokens."""
+        from agent.memory.store import MemoryEntry, MemoryKind, MemoryType, ProvenanceStatus
+
+        entry = MemoryEntry(
+            content=content,
+            memory_type=MemoryType.SEMANTIC,
+            kind=MemoryKind.FACT,
+            tags=["user_request", "remembered"],
+            source="dispatcher",
+            importance=0.8,
+            provenance=ProvenanceStatus.USER_ASSERTED,
+        )
+        await self._agent.memory.store(entry)
+        logger.info("dispatch_remember", content=content[:80])
+        return f"Zapamätal som si: {content}"
