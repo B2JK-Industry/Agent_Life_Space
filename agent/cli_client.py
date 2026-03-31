@@ -58,10 +58,11 @@ def check_status(base_url: str) -> bool:
 
 def strip_markdown(text: str) -> str:
     cleaned = text.replace("*", "").replace("`", "")
-    # Strip cost suffix (💰 $0.01 | haiku | ⬆... tokens)
-    idx = cleaned.find("\n💰")
-    if idx > 0:
-        cleaned = cleaned[:idx]
+    # Strip cost suffix and cache tags
+    for marker in ("\n💰", "\n_📦"):
+        idx = cleaned.find(marker)
+        if idx > 0:
+            cleaned = cleaned[:idx]
     return cleaned.strip()
 
 
