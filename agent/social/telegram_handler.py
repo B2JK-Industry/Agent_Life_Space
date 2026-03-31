@@ -348,7 +348,7 @@ class TelegramHandler:
             f"*Pracovná fronta*\n"
             f"V rade: {status['queue_size']}\n"
             f"Spracúva sa: {'áno' if status['processing'] else 'nie'}\n"
-            f"Celkom spracované: {status['total_processed']}"
+            f"Celkom spracované: {status.get('total_attempted', status.get('total_success', 0))}"
         )
 
     async def _cmd_consolidate(self, args: str) -> str:
@@ -1263,8 +1263,8 @@ class TelegramHandler:
             f"{summary.get('failed_jobs', 0)} failed)",
             f"Artifacts: {summary.get('total_artifacts', 0)}",
             f"Approvals pending: {summary.get('pending_approvals', 0)}",
-            f"Deliveries: {summary.get('total_deliveries', 0)}",
-            f"Cost ledger: ${summary.get('total_recorded_cost_usd', 0):.4f}",
+            f"Deliveries: {summary.get('delivery_records', summary.get('total_deliveries', 0))}",
+            f"Cost ledger: ${summary.get('recorded_cost_usd', summary.get('total_recorded_cost_usd', 0)):.4f}",
             f"Inbox items: {len(inbox)}",
         ]
         if inbox:
@@ -1429,9 +1429,10 @@ class TelegramHandler:
             job = self._agent.get_product_job(args_stripped)
             if job is None:
                 return f"Job `{args_stripped}` nenájdený."
+            job_id = job.get("job_id") or job.get("id", "?")
             lines = [
-                f"*Job {job['id']}*",
-                f"Kind: {job.get('kind', '?')} | Status: {job.get('status', '?')}",
+                f"*Job {job_id}*",
+                f"Kind: {job.get('job_kind', job.get('kind', '?'))} | Status: {job.get('status', '?')}",
                 f"Created: {job.get('created_at', '?')[:19]}",
             ]
             metadata = job.get("metadata", {})
@@ -1460,10 +1461,12 @@ class TelegramHandler:
         lines = ["*Recent Jobs:*"]
         for job in jobs:
             status = job.get("status", "?")
-            kind = job.get("kind", "?")
-            jid = job.get("id", "?")[:12]
+            kind = job.get("job_kind", job.get("kind", "?"))
+            jid = (job.get("job_id") or job.get("id", "?"))[:12]
+            title = job.get("title", "")[:40]
             created = job.get("created_at", "")[:10]
-            lines.append(f"• `{jid}` {kind} — {status} ({created})")
+            label = title or kind
+            lines.append(f"• `{jid}` {label} — {status} ({created})")
         lines.append("\n`/jobs <id>` pre detail")
         return "\n".join(lines)
 

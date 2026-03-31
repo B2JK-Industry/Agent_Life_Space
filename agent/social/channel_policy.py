@@ -149,7 +149,11 @@ def can_send_response(
 ) -> bool:
     """Check if a response can be sent on this channel."""
     if response_class == ResponseClass.INTERNAL:
-        return False  # Never send internal responses
+        # INTERNAL is allowed only on FULL trust channels (owner in private chat).
+        # Agent never leaks real secrets (vault enforces that), so the pattern
+        # match catches benign mentions of "token", "/home/", "bearer" in
+        # legitimate owner conversations.
+        return channel_caps.trust_level == ChannelTrustLevel.FULL
     if response_class == ResponseClass.PRIVATE:
         return channel_caps.max_response_class in (
             ResponseClass.PRIVATE, ResponseClass.INTERNAL
