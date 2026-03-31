@@ -533,6 +533,8 @@ _EXTERNAL_CAPABILITY_PROVIDERS: dict[str, ExternalCapabilityProvider] = {
             "marketplace_catalog_v1",
             "wallet_balance_v1",
             "marketplace_api_call_v1",
+            "seller_publish_v1",
+            "wallet_topup_v1",
         ),
         notes=(
             "Provider routes must resolve target URL and auth from runtime "
@@ -543,6 +545,10 @@ _EXTERNAL_CAPABILITY_PROVIDERS: dict[str, ExternalCapabilityProvider] = {
                 "Documented buyer-side marketplace calls use Obolos API routes "
                 "and wallet bearer auth, distinct from the older handoff-style "
                 "delivery adapter."
+            ),
+            (
+                "Seller-side publishing and wallet top-up require owner approval "
+                "and wallet auth (AGENT_OBOLOS_WALLET_ADDRESS)."
             ),
         ),
     ),
@@ -688,6 +694,61 @@ _EXTERNAL_CAPABILITY_ROUTES: dict[str, ExternalCapabilityRoute] = {
         response_mode="obolos_marketplace_api_call_v1",
         estimated_cost_usd=0.0,
         priority=10,
+    ),
+    # ── Seller-side Obolos routes ──────────────────
+    "obolos_seller_publish_primary": ExternalCapabilityRoute(
+        route_id="obolos_seller_publish_primary",
+        provider_id="obolos.tech",
+        capability_id="seller_publish_v1",
+        label="obolos.tech seller API publishing",
+        description=(
+            "Documented seller-side API publishing endpoint. "
+            "Registers or updates a seller API listing on the marketplace."
+        ),
+        target_kind="http_api",
+        target_env_var="AGENT_OBOLOS_API_BASE_URL",
+        default_target_url="https://obolos.tech/api",
+        auth_token_env_var="AGENT_OBOLOS_WALLET_ADDRESS",  # noqa: S106
+        auth_token_secret_name="obolos.tech.wallet_address",  # noqa: S106
+        allowed_job_kinds=(JobKind.OPERATE,),
+        allowed_export_modes=("internal",),
+        gateway_contract_id="external_api_call_v1",
+        gateway_policy_id="owner_api_call",
+        request_mode="obolos_seller_publish_v1",
+        response_mode="obolos_seller_publish_v1",
+        estimated_cost_usd=0.0,
+        priority=10,
+        notes=(
+            "Seller publishing requires wallet auth and owner approval.",
+            "Request payload includes slug, title, description, pricing, endpoint URL.",
+        ),
+    ),
+    "obolos_wallet_topup_primary": ExternalCapabilityRoute(
+        route_id="obolos_wallet_topup_primary",
+        provider_id="obolos.tech",
+        capability_id="wallet_topup_v1",
+        label="obolos.tech wallet top-up",
+        description=(
+            "Documented wallet top-up endpoint. "
+            "Initiates a credit top-up for the configured wallet address."
+        ),
+        target_kind="http_api",
+        target_env_var="AGENT_OBOLOS_API_BASE_URL",
+        default_target_url="https://obolos.tech/api",
+        auth_token_env_var="AGENT_OBOLOS_WALLET_ADDRESS",  # noqa: S106
+        auth_token_secret_name="obolos.tech.wallet_address",  # noqa: S106
+        allowed_job_kinds=(JobKind.OPERATE,),
+        allowed_export_modes=("internal",),
+        gateway_contract_id="external_api_call_v1",
+        gateway_policy_id="owner_api_call",
+        request_mode="obolos_wallet_topup_v1",
+        response_mode="obolos_wallet_topup_v1",
+        estimated_cost_usd=0.0,
+        priority=10,
+        notes=(
+            "Wallet top-up requires wallet auth.",
+            "Response includes new balance and transaction reference.",
+        ),
     ),
 }
 
@@ -1206,6 +1267,43 @@ def resolve_external_capability_routes(
     """Resolve ordered candidate routes for one provider-backed capability."""
     return list_external_capability_routes(
         provider_id=provider_id,
+        capability_id=capability_id,
+        job_kind=job_kind,
+        export_mode=export_mode,
+    )
+
+
+def list_providers_for_capability(
+    capability_id: str,
+) -> list[ExternalCapabilityProvider]:
+    """Return all providers that declare a given capability, ordered by ID.
+
+    Enables multi-provider resolution: callers can iterate providers to find
+    the best match for a capability instead of hard-coding a single provider.
+    """
+    return [
+        provider
+        for provider in _EXTERNAL_CAPABILITY_PROVIDERS.values()
+        if capability_id in provider.capability_ids
+    ]
+
+
+def resolve_capability_across_providers(
+    *,
+    capability_id: str,
+    job_kind: JobKind | str,
+    export_mode: str = "",
+) -> list[ExternalCapabilityRoute]:
+    """Resolve routes for a capability across ALL providers.
+
+    Unlike resolve_external_capability_routes() which filters by a single
+    provider_id, this function searches across all providers that declare
+    the requested capability. Routes are returned sorted by priority.
+
+    This is the multi-provider entry point: if provider A's routes are
+    unavailable or fail, the caller can try provider B's routes.
+    """
+    return list_external_capability_routes(
         capability_id=capability_id,
         job_kind=job_kind,
         export_mode=export_mode,

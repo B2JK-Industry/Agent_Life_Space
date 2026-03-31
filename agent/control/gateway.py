@@ -408,15 +408,88 @@ class ExternalGatewayService:
                 }
             )
 
+        # Capability-to-providers map for multi-provider visibility
+        capability_map: dict[str, list[str]] = {}
+        for provider in providers:
+            for cap in provider.capability_ids:
+                capability_map.setdefault(cap, []).append(provider.id)
+
         return {
             "summary": {
                 "total_providers": len(provider_items),
                 "total_routes": len(route_items),
                 "configured_routes": configured_routes,
                 "unconfigured_routes": len(route_items) - configured_routes,
+                "total_capabilities": len(capability_map),
             },
             "providers": provider_items,
             "routes": route_items,
+            "capability_map": capability_map,
+        }
+
+    async def call_api_across_providers(
+        self,
+        *,
+        capability_id: str,
+        resource: str = "",
+        method: str = "",
+        query_params: dict[str, Any] | None = None,
+        json_payload: dict[str, Any] | None = None,
+        auth_token: str = "",
+        job_id: str = "",
+        requester: str = "operator",
+        title: str = "",
+    ) -> dict[str, Any]:
+        """Call an API capability across all providers until one succeeds.
+
+        Unlike call_api_via_capability() which requires a specific provider_id,
+        this method discovers all providers supporting the requested capability
+        and tries them in order until one succeeds.
+        """
+        from agent.control.policy import list_providers_for_capability
+
+        providers = list_providers_for_capability(capability_id)
+        if not providers:
+            return {
+                "ok": False,
+                "error": f"No providers found for capability '{capability_id}'.",
+                "provider_id": "",
+                "capability_id": capability_id,
+            }
+
+        last_error = ""
+        for provider in providers:
+            result = await self.call_api_via_capability(
+                provider_id=provider.id,
+                capability_id=capability_id,
+                resource=resource,
+                method=method,
+                query_params=query_params,
+                json_payload=json_payload,
+                auth_token=auth_token,
+                job_id=job_id,
+                requester=requester,
+                title=title,
+            )
+            if result.get("ok"):
+                result["resolved_provider_id"] = provider.id
+                return result
+            last_error = str(result.get("error", "unknown"))
+            # Only continue to next provider on retryable errors
+            if result.get("denial", {}).get("code") in (
+                "gateway_provider_not_configured",
+                "gateway_capability_not_found",
+            ):
+                continue
+            # Non-retryable (e.g. payment required, auth failure) — stop
+            return result
+
+        return {
+            "ok": False,
+            "error": f"All providers failed for capability '{capability_id}': {last_error}",
+            "provider_id": "",
+            "capability_id": capability_id,
+            "providers_tried": [p.id for p in providers],
         }
 
     async def send_delivery_via_capability(
@@ -1303,6 +1376,20 @@ class ExternalGatewayService:
                 "query_params": dict(query_params),
                 "json_payload": dict(json_payload),
             }
+        if route.request_mode == "obolos_seller_publish_v1":
+            return {
+                "method": "POST",
+                "target_url": f"{target_url.rstrip('/')}/seller/apis",
+                "query_params": {},
+                "json_payload": dict(json_payload),
+            }
+        if route.request_mode == "obolos_wallet_topup_v1":
+            return {
+                "method": "POST",
+                "target_url": f"{target_url.rstrip('/')}/wallet/topup",
+                "query_params": {},
+                "json_payload": dict(json_payload),
+            }
         return {
             "method": normalized_method or ("POST" if json_payload else "GET"),
             "target_url": target_url,
@@ -1344,6 +1431,22 @@ class ExternalGatewayService:
                 "provider_status": "ok",
                 "target_url": target_url,
                 "top_level_keys": sorted(payload.keys())[:25],
+            }
+        if route.response_mode == "obolos_seller_publish_v1":
+            return {
+                "kind": "seller_publish",
+                "provider_status": "ok",
+                "slug": str(payload.get("slug", "")),
+                "api_id": str(payload.get("id", payload.get("api_id", ""))),
+                "status": str(payload.get("status", "")),
+            }
+        if route.response_mode == "obolos_wallet_topup_v1":
+            return {
+                "kind": "wallet_topup",
+                "provider_status": "ok",
+                "new_balance": payload.get("credits", payload.get("new_balance", 0)),
+                "transaction_id": str(payload.get("transaction_id", payload.get("id", ""))),
+                "amount_added": payload.get("amount", payload.get("amount_added", 0)),
             }
         return {
             "kind": "external_api_call",

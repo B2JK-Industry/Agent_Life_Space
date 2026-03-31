@@ -1,4 +1,4 @@
-version: 7
+version: 8
 source_of_truth: docs/strategy/MASTER_SOURCE_OF_TRUTH.md
 seed_note: >
   Machine-friendly backlog seed aligned to current main. Mirrors
@@ -14,25 +14,13 @@ progress_snapshot:
     T4: { status: in_progress, approx_progress: 99 }
     T5: { status: in_progress, approx_progress: 99 }
     T6: { status: complete_for_phase, approx_progress: 99 }
-    T7: { status: in_progress, approx_progress: 95 }
-    T8: { status: in_progress, approx_progress: 98 }
+    T7: { status: in_progress, approx_progress: 98 }
+    T8: { status: in_progress, approx_progress: 99 }
 next_execution_backlog:
-  - priority: P1
-    story_id: T7-E2-S5
-    title: "Add documented seller-side Obolos publishing and wallet-topup flow"
-    why_now: "Buyer-side catalog, wallet balance, and slug calls now exist, so the next honest gap is completing the documented Obolos surface before generalizing to more providers."
-  - priority: P2
-    story_id: T7-E1-S1
-    title: "Expand the gateway contract beyond one-provider Phase 2 semantics"
-    why_now: "obolos.tech now spans both handoff and documented API-call semantics, so Phase 3 can start generalizing the gateway boundary."
   - priority: P2
     story_id: T7-E2-S6
     title: "Add file-upload-safe and x402 payment-aware marketplace calls"
-    why_now: "The buyer-side API path covers JSON and query routes, but many useful marketplace APIs still need multipart uploads and richer payment flow."
-  - priority: P2
-    story_id: T8-E1-S3
-    title: "Add stronger architecture invariants for cross-domain boundaries"
-    why_now: "The runtime shape is now concrete enough that enforcement-level invariants matter more than additional descriptive docs alone."
+    why_now: "The buyer-side and seller-side API paths now cover JSON routes, but many useful marketplace APIs still need multipart uploads and richer payment flow."
 themes:
   - id: T1
     name: Platform Foundation

@@ -523,13 +523,9 @@ Goal: integrate external capability providers cleanly and safely.
 
 Stories:
 - T7-E1-S1: Define gateway contract for external capabilities.
-  - status: `mostly_complete`
-  - current_state: Runtime model and policy now expose both
-    `external_capability_gateway_v1` for handoff-style delivery and
-    `external_api_call_v1` for documented provider-backed API invocation, with
-    explicit request/response, denial, approval, and cost-record expectations.
-  - missing: The contracts are stronger, but they are not yet multi-provider
-    or tied to richer operator workflow.
+  - status: `complete_for_phase`
+  - current_state: Runtime model and policy now expose both `external_capability_gateway_v1` for handoff-style delivery and `external_api_call_v1` for documented provider-backed API invocation, with explicit request/response, denial, approval, and cost-record expectations. Multi-provider resolution now exists: `list_providers_for_capability()`, `resolve_capability_across_providers()`, `call_api_across_providers()` with intelligent fallback (retryable vs permanent failures), plus capability-to-providers map in gateway catalog (v1.23.0).
+  - missing: Only one provider exists so far; adding a second provider would fully exercise multi-provider fallback.
 - T7-E1-S2: Add auth, timeout, retry, and rate-limit policy.
   - status: `complete_for_phase`
   - current_state: External gateway policy now enforces auth, timeout, retry,
@@ -588,6 +584,10 @@ Stories:
     instead of stopping at the earlier generic boundary tests.
   - missing: Additional providers and richer downstream error semantics remain
     future scope.
+- T7-E2-S5: Add seller-side Obolos publishing and wallet top-up.
+  - status: `complete_for_phase`
+  - current_state: `seller_publish_v1` capability with POST `/api/seller/apis` route and `wallet_topup_v1` capability with POST `/api/wallet/topup` route. Both use wallet auth, gateway request/response modes handle slug/api_id/status for publish and new_balance/transaction_id for topup. Routes registered in provider capability_ids and gateway catalog (v1.23.0).
+  - missing: File-upload-safe publishing and x402 payment flow remain future scope.
 
 ## Theme T8: Enterprise Hardening
 
@@ -596,8 +596,8 @@ premature fragmentation.
 
 ### Epic T8-E1: Contract-First Boundaries
 
-- approx_progress: 79%
-- remaining_gap: Shared control-plane primitives, intake/planning, queries, and reporting now span build/review/operate/artifact surfaces, but extraction-grade invariants are still not enforced strongly enough.
+- approx_progress: 93%
+- remaining_gap: Shared control-plane primitives, intake/planning, queries, reporting, and 22 architecture invariant enforcement tests now span build/review/operate/artifact surfaces. CI gate enforcement of invariants remains optional.
 
 Stories:
 - T8-E1-S1: Define contracts between control plane, execution plane, verification,
@@ -606,6 +606,9 @@ Stories:
   - current_state: agent/control/models.py defines shared contracts: JobKind, JobStatus, ExecutionMode, JobTiming, ExecutionStep, ArtifactKind, ArtifactRef, UsageSummary.
 - T8-E1-S2: Remove hidden coupling and implicit shared state.
 - T8-E1-S3: Add architecture invariants for contracts and boundaries.
+  - status: `complete_for_phase`
+  - current_state: 22 enforcement tests across 6 categories: import graph boundaries (review/build/control bounded context imports), execution mode contracts (review read-only, build workspace-bound), gateway boundary (external HTTP only in approved modules), cross-domain isolation (review/build storage isolation), shared control-plane contracts (no parallel enums, comprehensive artifact/trace/job kinds), and multi-provider gateway contracts (seller capabilities, provider resolution, catalog map) (v1.23.0).
+  - missing: CI enforcement of invariant tests as required gate remains optional.
 - T8-E1-S4: Make future service extraction obvious from module boundaries.
   - status: `in_progress`
   - current_state: agent/build/ is a clean bounded context: models.py, service.py, storage.py, verification.py. Parallel to agent/review/.

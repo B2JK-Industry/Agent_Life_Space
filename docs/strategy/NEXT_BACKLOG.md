@@ -10,26 +10,11 @@ Assessment basis:
 
 ## Ready Now
 
-### P1
-
-1. `T7-E2-S5` Add documented seller-side Obolos publishing and wallet-topup flow.
-   Why now: buyer-side catalog, wallet balance, and slug-based API calls now
-   exist, so the next honest provider gap is completing more of the documented
-   Obolos surface before we generalize to more marketplaces.
-
 ### P2
 
-2. `T7-E1-S1` Expand the gateway contract beyond one-provider Phase 2 semantics.
-   Why now: `obolos.tech` now spans both handoff and documented API-call
-   semantics, so Phase 3 can start generalizing the gateway boundary.
-
-3. `T7-E2-S6` Add file-upload-safe and x402 payment-aware marketplace calls.
-   Why now: the new buyer-side API path covers JSON and query routes, but many
+1. `T7-E2-S6` Add file-upload-safe and x402 payment-aware marketplace calls.
+   Why now: the buyer-side API path covers JSON and query routes, but many
    useful marketplace APIs still need multipart uploads and richer payment flow.
-
-4. `T8-E1-S3` Add stronger architecture invariants for cross-domain boundaries.
-   Why now: the runtime shape is now concrete enough that enforcement-level
-   invariants matter more than additional descriptive docs alone.
 
 ## What Closed In This Cycle
 
@@ -87,6 +72,18 @@ Assessment basis:
   throughput, latency percentiles, cost, delivery health, and system resources
   as persisted trace records, with time-window aggregation, trend detection,
   and `/telemetry` Telegram command for operator visibility (v1.22.0).
+
+- `T7-E2-S5` Seller-side Obolos publishing and wallet top-up now have documented
+  capability routes (`seller_publish_v1`, `wallet_topup_v1`), gateway request/response
+  modes, and wallet auth integration (v1.23.0).
+- `T7-E1-S1` Gateway contract now supports multi-provider resolution:
+  `list_providers_for_capability()`, `resolve_capability_across_providers()`,
+  `call_api_across_providers()` with intelligent fallback, plus capability-to-providers
+  map in gateway catalog (v1.23.0).
+- `T8-E1-S3` Architecture invariants now enforced through 22 tests covering import
+  graph boundaries, execution mode contracts, gateway boundary enforcement,
+  cross-domain isolation, shared control-plane contracts, and multi-provider
+  gateway contracts (v1.23.0).
 
 ## Exit Criteria For The Next Backlog Slice
 

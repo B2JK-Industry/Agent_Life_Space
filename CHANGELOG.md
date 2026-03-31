@@ -10,6 +10,37 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.23.0] — 2026-03-31
+
+Phase 3: seller-side Obolos, multi-provider gateway, architecture invariants.
+
+### Seller-Side Obolos Publishing (T7-E2-S5)
+- New `seller_publish_v1` capability: POST `/api/seller/apis` for registering
+  or updating API listings on the Obolos marketplace
+- New `wallet_topup_v1` capability: POST `/api/wallet/topup` for initiating
+  credit top-up for the configured wallet address
+- Request/response modes in gateway: `obolos_seller_publish_v1` returns
+  slug/api_id/status; `obolos_wallet_topup_v1` returns new_balance/transaction_id
+- Both routes require wallet auth and owner approval
+
+### Multi-Provider Gateway Contract (T7-E1-S1)
+- `list_providers_for_capability(capability_id)` — discover all providers
+  supporting a capability, enabling multi-provider resolution
+- `resolve_capability_across_providers()` — resolve routes across ALL
+  providers for a capability (not just one provider_id)
+- `call_api_across_providers()` — try providers in order until one succeeds,
+  with intelligent fallback (retryable vs permanent failures)
+- Capability-to-providers map now included in gateway catalog output
+
+### Architecture Invariants (T8-E1-S3)
+- 22 enforcement tests covering 6 categories:
+  1. Import graph boundaries — bounded contexts only import from allowed modules
+  2. Execution mode contracts — review/build respect declared modes
+  3. Gateway boundary — external HTTP only in approved modules
+  4. Cross-domain isolation — review/build don't access each other's storage
+  5. Shared control plane — all contexts use shared primitives (no parallel enums)
+  6. Multi-provider contract — seller routes, capability resolution, catalog map
+
 ## [1.22.0] — 2026-03-31
 
 Phase 3: provider-specific delivery workflow and runtime telemetry.
