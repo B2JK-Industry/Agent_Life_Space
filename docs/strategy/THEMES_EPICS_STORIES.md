@@ -588,6 +588,10 @@ Stories:
   - status: `complete_for_phase`
   - current_state: `seller_publish_v1` capability with POST `/api/seller/apis` route and `wallet_topup_v1` capability with POST `/api/wallet/topup` route. Both use wallet auth, gateway request/response modes handle slug/api_id/status for publish and new_balance/transaction_id for topup. Routes registered in provider capability_ids and gateway catalog (v1.23.0).
   - missing: File-upload-safe publishing and x402 payment flow remain future scope.
+- T7-E2-S6: Add file-upload-safe and x402 payment-aware marketplace calls.
+  - status: `complete_for_phase`
+  - current_state: Gateway HTTP layer now supports `form_data` parameter for multipart/form-data requests (aiohttp FormData with file tuples). `marketplace_upload_v1` capability with `obolos_marketplace_upload_v1` request/response mode for slug-based file upload APIs. `_extract_x402_payment_metadata()` parses Retry-After, x-payment-*/x-credits-*/x-price-* headers, and body fields (credits_required, price, payment_url) from 402 responses. Denial metadata includes structured `payment` dict (v1.24.0).
+  - missing: Real payment settlement flow and interactive wallet top-up before retry remain future scope.
 
 ## Theme T8: Enterprise Hardening
 

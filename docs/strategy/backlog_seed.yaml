@@ -1,4 +1,4 @@
-version: 8
+version: 9
 source_of_truth: docs/strategy/MASTER_SOURCE_OF_TRUTH.md
 seed_note: >
   Machine-friendly backlog seed aligned to current main. Mirrors
@@ -14,13 +14,10 @@ progress_snapshot:
     T4: { status: in_progress, approx_progress: 99 }
     T5: { status: in_progress, approx_progress: 99 }
     T6: { status: complete_for_phase, approx_progress: 99 }
-    T7: { status: in_progress, approx_progress: 98 }
+    T7: { status: complete_for_phase, approx_progress: 99 }
     T8: { status: in_progress, approx_progress: 99 }
-next_execution_backlog:
-  - priority: P2
-    story_id: T7-E2-S6
-    title: "Add file-upload-safe and x402 payment-aware marketplace calls"
-    why_now: "The buyer-side and seller-side API paths now cover JSON routes, but many useful marketplace APIs still need multipart uploads and richer payment flow."
+next_execution_backlog: []
+  # Phase 3 backlog is fully closed. All P0-P2 items delivered.
 themes:
   - id: T1
     name: Platform Foundation

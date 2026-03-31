@@ -10,11 +10,7 @@ Assessment basis:
 
 ## Ready Now
 
-### P2
-
-1. `T7-E2-S6` Add file-upload-safe and x402 payment-aware marketplace calls.
-   Why now: the buyer-side API path covers JSON and query routes, but many
-   useful marketplace APIs still need multipart uploads and richer payment flow.
+Phase 3 backlog is fully closed. All P0-P2 items delivered.
 
 ## What Closed In This Cycle
 
@@ -84,6 +80,12 @@ Assessment basis:
   graph boundaries, execution mode contracts, gateway boundary enforcement,
   cross-domain isolation, shared control-plane contracts, and multi-provider
   gateway contracts (v1.23.0).
+
+- `T7-E2-S6` File-upload-safe and x402 payment-aware marketplace calls now exist:
+  multipart/form-data support in gateway HTTP layer, `marketplace_upload_v1`
+  capability with slug-based file upload route, structured x402 payment metadata
+  extraction from 402 responses with Retry-After/x-payment-*/body field parsing
+  (v1.24.0).
 
 ## Exit Criteria For The Next Backlog Slice
 

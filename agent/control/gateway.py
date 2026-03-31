@@ -435,6 +435,7 @@ class ExternalGatewayService:
         method: str = "",
         query_params: dict[str, Any] | None = None,
         json_payload: dict[str, Any] | None = None,
+        form_data: dict[str, Any] | None = None,
         auth_token: str = "",
         job_id: str = "",
         requester: str = "operator",
@@ -466,6 +467,7 @@ class ExternalGatewayService:
                 method=method,
                 query_params=query_params,
                 json_payload=json_payload,
+                form_data=form_data,
                 auth_token=auth_token,
                 job_id=job_id,
                 requester=requester,
@@ -727,6 +729,7 @@ class ExternalGatewayService:
         method: str = "",
         query_params: dict[str, Any] | None = None,
         json_payload: dict[str, Any] | None = None,
+        form_data: dict[str, Any] | None = None,
         route_id: str = "",
         auth_token: str = "",
         gateway_policy_id: str = "",
@@ -879,6 +882,7 @@ class ExternalGatewayService:
                     method=method,
                     query_params=query_params or {},
                     json_payload=json_payload or {},
+                    form_data=form_data,
                 )
             except ValueError as e:
                 denial = make_denial(
@@ -1035,6 +1039,7 @@ class ExternalGatewayService:
                 timeout_seconds=resolved_policy.timeout_seconds,
                 max_retries=resolved_policy.max_retries,
                 retry_backoff_seconds=resolved_policy.retry_backoff_seconds,
+                form_data=request_spec.get("form_data"),
             )
 
             base_result = {
@@ -1328,6 +1333,48 @@ class ExternalGatewayService:
                 return str(value), "vault"
         return "", "unset"
 
+    def _extract_x402_payment_metadata(
+        self,
+        *,
+        response_headers: dict[str, str],
+        response_json: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Extract structured payment metadata from HTTP 402 responses.
+
+        Parses standard and provider-specific payment headers and body fields.
+        Supports the x402 protocol pattern where payment details are conveyed
+        through response headers and/or JSON body.
+        """
+        payment: dict[str, Any] = {}
+
+        # Standard headers
+        if response_headers.get("Retry-After"):
+            payment["retry_after"] = response_headers["Retry-After"]
+
+        # x402 / payment-related headers (case-insensitive search)
+        header_lower = {k.lower(): v for k, v in response_headers.items()}
+        for key_prefix in ("x-payment", "x-credits", "x-price", "x-cost"):
+            for header_key, header_value in header_lower.items():
+                if header_key.startswith(key_prefix):
+                    payment.setdefault("headers", {})[header_key] = header_value
+
+        # Body fields
+        for body_key in (
+            "credits_required", "price", "cost", "amount",
+            "payment_url", "payment_address", "invoice",
+            "balance", "credits", "minimum_credits",
+        ):
+            if body_key in response_json:
+                payment.setdefault("body", {})[body_key] = response_json[body_key]
+
+        # Summary
+        if response_json.get("message"):
+            payment["message"] = str(response_json["message"])[:200]
+        if response_json.get("error"):
+            payment["error"] = str(response_json["error"])[:200]
+
+        return payment
+
     def _should_try_next_route(self, result: dict[str, Any]) -> bool:
         if result.get("ok"):
             return False
@@ -1350,6 +1397,7 @@ class ExternalGatewayService:
         method: str,
         query_params: dict[str, Any],
         json_payload: dict[str, Any],
+        form_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_method = str(method or "").upper()
         if route.request_mode == "obolos_marketplace_catalog_v1":
@@ -1390,12 +1438,29 @@ class ExternalGatewayService:
                 "query_params": {},
                 "json_payload": dict(json_payload),
             }
-        return {
-            "method": normalized_method or ("POST" if json_payload else "GET"),
+        if route.request_mode == "obolos_marketplace_upload_v1":
+            slug = str(resource or "").strip().strip("/")
+            if not slug:
+                raise ValueError("File upload requires a marketplace API slug.")
+            spec: dict[str, Any] = {
+                "method": "POST",
+                "target_url": f"{target_url.rstrip('/')}/{slug}",
+                "query_params": dict(query_params),
+                "json_payload": {},
+            }
+            if form_data:
+                spec["form_data"] = dict(form_data)
+            return spec
+        # Default: pass through form_data if provided
+        spec = {
+            "method": normalized_method or ("POST" if json_payload or form_data else "GET"),
             "target_url": target_url,
             "query_params": dict(query_params),
             "json_payload": dict(json_payload),
         }
+        if form_data:
+            spec["form_data"] = dict(form_data)
+        return spec
 
     def _normalize_api_response(
         self,
@@ -1448,6 +1513,15 @@ class ExternalGatewayService:
                 "transaction_id": str(payload.get("transaction_id", payload.get("id", ""))),
                 "amount_added": payload.get("amount", payload.get("amount_added", 0)),
             }
+        if route.response_mode == "obolos_marketplace_upload_v1":
+            return {
+                "kind": "marketplace_upload",
+                "provider_status": "ok",
+                "target_url": target_url,
+                "result_id": str(payload.get("id", payload.get("result_id", ""))),
+                "status": str(payload.get("status", "")),
+                "top_level_keys": sorted(payload.keys())[:25],
+            }
         return {
             "kind": "external_api_call",
             "provider_status": "ok",
@@ -1469,6 +1543,11 @@ class ExternalGatewayService:
             str(k): str(v) for k, v in (result.get("response_headers", {}) or {}).items()
         }
         if status_code == 402:
+            # Extract x402 payment metadata from response headers and body
+            payment_metadata = self._extract_x402_payment_metadata(
+                response_headers=response_headers,
+                response_json=dict(result.get("response_json", {})),
+            )
             return make_denial(
                 code="external_api_payment_required",
                 summary="External API call requires payment or credits",
@@ -1488,6 +1567,7 @@ class ExternalGatewayService:
                     "route_id": route_id,
                     "target_url": request_spec["target_url"],
                     "response_headers": response_headers,
+                    "payment": payment_metadata,
                 },
             )
         return make_denial(
@@ -1522,6 +1602,7 @@ class ExternalGatewayService:
         timeout_seconds: int,
         max_retries: int,
         retry_backoff_seconds: float,
+        form_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         errors: list[str] = []
         last_status_code = 0
@@ -1540,6 +1621,7 @@ class ExternalGatewayService:
                     auth_header_name=auth_header_name,
                     auth_token=auth_token,
                     timeout_seconds=timeout_seconds,
+                    form_data=form_data,
                 )
                 last_status_code = int(result["status_code"])
                 last_json = dict(result.get("response_json", {}))
@@ -1816,6 +1898,7 @@ class ExternalGatewayService:
         auth_header_name: str,
         auth_token: str,
         timeout_seconds: int,
+        form_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self._request_executor is not None:
             result = await self._request_executor(
@@ -1826,6 +1909,7 @@ class ExternalGatewayService:
                 auth_header_name=auth_header_name,
                 auth_token=auth_token,
                 timeout_seconds=timeout_seconds,
+                form_data=form_data,
             )
             return {
                 "status_code": int(result.get("status_code", 0)),
@@ -1847,13 +1931,33 @@ class ExternalGatewayService:
             )
             headers[auth_header_name] = token_value
         timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+
+        # Build request kwargs: form_data uses multipart, otherwise JSON
+        request_kwargs: dict[str, Any] = {
+            "params": query_params or None,
+            "headers": headers,
+        }
+        if form_data and method.upper() != "GET":
+            # Multipart form data: aiohttp handles Content-Type + boundary
+            data = aiohttp.FormData()
+            for key, value in form_data.items():
+                if isinstance(value, tuple) and len(value) == 2:
+                    # File field: (filename, content_bytes)
+                    filename, content = value
+                    data.add_field(key, content, filename=filename)
+                elif isinstance(value, bytes):
+                    data.add_field(key, value)
+                else:
+                    data.add_field(key, str(value))
+            request_kwargs["data"] = data
+        elif method.upper() != "GET":
+            request_kwargs["json"] = json_payload or None
+
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.request(
                 method.upper(),
                 target_url,
-                params=query_params or None,
-                json=(json_payload or None) if method.upper() != "GET" else None,
-                headers=headers,
+                **request_kwargs,
             ) as response:
                 text = await response.text()
                 body: dict[str, Any] = {}

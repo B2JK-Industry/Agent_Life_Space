@@ -535,6 +535,7 @@ _EXTERNAL_CAPABILITY_PROVIDERS: dict[str, ExternalCapabilityProvider] = {
             "marketplace_api_call_v1",
             "seller_publish_v1",
             "wallet_topup_v1",
+            "marketplace_upload_v1",
         ),
         notes=(
             "Provider routes must resolve target URL and auth from runtime "
@@ -721,6 +722,34 @@ _EXTERNAL_CAPABILITY_ROUTES: dict[str, ExternalCapabilityRoute] = {
         notes=(
             "Seller publishing requires wallet auth and owner approval.",
             "Request payload includes slug, title, description, pricing, endpoint URL.",
+        ),
+    ),
+    "obolos_marketplace_upload_primary": ExternalCapabilityRoute(
+        route_id="obolos_marketplace_upload_primary",
+        provider_id="obolos.tech",
+        capability_id="marketplace_upload_v1",
+        label="obolos.tech marketplace file upload",
+        description=(
+            "Documented marketplace file upload endpoint. "
+            "Sends multipart/form-data with file content to a slug-based API."
+        ),
+        target_kind="http_api",
+        target_env_var="AGENT_OBOLOS_API_BASE_URL",
+        default_target_url="https://obolos.tech/api",
+        auth_token_env_var="AGENT_OBOLOS_WALLET_ADDRESS",  # noqa: S106
+        auth_token_secret_name="obolos.tech.wallet_address",  # noqa: S106
+        allowed_job_kinds=(JobKind.OPERATE,),
+        allowed_export_modes=("internal",),
+        gateway_contract_id="external_api_call_v1",
+        gateway_policy_id="owner_api_call",
+        request_mode="obolos_marketplace_upload_v1",
+        response_mode="obolos_marketplace_upload_v1",
+        estimated_cost_usd=0.0,
+        priority=10,
+        notes=(
+            "File uploads use multipart/form-data via the form_data parameter.",
+            "Slug determines the target API endpoint (e.g., /api/ocr-text-extraction).",
+            "Payment may be required (HTTP 402) — x402 metadata is extracted.",
         ),
     ),
     "obolos_wallet_topup_primary": ExternalCapabilityRoute(

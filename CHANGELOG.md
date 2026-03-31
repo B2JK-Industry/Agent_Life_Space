@@ -10,6 +10,28 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.24.0] — 2026-03-31
+
+Phase 3 completion: file upload support and x402 payment handling.
+
+### File Upload Support (T7-E2-S6)
+- `_request_http()` now supports `form_data` parameter for multipart/form-data
+  requests — aiohttp handles Content-Type and boundary automatically
+- File fields passed as `(filename, content_bytes)` tuples, string/bytes fields
+  converted automatically
+- `form_data` threaded through the full call chain: `call_api_via_capability()` →
+  `_build_api_call_request()` → `_execute_http_request_with_retry()` → `_request_http()`
+- New `marketplace_upload_v1` capability with `obolos_marketplace_upload_v1`
+  request/response mode for slug-based file upload APIs
+- `call_api_across_providers()` also accepts `form_data`
+
+### x402 Payment Metadata (T7-E2-S6)
+- `_extract_x402_payment_metadata()` parses structured payment details from
+  HTTP 402 responses: Retry-After header, x-payment-*/x-credits-*/x-price-*
+  headers, and body fields (credits_required, price, cost, payment_url, etc.)
+- 402 denial metadata now includes `payment` dict with parsed headers, body
+  fields, error message — enabling downstream payment workflow decisions
+
 ## [1.23.0] — 2026-03-31
 
 Phase 3: seller-side Obolos, multi-provider gateway, architecture invariants.
