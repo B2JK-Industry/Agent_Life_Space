@@ -626,10 +626,40 @@ class AgentAPI:
     # ─────────────────────────────────────────────
 
     async def _handle_dashboard(self, request: web.Request) -> web.Response:
-        """GET /dashboard — self-contained operator dashboard."""
+        """GET /dashboard — self-contained operator dashboard.
+
+        Requires API key via Authorization header or ?key= query param.
+        Without auth, returns a minimal login page.
+        """
+        key_param = request.query.get("key", "")
+        if key_param and key_param in self._api_keys:
+            pass  # Authenticated via query param
+        else:
+            auth_error = self._check_auth(request)
+            if auth_error:
+                return web.Response(
+                    text=self._dashboard_auth_page(),
+                    content_type="text/html",
+                )
         from agent.social.dashboard import render_dashboard_html
         html = render_dashboard_html()
         return web.Response(text=html, content_type="text/html")
+
+    @staticmethod
+    def _dashboard_auth_page() -> str:
+        return (
+            '<!DOCTYPE html><html><head><meta charset="utf-8">'
+            "<title>Agent Dashboard</title>"
+            "<style>body{font-family:monospace;background:#0f1117;color:#e1e4eb;"
+            "display:flex;justify-content:center;align-items:center;height:100vh;margin:0}"
+            ".box{text-align:center}input{background:#1a1d27;border:1px solid #2a2d37;"
+            "color:#e1e4eb;padding:10px 16px;border-radius:6px;width:300px;font-size:14px;"
+            "font-family:inherit;margin:12px 0}button{background:#6c8aff;color:#fff;"
+            "border:none;padding:10px 24px;border-radius:6px;cursor:pointer;font-family:inherit}"
+            '</style></head><body><div class="box"><h2>Agent Dashboard</h2>'
+            '<form method="get"><input name="key" type="password" placeholder="API Key" autofocus>'
+            "<br><button type=submit>Login</button></form></div></body></html>"
+        )
 
     # ─────────────────────────────────────────────
     # Operator Control-Plane Endpoints (auth required)
@@ -834,8 +864,7 @@ class AgentAPI:
             return web.json_response({"error": "No control plane"}, status=503)
 
         from agent.control.archival import ArchivalService
-        # ArchivalService needs raw storage for direct SQL; control_plane owns it.
-        storage = getattr(self._agent.control_plane, "_storage", None)
+        storage = self._agent.control_plane.get_storage_for_archival()
         if storage is None:
             return self._json_error_response(
                 status=503, code="archival_unavailable",
@@ -883,7 +912,7 @@ class AgentAPI:
             )
 
         from agent.control.archival import ArchivalService
-        storage = getattr(self._agent.control_plane, "_storage", None)
+        storage = self._agent.control_plane.get_storage_for_archival()
         if storage is None:
             return self._json_error_response(
                 status=503, code="archival_unavailable",

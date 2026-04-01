@@ -1120,3 +1120,28 @@ class ControlPlaneStateService:
             record.updated_at = datetime.now(UTC).isoformat()
             return True
         return False
+
+    # ─────────────────────────────────────────────
+    # Public storage delegation (for settlement, archival, etc.)
+    # ─────────────────────────────────────────────
+
+    def save_settlement_request(self, request: Any) -> None:
+        """Persist a settlement request through the public API."""
+        self.initialize()
+        self._storage.save_settlement_request(request)
+
+    def list_settlement_requests(
+        self, *, status: str = "", limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List settlement requests through the public API."""
+        self.initialize()
+        return self._storage.list_settlement_requests(status=status, limit=limit)
+
+    def get_storage_for_archival(self) -> Any:
+        """Return the initialized storage backend for archival queries.
+
+        This is an explicit access point for ArchivalService which needs
+        direct SQL access. Prefer specific public methods where possible.
+        """
+        self.initialize()
+        return self._storage

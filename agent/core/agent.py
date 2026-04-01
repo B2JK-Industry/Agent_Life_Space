@@ -185,17 +185,6 @@ class AgentOrchestrator:
             secret_lookup=self._lookup_secret,
             on_payment_required=self._on_gateway_payment_required,
         )
-        self.reporting = OperatorReportService(
-            job_queries=self.jobs,
-            artifact_queries=self.artifacts,
-            approval_queue=self.approval_queue,
-            operator_controls=self.operator_controls,
-            status_provider=self.get_status,
-            control_plane_state=self.control_plane,
-            workspace_queries=self.workspace_queries,
-            gateway_service=self.gateway,
-            settlement_service=None,  # set after settlement init below
-        )
         self.review_quality = ReviewQualityService(
             control_plane_state=self.control_plane,
         )
@@ -208,7 +197,7 @@ class AgentOrchestrator:
             approval_queue=self.approval_queue,
             runtime_model=self.runtime_model,
         )
-        # Phase 3 operatorization services
+        # Phase 3+ operatorization services
         from agent.control.pipeline import PipelineOrchestrator
         from agent.control.recurring import RecurringWorkflowManager
         from agent.control.settlement import PaymentSettlementService
@@ -221,8 +210,18 @@ class AgentOrchestrator:
             gateway=self.gateway,
             control_plane=self.control_plane,
         )
-        # Wire settlement into reporting for inbox visibility (deferred from above)
-        self.reporting._settlement_service = self.settlement
+        # Reporting initialized after settlement so all deps are ready
+        self.reporting = OperatorReportService(
+            job_queries=self.jobs,
+            artifact_queries=self.artifacts,
+            approval_queue=self.approval_queue,
+            operator_controls=self.operator_controls,
+            status_provider=self.get_status,
+            control_plane_state=self.control_plane,
+            workspace_queries=self.workspace_queries,
+            gateway_service=self.gateway,
+            settlement_service=self.settlement,
+        )
 
         # Background tasks
         self._background_tasks: list[asyncio.Task[Any]] = []
