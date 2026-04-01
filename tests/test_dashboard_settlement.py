@@ -1,0 +1,267 @@
+"""
+Tests for Operator Dashboard and Payment Settlement Service.
+
+Validates:
+1. Dashboard HTML renders correctly
+2. Settlement service parses 402 denials
+3. Settlement workflow: parse → check → create → approve → execute
+4. Settlement edge cases and denial handling
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+# ─────────────────────────────────────────────
+# Dashboard tests
+# ─────────────────────────────────────────────
+
+class TestDashboardRendering:
+
+    def test_renders_html(self):
+        from agent.social.dashboard import render_dashboard_html
+        html = render_dashboard_html()
+        assert "<!DOCTYPE html>" in html
+        assert "Operator Dashboard" in html
+        assert "/api/operator/" in html
+
+    def test_contains_api_calls(self):
+        from agent.social.dashboard import render_dashboard_html
+        html = render_dashboard_html()
+        # The api() helper function prefixes /api/operator/ to these paths
+        assert "/api/operator/" in html
+        assert "api('report')" in html
+        assert "api('jobs" in html
+        assert "api('telemetry')" in html
+        assert "api('retention')" in html
+        assert "api('margin')" in html
+
+    def test_contains_auth_form(self):
+        from agent.social.dashboard import render_dashboard_html
+        html = render_dashboard_html()
+        assert 'id="apikey"' in html
+        assert "authenticate()" in html
+
+    def test_contains_metrics_section(self):
+        from agent.social.dashboard import render_dashboard_html
+        html = render_dashboard_html()
+        assert 'id="metrics"' in html
+        assert 'id="jobs-table"' in html
+
+    def test_dashboard_version_exists(self):
+        from agent.social.dashboard import _DASHBOARD_VERSION
+        assert _DASHBOARD_VERSION
+
+
+# ─────────────────────────────────────────────
+# Settlement model tests
+# ─────────────────────────────────────────────
+
+class TestSettlementModels:
+
+    def test_payment_required_to_dict(self):
+        from agent.control.settlement import PaymentRequired
+        pr = PaymentRequired(
+            provider_id="obolos.tech",
+            capability_id="test_v1",
+            amount_required=5.0,
+        )
+        d = pr.to_dict()
+        assert d["provider_id"] == "obolos.tech"
+        assert d["amount_required"] == 5.0
+        assert d["request_id"]
+
+    def test_settlement_request_to_dict(self):
+        from agent.control.settlement import PaymentRequired, SettlementRequest
+        sr = SettlementRequest(
+            payment=PaymentRequired(amount_required=10.0),
+            wallet_balance=3.0,
+            sufficient_balance=False,
+            topup_amount=7.0,
+        )
+        d = sr.to_dict()
+        assert d["wallet_balance"] == 3.0
+        assert d["sufficient_balance"] is False
+        assert d["topup_amount"] == 7.0
+        assert d["status"] == "pending"
+
+
+# ─────────────────────────────────────────────
+# Settlement service tests
+# ─────────────────────────────────────────────
+
+class TestPaymentSettlementService:
+
+    def test_parse_402_denial(self):
+        from agent.control.settlement import PaymentSettlementService
+        svc = PaymentSettlementService()
+        denial = {
+            "code": "external_api_payment_required",
+            "metadata": {
+                "provider_id": "obolos.tech",
+                "capability_id": "catalog_v1",
+                "target_url": "https://api.obolos.tech/catalog",
+                "payment_metadata": {
+                    "credits_required": "50",
+                    "payment_url": "https://pay.obolos.tech/topup",
+                    "retry_after": "30",
+                },
+            },
+        }
+        payment = svc.parse_402_denial(denial)
+        assert payment is not None
+        assert payment.provider_id == "obolos.tech"
+        assert payment.amount_required == 50.0
+        assert payment.payment_url == "https://pay.obolos.tech/topup"
+        assert payment.retry_after_seconds == 30
+
+    def test_parse_non_402_returns_none(self):
+        from agent.control.settlement import PaymentSettlementService
+        svc = PaymentSettlementService()
+        assert svc.parse_402_denial({"code": "gateway_delivery_blocked"}) is None
+
+    def test_parse_402_with_price_field(self):
+        from agent.control.settlement import PaymentSettlementService
+        svc = PaymentSettlementService()
+        denial = {
+            "code": "external_api_payment_required",
+            "metadata": {
+                "payment_metadata": {"price": "9.99"},
+            },
+        }
+        payment = svc.parse_402_denial(denial)
+        assert payment is not None
+        assert payment.amount_required == 9.99
+
+    def test_create_settlement_sufficient_balance(self):
+        from agent.control.settlement import PaymentRequired, PaymentSettlementService
+        svc = PaymentSettlementService()
+        payment = PaymentRequired(amount_required=10.0, provider_id="test")
+        sr = svc.create_settlement_request(payment, wallet_balance=20.0)
+        assert sr.sufficient_balance is True
+        assert sr.topup_amount == 0.0
+        assert sr.status == "pending"
+
+    def test_create_settlement_insufficient_balance(self):
+        from agent.control.settlement import PaymentRequired, PaymentSettlementService
+        svc = PaymentSettlementService()
+        payment = PaymentRequired(amount_required=100.0, provider_id="test")
+        sr = svc.create_settlement_request(payment, wallet_balance=30.0)
+        assert sr.sufficient_balance is False
+        assert sr.topup_amount == 70.0
+        assert sr.status == "pending"
+
+    def test_approve_settlement(self):
+        from agent.control.settlement import PaymentRequired, PaymentSettlementService
+        svc = PaymentSettlementService()
+        payment = PaymentRequired(amount_required=5.0)
+        sr = svc.create_settlement_request(payment)
+        result = svc.approve_settlement(sr.settlement_id, note="OK to topup")
+        assert result is not None
+        assert result.status == "approved"
+        assert result.operator_note == "OK to topup"
+        assert result.resolved_at
+
+    def test_deny_settlement(self):
+        from agent.control.settlement import PaymentRequired, PaymentSettlementService
+        svc = PaymentSettlementService()
+        payment = PaymentRequired(amount_required=5.0)
+        sr = svc.create_settlement_request(payment)
+        result = svc.deny_settlement(sr.settlement_id, note="Too expensive")
+        assert result is not None
+        assert result.status == "denied"
+
+    def test_approve_nonexistent_returns_none(self):
+        from agent.control.settlement import PaymentSettlementService
+        svc = PaymentSettlementService()
+        assert svc.approve_settlement("nonexistent") is None
+
+    def test_double_approve_returns_none(self):
+        from agent.control.settlement import PaymentRequired, PaymentSettlementService
+        svc = PaymentSettlementService()
+        payment = PaymentRequired(amount_required=5.0)
+        sr = svc.create_settlement_request(payment)
+        svc.approve_settlement(sr.settlement_id)
+        # Second approve should fail (status no longer "pending")
+        assert svc.approve_settlement(sr.settlement_id) is None
+
+    def test_get_pending_settlements(self):
+        from agent.control.settlement import PaymentRequired, PaymentSettlementService
+        svc = PaymentSettlementService()
+        p1 = PaymentRequired(amount_required=5.0)
+        p2 = PaymentRequired(amount_required=10.0)
+        svc.create_settlement_request(p1)
+        sr2 = svc.create_settlement_request(p2)
+        svc.deny_settlement(sr2.settlement_id)
+        pending = svc.get_pending_settlements()
+        assert len(pending) == 1
+        assert pending[0].payment.amount_required == 5.0
+
+    @pytest.mark.asyncio
+    async def test_check_wallet_no_gateway(self):
+        from agent.control.settlement import PaymentSettlementService
+        svc = PaymentSettlementService(gateway=None)
+        result = await svc.check_wallet_balance()
+        assert result["ok"] is False
+        assert "No gateway" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_check_wallet_success(self):
+        from agent.control.settlement import PaymentSettlementService
+        gateway = MagicMock()
+        gateway.call_api_via_capability = AsyncMock(return_value={
+            "ok": True,
+            "response": {"balance": 42.5, "currency": "credits"},
+        })
+        svc = PaymentSettlementService(gateway=gateway)
+        result = await svc.check_wallet_balance()
+        assert result["ok"] is True
+        assert result["balance"] == 42.5
+        assert result["currency"] == "credits"
+
+    @pytest.mark.asyncio
+    async def test_execute_topup_requires_approval(self):
+        from agent.control.settlement import PaymentRequired, PaymentSettlementService
+        gateway = MagicMock()
+        svc = PaymentSettlementService(gateway=gateway)
+        payment = PaymentRequired(amount_required=10.0)
+        sr = svc.create_settlement_request(payment)
+        # Try to execute without approval
+        result = await svc.execute_topup(sr.settlement_id)
+        assert result["ok"] is False
+        assert "not 'approved'" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_execute_topup_after_approval(self):
+        from agent.control.settlement import PaymentRequired, PaymentSettlementService
+        gateway = MagicMock()
+        gateway.call_api_via_capability = AsyncMock(return_value={
+            "ok": True,
+            "response": {"new_balance": 50.0},
+        })
+        svc = PaymentSettlementService(gateway=gateway)
+        payment = PaymentRequired(amount_required=10.0)
+        sr = svc.create_settlement_request(payment, wallet_balance=0.0)
+        svc.approve_settlement(sr.settlement_id)
+        result = await svc.execute_topup(sr.settlement_id)
+        assert result["ok"] is True
+        assert result["amount"] == 10.0
+        assert sr.status == "executed"
+
+    @pytest.mark.asyncio
+    async def test_execute_topup_failure(self):
+        from agent.control.settlement import PaymentRequired, PaymentSettlementService
+        gateway = MagicMock()
+        gateway.call_api_via_capability = AsyncMock(return_value={
+            "ok": False,
+            "error": "Provider unavailable",
+        })
+        svc = PaymentSettlementService(gateway=gateway)
+        payment = PaymentRequired(amount_required=10.0)
+        sr = svc.create_settlement_request(payment)
+        svc.approve_settlement(sr.settlement_id)
+        result = await svc.execute_topup(sr.settlement_id)
+        assert result["ok"] is False
+        assert sr.status == "failed"

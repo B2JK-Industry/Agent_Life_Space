@@ -621,13 +621,310 @@ class AgentAPI:
             "health": "ok" if not health.alerts else "degraded",
         })
 
+    # ─────────────────────────────────────────────
+    # Operator Dashboard (HTML)
+    # ─────────────────────────────────────────────
+
+    async def _handle_dashboard(self, request: web.Request) -> web.Response:
+        """GET /dashboard — self-contained operator dashboard."""
+        from agent.social.dashboard import render_dashboard_html
+        html = render_dashboard_html()
+        return web.Response(text=html, content_type="text/html")
+
+    # ─────────────────────────────────────────────
+    # Operator Control-Plane Endpoints (auth required)
+    # ─────────────────────────────────────────────
+
+    def _parse_int_param(
+        self, request: web.Request, name: str, default: int, scope: str,
+    ) -> int | web.Response:
+        """Parse an integer query param. Returns int or a 400 Response on failure."""
+        raw = request.query.get(name, str(default))
+        try:
+            return int(raw)
+        except (ValueError, TypeError):
+            return self._json_error_response(
+                status=400,
+                code="invalid_query_param",
+                summary="Invalid query parameter",
+                detail=f"'{name}' must be an integer, got '{raw}'",
+                scope=scope,
+            )
+
+    async def _handle_operator_jobs(self, request: web.Request) -> web.Response:
+        """GET /api/operator/jobs — list product jobs with optional filters."""
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.jobs",
+            )
+        if not self._agent or not hasattr(self._agent, "control_plane"):
+            return web.json_response({"jobs": [], "total": 0})
+
+        limit = self._parse_int_param(request, "limit", 50, "api.operator.jobs")
+        if isinstance(limit, web.Response):
+            return limit
+
+        params = request.query
+        jobs = self._agent.control_plane.list_product_jobs(
+            job_kind=params.get("kind", ""),
+            status=params.get("status", ""),
+            limit=min(limit, 200),
+        )
+        return web.json_response({
+            "jobs": [j.to_dict() for j in jobs],
+            "total": len(jobs),
+        })
+
+    async def _handle_operator_job_detail(self, request: web.Request) -> web.Response:
+        """GET /api/operator/jobs/{job_id} — single job detail."""
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.jobs",
+            )
+        if not self._agent or not hasattr(self._agent, "control_plane"):
+            return web.json_response({"error": "No control plane"}, status=503)
+
+        job_id = request.match_info["job_id"]
+        job = self._agent.control_plane.get_product_job(job_id)
+        if job is None:
+            return web.json_response({"error": f"Job '{job_id}' not found"}, status=404)
+        return web.json_response(job.to_dict())
+
+    async def _handle_operator_report(self, request: web.Request) -> web.Response:
+        """GET /api/operator/report — structured operator report."""
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.report",
+            )
+        if not self._agent or not hasattr(self._agent, "reporting"):
+            return self._json_error_response(
+                status=503, code="operator_report_unavailable",
+                summary="Operator report unavailable",
+                detail="Reporting service not initialized",
+                scope="api.operator.report",
+            )
+        try:
+            limit_raw = request.query.get("limit", "20")
+            limit = min(int(limit_raw), 200)
+        except (ValueError, TypeError):
+            return self._json_error_response(
+                status=400, code="invalid_query_param",
+                summary="Invalid query parameter",
+                detail=f"'limit' must be an integer, got '{request.query.get('limit', '')}'",
+                scope="api.operator.report",
+            )
+        try:
+            report = self._agent.reporting.get_report(limit=limit)
+            return web.json_response(report)
+        except Exception as e:
+            logger.error("operator_report_error", error=str(e))
+            return self._json_error_response(
+                status=500, code="operator_report_error",
+                summary="Operator report failed",
+                detail="Internal error generating report",
+                scope="api.operator.report",
+            )
+
+    async def _handle_operator_telemetry(self, request: web.Request) -> web.Response:
+        """GET /api/operator/telemetry — telemetry summary."""
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.telemetry",
+            )
+        if not self._agent or not hasattr(self._agent, "control_plane"):
+            return web.json_response({"snapshots": 0})
+
+        window = self._parse_int_param(request, "window_hours", 24, "api.operator.telemetry")
+        if isinstance(window, web.Response):
+            return window
+        summary = self._agent.control_plane.get_telemetry_summary(window_hours=window)
+        return web.json_response(summary)
+
+    async def _handle_operator_retention(self, request: web.Request) -> web.Response:
+        """GET /api/operator/retention — retention posture + table stats."""
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.retention",
+            )
+        if not self._agent or not hasattr(self._agent, "control_plane"):
+            return web.json_response({"total": 0})
+
+        posture = self._agent.control_plane.get_retention_posture()
+        stats = self._agent.control_plane.get_stats()
+        return web.json_response({**posture, "table_stats": stats})
+
+    async def _handle_operator_margin(self, request: web.Request) -> web.Response:
+        """GET /api/operator/margin — margin summary."""
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.margin",
+            )
+        if not self._agent or not hasattr(self._agent, "control_plane"):
+            return web.json_response({"total_jobs": 0})
+
+        limit = self._parse_int_param(request, "limit", 100, "api.operator.margin")
+        if isinstance(limit, web.Response):
+            return limit
+        summary = self._agent.control_plane.get_margin_summary(limit=min(limit, 500))
+        return web.json_response(summary)
+
+    async def _handle_operator_workflows(self, request: web.Request) -> web.Response:
+        """GET /api/operator/workflows — list recurring workflows."""
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.workflows",
+            )
+        if not self._agent or not hasattr(self._agent, "recurring_workflows"):
+            return web.json_response({"workflows": []})
+
+        workflows = self._agent.recurring_workflows.list_workflows(
+            status=request.query.get("status", ""),
+        )
+        return web.json_response({
+            "workflows": [w.to_dict() for w in workflows],
+            "total": len(workflows),
+        })
+
+    async def _handle_operator_pipelines(self, request: web.Request) -> web.Response:
+        """GET /api/operator/pipelines — list job pipelines."""
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.pipelines",
+            )
+        if not self._agent or not hasattr(self._agent, "pipeline_orchestrator"):
+            return web.json_response({"pipelines": []})
+
+        pipelines = self._agent.pipeline_orchestrator.list_pipelines(
+            status=request.query.get("status", ""),
+        )
+        return web.json_response({
+            "pipelines": [p.to_dict() for p in pipelines],
+            "total": len(pipelines),
+        })
+
+    async def _handle_operator_archive(self, request: web.Request) -> web.Response:
+        """GET /api/operator/archive — list archives or export a table.
+
+        ?action=list — list existing archive files
+        ?action=export&table=cost_ledger_entries&older_than_days=730 — export to CSV
+        """
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.archive",
+            )
+        if not self._agent or not hasattr(self._agent, "control_plane"):
+            return web.json_response({"error": "No control plane"}, status=503)
+
+        from agent.control.archival import ArchivalService
+        # ArchivalService needs raw storage for direct SQL; control_plane owns it.
+        storage = getattr(self._agent.control_plane, "_storage", None)
+        if storage is None:
+            return self._json_error_response(
+                status=503, code="archival_unavailable",
+                summary="Archival unavailable",
+                detail="Control plane storage not initialized",
+                scope="api.operator.archive",
+            )
+        archival = ArchivalService(storage)
+        action = request.query.get("action", "list")
+
+        if action == "export":
+            table = request.query.get("table", "")
+            older = self._parse_int_param(request, "older_than_days", 0, "api.operator.archive")
+            if isinstance(older, web.Response):
+                return older
+            older_than_days = older
+            try:
+                path = archival.export_table(
+                    table, older_than_days=older_than_days,
+                )
+                return web.json_response({
+                    "exported": bool(path),
+                    "filename": path,
+                    "table": table,
+                })
+            except (ValueError, RuntimeError) as e:
+                return web.json_response({"error": str(e)}, status=400)
+        else:
+            return web.json_response({"archives": archival.list_archives()})
+
+    async def _handle_operator_settlements(self, request: web.Request) -> web.Response:
+        """GET /api/operator/settlements — list pending payment settlements.
+
+        Settlement service is foundation-level: parse/approve/deny workflow.
+        Not yet a full automated payment loop.
+        """
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.settlements",
+            )
+        if not self._agent or not hasattr(self._agent, "settlement"):
+            return web.json_response({"settlements": [], "note": "Settlement service not initialized"})
+
+        pending = self._agent.settlement.get_pending_settlements()
+        return web.json_response({
+            "settlements": [s.to_dict() for s in pending],
+            "total": len(pending),
+        })
+
+    async def _handle_operator_audit(self, request: web.Request) -> web.Response:
+        """GET /api/operator/audit — API audit log stats + recent entries."""
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.audit",
+            )
+        limit = self._parse_int_param(request, "limit", 50, "api.operator.audit")
+        if isinstance(limit, web.Response):
+            return limit
+        return web.json_response({
+            "stats": self._audit.get_stats(),
+            "recent": self._audit.get_recent(limit=min(limit, 200)),
+        })
+
     async def start(self) -> None:
         """Spusti HTTP server."""
         self._app = web.Application()
+        # Core endpoints
         self._app.router.add_post("/api/message", self._handle_message)
         self._app.router.add_post("/api/review", self._handle_review)
         self._app.router.add_get("/api/status", self._handle_status)
         self._app.router.add_get("/api/health", self._handle_health)
+        # Operator dashboard
+        self._app.router.add_get("/dashboard", self._handle_dashboard)
+        # Operator control-plane endpoints
+        self._app.router.add_get("/api/operator/jobs", self._handle_operator_jobs)
+        self._app.router.add_get("/api/operator/jobs/{job_id}", self._handle_operator_job_detail)
+        self._app.router.add_get("/api/operator/report", self._handle_operator_report)
+        self._app.router.add_get("/api/operator/telemetry", self._handle_operator_telemetry)
+        self._app.router.add_get("/api/operator/retention", self._handle_operator_retention)
+        self._app.router.add_get("/api/operator/margin", self._handle_operator_margin)
+        self._app.router.add_get("/api/operator/workflows", self._handle_operator_workflows)
+        self._app.router.add_get("/api/operator/pipelines", self._handle_operator_pipelines)
+        self._app.router.add_get("/api/operator/archive", self._handle_operator_archive)
+        self._app.router.add_get("/api/operator/settlements", self._handle_operator_settlements)
+        self._app.router.add_get("/api/operator/audit", self._handle_operator_audit)
 
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()

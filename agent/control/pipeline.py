@@ -211,12 +211,12 @@ class PipelineOrchestrator:
         job_id = result.get("job_id", "")
 
         # Link job to pipeline
-        if job_id and hasattr(self._agent, "control_plane_state"):
+        if job_id and hasattr(self._agent, "control_plane"):
             try:
-                job = self._agent.control_plane_state.get_product_job(job_id)
+                job = self._agent.control_plane.get_product_job(job_id)
                 if job:
                     job.pipeline_id = pipeline.pipeline_id
-                    self._agent.control_plane_state._storage.save_product_job_record(job)
+                    self._agent.control_plane._storage.save_product_job_record(job)
             except Exception:
                 pass
 

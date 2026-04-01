@@ -9,6 +9,9 @@ Assessment basis:
 - branch: `main` (after the documented buyer-side Obolos API-call slice)
 - interpretation date: `2026-03-31`
 
+For open PR / local audit reality beyond `main`, see
+`AS_IS_TO_BE_2026_04_01.md`.
+
 Important:
 - this is a product-and-architecture progress snapshot, not a merge history log
 - percentages are directional, not exact velocity math

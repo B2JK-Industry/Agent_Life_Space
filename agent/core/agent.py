@@ -209,11 +209,16 @@ class AgentOrchestrator:
         # Phase 3 operatorization services
         from agent.control.pipeline import PipelineOrchestrator
         from agent.control.recurring import RecurringWorkflowManager
+        from agent.control.settlement import PaymentSettlementService
 
         self.recurring_workflows = RecurringWorkflowManager(
             control_plane_state=self.control_plane,
         )
         self.pipeline_orchestrator = PipelineOrchestrator(agent=self)
+        self.settlement = PaymentSettlementService(
+            gateway=self.gateway,
+            control_plane=self.control_plane,
+        )
 
         # Background tasks
         self._background_tasks: list[asyncio.Task[Any]] = []
