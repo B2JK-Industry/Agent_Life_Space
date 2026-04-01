@@ -10,6 +10,8 @@ Requires API key auth via query parameter or session.
 
 from __future__ import annotations
 
+import json
+
 from agent.core.identity import get_agent_identity
 
 _DASHBOARD_VERSION = "1.0.0"
@@ -23,6 +25,7 @@ def render_dashboard_html(api_key_hint: str = "") -> str:
     """
     identity = get_agent_identity()
     agent_name = identity.agent_name
+    initial_key = json.dumps(api_key_hint)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -130,8 +133,16 @@ tr:hover td {{ background: rgba(108,138,255,0.05); }}
   </div>
 </div>
 <script>
-let KEY = localStorage.getItem('als_api_key') || '';
+const INITIAL_KEY = {initial_key};
+let KEY = localStorage.getItem('als_api_key') || INITIAL_KEY || '';
 const BASE = window.location.origin;
+
+if (INITIAL_KEY && !localStorage.getItem('als_api_key')) {{
+  localStorage.setItem('als_api_key', INITIAL_KEY);
+  if (window.location.search.includes('key=')) {{
+    window.history.replaceState({{}}, '', '/dashboard');
+  }}
+}}
 
 if (KEY) {{ showDashboard(); }}
 

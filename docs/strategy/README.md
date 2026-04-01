@@ -20,8 +20,9 @@ Recommended usage:
 5. `NEXT_BACKLOG.md` is the near-term prioritized execution backlog derived
    from the current state of `main`.
 6. `AS_IS_TO_BE_2026_04_01.md` is the archival snapshot of the 2026-04-01
-   merge, settlement-workflow closure, and deployment-contract hardening
-   sequence that brought `main` to the current `v1.30.0` baseline.
+   merge, settlement-workflow closure, deployment-contract hardening, and
+   runtime-contract closure sequence that brought `main` to the current
+   `v1.31.0` baseline.
 7. `backlog_seed.yaml` is the machine-friendly seed for future backlog
    generation, ticket import, or automation.
 8. `prompts/` contains durable Claude Code task prompts derived from current

@@ -22,7 +22,7 @@ Tento súbor je len rozcestník. Detailná dokumentácia je na wiki stránkach:
 | [Learning Model](./LEARNING_MODEL.md) | Definícia learning systému, 4 typy, safety rules |
 | [Operator Handbook](./OPERATOR_HANDBOOK.md) | Praktický sprievodca pre vlastníka |
 | [Product Identity](./PRODUCT_IDENTITY.md) | Rozhodnutie: personal sovereign operator |
-| [Controlled Environments](./CONTROLLED_ENVIRONMENTS.md) | Runtime profily, gateway config, Phase 2 deployment posture |
+| [Controlled Environments](./CONTROLLED_ENVIRONMENTS.md) | Runtime profily, gateway config, self-host posture po Phase 4 closure |
 | [Release Checklist](./RELEASE_CHECKLIST.md) | Checklist pre každý release |
 | [Strategy Docs](./strategy/README.md) | Source of truth pre dlhodobú produktovú a architektonickú stratégiu |
 | [Backlog Progress](./strategy/BACKLOG_PROGRESS.md) | Snapshot progresu proti stratégii a backlogu |
@@ -42,8 +42,8 @@ python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capab
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_catalog_v1
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability wallet_balance_v1
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_api_call_v1 --provider-api-resource ocr-text-extraction --provider-api-method POST --provider-api-json '{"mode":"fast"}'
-python -m agent --review-quality-eval --review-quality-release-label v1.18.0
-python -m agent --release-readiness --release-readiness-release-label v1.18.0
+python -m agent --review-quality-eval --review-quality-release-label v1.31.0
+python -m agent --release-readiness --release-readiness-release-label v1.31.0
 python -m agent --export-evidence-job <job_id>
 python -m agent --export-evidence-job <job_id> --export-evidence-mode client_safe
 python -m agent --list-artifacts  # Shared artifact query surface
@@ -61,28 +61,25 @@ python -m pytest tests/ -q   # Testy
 
 ## Verzia
 
-Aktuálna: **v1.21.0** — Phase 3: cost feedback + unified policy boundary.
+Aktuálna: **v1.31.0** — Phase 4 closure: runtime contract hardening.
 
-Nové v `v1.21.0`:
-- Cost accuracy feedback — estimated vs actual porovnanie (`/report cost`)
-- Unified policy boundary — `evaluate_runtime_action()` entry point
+Nové v `v1.31.0`:
+- dashboard auth boundary
+- public control-plane methods pre settlement a archival
+- runtime contract closure pre extraction readiness
 
-Predchádzajúce v `v1.20.0`:
-- `/jobs` — product job listing a detail z Telegramu
-- `/deliver` — delivery status, detail, a gateway send z Telegramu
-- Review capability assignments enriched s execution/delivery policy binding
+Predchádzajúce v `v1.30.0`:
+- deployment contract hardening
+- explicit project-root / pidfile / vault posture
+- odstránenie skrytých runtime bypassov a tichých fallbackov
 
-Predchádzajúce v `v1.19.0`:
-- `/intake` — unified operator intake z Telegramu (qualify → plan → execute)
-- `/report` — operator report s inbox a budget views
-- `/build` — shortcut pre build intake
+Predchádzajúce v `v1.29.0`:
+- settlement workflow closure
+- persistence, dashboard/API/Telegram actions
+- auto-retry originálneho API callu po topupe
 
-Predchádzajúce v `v1.18.0`:
-- fresh install už nededí hardcoded owner identitu ani povinnú
-  slovenčinu v promptoch
-- Telegram owner flow zachováva reálne Telegram meno a explicitne odovzdáva
-  owner status callback vrstve
-- owner/language defaults sa nastavujú cez `AGENT_OWNER_NAME`,
-  `AGENT_OWNER_FULL_NAME` a `AGENT_DEFAULT_LANGUAGE`
+Predchádzajúce v `v1.28.1`:
+- Phase 4 merge closure na `main`
+- dashboard + settlement foundation + regression fixes
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

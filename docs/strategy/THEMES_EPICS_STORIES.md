@@ -11,7 +11,7 @@ Use it for:
 
 ## Current Progress Snapshot
 
-Assessment basis: deployment-contract hardening release `v1.30.0` on `main`.
+Assessment basis: runtime-contract closure release `v1.31.0` on `main`.
 
 Important:
 - this is a strategy progress snapshot, not a merge-state indicator
@@ -28,7 +28,7 @@ Important:
 | T5 Security, Governance, And Policy | `in_progress` | 99% | Tool policy deny-by-default, approval gating, redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, capability-scoped builder guardrails, explicit gateway defaults, provider-aware gateway routing decisions, provider receipt validation, provider-outcome classification, deterministic release-readiness thresholds, and structured denial payloads now exist across build/review/tool/web/social/finance-facing blocked flows. | Build execution and broader runtime action flow still sit outside one unified policy enforcement boundary. |
 | T6 Cost, Usage, And Observability | `complete_for_phase` | 99% | UsageSummary, a durable per-job cost ledger, persisted job duration/retry/failure telemetry, runtime hard/soft/stop-loss budget posture, budget-aware escalation controls, durable plan/trace/delivery/gateway/release telemetry, shared runtime job/artifact/workspace queries, richer operator reporting, approval backlog plus retention posture summaries, review-eval smoke coverage, golden review cases, runtime quality telemetry with release labels, duration, and previous-baseline trend deltas, plus a CLI/CI release-readiness gate now exist. | No richer live dashboard analytics or broader longitudinal operator history yet. |
 | T7 External Capability Gateway | `complete_for_phase` | 99% | Runtime model and policy layer now expose explicit gateway defaults, separate handoff and API-call contracts, a concrete `obolos.tech` provider catalog with buyer-side, seller-side, and file-upload routes, readiness-aware capability routes, env/vault-backed auth resolution, provider-specific payload shaping, parsed provider receipts, persisted request/response artifacts, x402-aware denials, fallback-capable delivery sends, and a persisted settlement workflow surfaced through the orchestrator, API, dashboard, and Telegram. | Broader downstream provider workflow and additional provider integrations remain future scope. |
-| T8 Enterprise Hardening | `in_progress` | 99% | Shared control-plane layer, explicit runtime coexistence rules, direct review/build primitive reuse, persisted product-job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, deterministic review/build execution policy boundaries, explicit gateway runtime boundaries, provider configuration posture, data-handling rules, explicit startup/config posture, and CI-enforced architecture plus deployment-contract tests now exist. | Selective extraction and stricter deployment-grade runtime enforcement remain future scope. |
+| T8 Enterprise Hardening | `complete_for_phase` | 100% | Shared control-plane layer, explicit runtime coexistence rules, direct review/build primitive reuse, persisted product-job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, deterministic review/build execution policy boundaries, explicit gateway runtime boundaries, provider configuration posture, data-handling rules, explicit startup/config posture, public control-plane archival/settlement methods, dashboard auth boundary, and CI-enforced architecture plus deployment-contract tests now exist. | Phase 4 is closed for current scope; selective extraction and stronger deployment-grade enforcement remain future architecture work. |
 
 ## Theme T1: Platform Foundation
 
@@ -627,14 +627,16 @@ Stories:
   - current_state: agent/control/models.py defines shared contracts: JobKind, JobStatus, ExecutionMode, JobTiming, ExecutionStep, ArtifactKind, ArtifactRef, UsageSummary.
 - T8-E1-S2: Remove hidden coupling and implicit shared state.
   - status: `mostly_complete`
-  - current_state: Docker availability is now kept as explicit runtime state instead of env-var mutation, gateway payment-required callback wiring happens at construction time instead of post-init mutation, and sandbox defaults now rely on `setdefault` rather than implicit overwrite.
+  - current_state: Docker availability is now kept as explicit runtime state instead of env-var mutation, gateway payment-required callback wiring happens at construction time instead of post-init mutation, settlement/reporting wiring avoids post-init private mutation, and sandbox defaults now rely on `setdefault` rather than implicit overwrite.
   - missing: Broader hidden coupling and future extraction seams still need cleanup across the runtime stack.
 - T8-E1-S3: Add architecture invariants for contracts and boundaries.
   - status: `complete_for_phase`
   - current_state: 22 enforcement tests across 6 categories: import graph boundaries (review/build/control bounded context imports), execution mode contracts (review read-only, build workspace-bound), gateway boundary (external HTTP only in approved modules), cross-domain isolation (review/build storage isolation), shared control-plane contracts (no parallel enums, comprehensive artifact/trace/job kinds), and multi-provider gateway contracts (seller capabilities, provider resolution, catalog map) (v1.23.0).
   - missing: CI enforcement of invariant tests as required gate remains optional.
 - T8-E1-S4: Make future service extraction obvious from module boundaries.
-  - status: `in_progress`
+  - status: `mostly_complete`
+  - current_state: Public control-plane methods now cover settlement persistence/listing and archival storage access, and operator/reporting initialization order is explicit enough that extraction seams are easier to see than in the earlier post-init-mutation state.
+  - missing: Service boundaries are clearer, but selective extraction and stricter modular seams still remain future architecture work.
   - current_state: agent/build/ is a clean bounded context: models.py, service.py, storage.py, verification.py. Parallel to agent/review/.
 - T8-E1-S5: Remove duplicated reviewer flows and hidden channel-to-product
   coupling.
@@ -653,7 +655,7 @@ Stories:
   - current_state: Runtime model and planner metadata expose explicit environment profiles for review, build, acquisition/import, and export-only flows, and deployment contract hardening now makes startup-sensitive behavior testable with explicit failures instead of silent fallbacks.
   - missing: The higher-level profile matrix exists, but broader deployment enforcement is still not formalized.
 - T8-E2-S3: Add configuration discipline for project roots, secrets, and storage.
-  - status: `mostly_complete`
+  - status: `complete_for_phase`
   - current_state: Project-root inference now prefers the checked-out repo and fails explicitly instead of silently falling back, pidfile location is configurable through `AGENT_PIDFILE_PATH`, vault readiness is explicit through `is_ready`, gateway route readiness reports env/vault-backed configuration posture, and provider sends can resolve auth from either environment variables or the encrypted local vault.
   - missing: Broader deployment/storage discipline and stricter runtime enforcement still remain open.
 - T8-E2-S4: Add deployment documentation for controlled environments.

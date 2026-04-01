@@ -1,11 +1,11 @@
-version: 11
+version: 12
 source_of_truth: docs/strategy/MASTER_SOURCE_OF_TRUTH.md
 seed_note: >
   Machine-friendly backlog seed aligned to current main. Mirrors
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after the merged settlement-workflow closure and deployment-contract hardening baseline on main (v1.30.0)."
+  assessed_state_note: "Snapshot after the merged settlement-workflow, deployment-contract, and runtime-contract closure baseline on main (v1.31.0)."
   interpretation_date: "2026-04-01"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
@@ -18,21 +18,21 @@ progress_snapshot:
     T8: { status: in_progress, approx_progress: 99 }
 next_execution_backlog:
   - priority: P0
-    story_id: T5-E1-S2
-    title: "Keep policy deny-by-default across execution modes"
-    why_now: "Deployment hardening removed one dangerous bypass, so the next leverage is closing the remaining runtime paths that still rely on discipline rather than one obvious contract."
-  - priority: P0
-    story_id: T8-E2-S3
-    title: "Add configuration discipline for project roots, secrets, and storage"
-    why_now: "The self-host baseline is stronger now, so hidden config defaults and storage posture have become the next practical production risk."
-  - priority: P1
-    story_id: T8-E1-S2
-    title: "Remove hidden coupling and implicit shared state"
-    why_now: "Deployment contract work exposed how much runtime safety still depends on implicit state and post-init mutation rather than clearer seams."
-  - priority: P1
     story_id: T8-E1-S4
     title: "Make future service extraction obvious from module boundaries"
-    why_now: "Once startup and runtime contracts are clearer, the next honest hardening step is to make extraction seams more visible instead of letting modularity stay implicit."
+    why_now: "Phase 4 is complete, so the next high-leverage step is clearer extraction seams rather than another closure-only hardening pass."
+  - priority: P0
+    story_id: T8-E1-S2
+    title: "Remove hidden coupling and implicit shared state"
+    why_now: "Runtime contract closure removed some hidden coupling, but the next architecture arc still depends on making the remaining implicit wiring easier to see and test."
+  - priority: P1
+    story_id: T8-E2-S3
+    title: "Add configuration discipline for project roots, secrets, and storage"
+    why_now: "Explicit runtime contracts improved self-host safety, but config and storage posture still need a cleaner architecture-grade story."
+  - priority: P1
+    story_id: T8-E3-S4
+    title: "Prepare data-handling rules for future enterprise requirements"
+    why_now: "With Phase 4 closed, the next honest hardening slice is to make future extraction and enterprise data posture easier to reason about before new surfaces arrive."
 themes:
   - id: T1
     name: Platform Foundation
@@ -440,7 +440,7 @@ themes:
     goal: Ensure all valuable workflows remain controlled and auditable.
     status: in_progress
     approx_progress: 99
-    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, review-execution, and build-execution policy profiles, multi-step approval thresholds, provider-aware gateway routes and readiness checks, provider receipt validation, builder capability guardrails, release-readiness thresholds, shared job-persistence, artifact-retention, gateway-default policies, runtime gateway access evaluation, and broader structured denial payloads across build, review, tool, web, social, and finance-facing blocked flows.
+    current_state: Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approvals with job/artifact/workspace/bundle linkage, deterministic review-gate, delivery, review-execution, and build-execution policy profiles, multi-step approval thresholds, provider-aware gateway routes and readiness checks, provider receipt validation, builder capability guardrails, release-readiness thresholds, shared job-persistence, artifact-retention, gateway-default policies, runtime gateway access evaluation, no AGENT_DEV_MODE approval bypass, and broader structured denial payloads across build, review, tool, web, social, and finance-facing blocked flows.
     main_gap: Build and broader runtime action flow still sit outside a single unified policy enforcement boundary.
     epics:
       - id: T5-E1
@@ -686,8 +686,8 @@ themes:
     goal: Prepare for enterprise-grade architecture without premature fragmentation.
     status: in_progress
     approx_progress: 98
-    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, internal/client-safe evidence export, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review/build execution policy boundaries, release-readiness gating, controlled-environment deployment documentation, ADR-001 sidecar, TS operator contracts and skeleton, policy-driven redaction, provider readiness reporting, explicit startup/config posture, stricter project-root handling, configurable pidfile location, explicit vault readiness, reduced post-init runtime mutation, and explicit enterprise-facing data-handling rules.
-    main_gap: Runtime boundaries are clearer and better tested, but not yet enforced as extraction-grade invariants across the whole execution stack.
+    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, internal/client-safe evidence export, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review/build execution policy boundaries, release-readiness gating, controlled-environment deployment documentation, ADR-001 sidecar, TS operator contracts and skeleton, policy-driven redaction, provider readiness reporting, explicit startup/config posture, stricter project-root handling, configurable pidfile location, explicit vault readiness, reduced post-init runtime mutation, public control-plane archival/settlement methods, dashboard auth boundary, and explicit enterprise-facing data-handling rules.
+    main_gap: Phase 4 is closed for current scope; future selective extraction and stronger full-stack enforcement remain the next architecture arc.
     epics:
       - id: T8-E1
         name: Contract-First Boundaries
@@ -700,7 +700,7 @@ themes:
           - id: T8-E1-S2
             name: Remove hidden coupling and implicit shared state
             status: mostly_complete
-            current_state: Docker availability is now kept as explicit runtime state instead of env-var mutation, gateway payment-required callback wiring happens at construction time instead of post-init mutation, and sandbox defaults now rely on setdefault rather than implicit overwrite.
+            current_state: Docker availability is now kept as explicit runtime state instead of env-var mutation, gateway payment-required callback wiring happens at construction time instead of post-init mutation, settlement/reporting wiring avoids post-init private mutation, and sandbox defaults now rely on setdefault rather than implicit overwrite.
             missing: Broader hidden coupling and future extraction seams still need cleanup across the runtime stack.
           - id: T8-E1-S3
             name: Add architecture invariants for contracts and boundaries
@@ -709,7 +709,9 @@ themes:
             missing: CI enforcement is now available, but optional downstream release discipline still remains.
           - id: T8-E1-S4
             name: Make future service extraction obvious from module boundaries
-            status: in_progress
+            status: mostly_complete
+            current_state: Public control-plane methods now cover settlement persistence/listing and archival storage access, and operator/reporting initialization order is explicit enough that extraction seams are easier to see than in the earlier post-init-mutation state.
+            missing: Service boundaries are clearer, but selective extraction and stricter modular seams still remain future architecture work.
           - id: T8-E1-S5
             name: Remove duplicated reviewer flows and hidden channel-to-product coupling
             status: mostly_complete
@@ -730,7 +732,7 @@ themes:
             missing: The higher-level profile matrix now exists, but broader deployment enforcement is still not formalized.
           - id: T8-E2-S3
             name: Add configuration discipline for project roots, secrets, and storage
-            status: mostly_complete
+            status: complete_for_phase
             current_state: Project-root inference now prefers the checked-out repo and fails explicitly instead of silently falling back, pidfile location is configurable through AGENT_PIDFILE_PATH, vault readiness is explicit through is_ready, gateway route readiness reports env/vault-backed configuration posture, and provider sends can resolve auth from either environment variables or the encrypted local vault.
             missing: Broader deployment/storage discipline and stricter runtime enforcement still remain open.
           - id: T8-E2-S4

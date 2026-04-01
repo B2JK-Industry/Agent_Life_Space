@@ -633,7 +633,9 @@ class AgentAPI:
         """
         key_param = request.query.get("key", "")
         if key_param and key_param in self._api_keys:
-            pass  # Authenticated via query param
+            from agent.social.dashboard import render_dashboard_html
+            html = render_dashboard_html(api_key_hint=key_param)
+            return web.Response(text=html, content_type="text/html")
         else:
             auth_error = self._check_auth(request)
             if auth_error:

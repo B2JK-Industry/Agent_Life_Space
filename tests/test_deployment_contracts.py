@@ -12,6 +12,7 @@ Validates:
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -144,6 +145,14 @@ class TestDashboardAuth:
             "Dashboard handler does not check authentication"
         )
 
+    def test_dashboard_query_param_login_seeds_runtime_key(self):
+        """Dashboard HTML must bootstrap the query-param key into runtime JS."""
+        from agent.social.dashboard import render_dashboard_html
+        html = render_dashboard_html(api_key_hint="test-key")
+        assert "const INITIAL_KEY = \"test-key\";" in html
+        assert "localStorage.setItem('als_api_key', INITIAL_KEY);" in html
+        assert "window.history.replaceState" in html
+
 
 class TestNoPrivateStorageAccess:
     """Services must not access _storage directly; use public API."""
@@ -180,16 +189,8 @@ class TestServiceExtractionReadiness:
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
-            # Pattern: self.service._private = value (outside of self.__init__ context)
-            if "._settlement_service" in stripped or "._on_payment_required" in stripped:
-                # These should now be passed at construction, not post-init
-                if "=" in stripped and not stripped.startswith("self."):
-                    violations.append(f"agent.py:{i} — {stripped}")
-        # Allow the gateway on_payment_required since it's passed at construction now
-        real_violations = [
-            v for v in violations
-            if "reporting._settlement_service" in v
-        ]
-        assert not real_violations, (
-            "Post-init private mutation found:\n" + "\n".join(real_violations)
+            if re.search(r"self\.[A-Za-z0-9_]+\._[A-Za-z0-9_]+\s*=", stripped):
+                violations.append(f"agent.py:{i} — {stripped}")
+        assert not violations, (
+            "Post-init private mutation found:\n" + "\n".join(violations)
         )

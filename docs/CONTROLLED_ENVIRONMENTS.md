@@ -1,7 +1,7 @@
 # Controlled Environments
 
-This guide documents the practical Phase 2 deployment posture for Agent Life
-Space after Builder v1 closure.
+This guide documents the practical self-host deployment posture for Agent Life
+Space after the Phase 4 hardening arc closed on `v1.31.0`.
 
 Use it when you want to run ALS consistently in one of the supported operating
 profiles:
@@ -13,6 +13,8 @@ profiles:
 
 - project-root and data-dir expectations
 - gateway and vault configuration for `obolos.tech`
+- dashboard/API/operator access posture
+- settlement and archival workflow posture
 - release-readiness checks before a release or handoff
 - the execution posture behind build, review, acquisition, and delivery flows
 
@@ -117,7 +119,7 @@ python -m agent --call-provider-api --provider-api-provider obolos.tech --provid
 Before a release or important external handoff, run:
 
 ```bash
-python -m agent --release-readiness --release-readiness-release-label v1.16.1
+python -m agent --release-readiness --release-readiness-release-label v1.31.0
 ```
 
 What it checks today:
@@ -130,7 +132,7 @@ Fail-closed behavior:
 - command exits non-zero when the deterministic release gate is not ready
 - CI can run the same gate to prevent a weak release from landing
 
-## Practical Phase 2 Workflow
+## Practical Self-Host Workflow
 
 Recommended order:
 1. run local tests, lint, and typecheck
@@ -143,21 +145,25 @@ Typical command set:
 ```bash
 ./.venv/bin/ruff check .
 ./.venv/bin/pytest -q
-PATH="$PWD/.tools/node-v24.14.0-darwin-arm64/bin:$PATH" npm run typecheck
+PATH="$PWD/.tools/node-v24.14.0-darwin-arm64/bin:$PATH" npm --prefix operator run typecheck
 python -m agent --runtime-model
 python -m agent --report
-python -m agent --release-readiness --release-readiness-release-label v1.16.1
+python -m agent --release-readiness --release-readiness-release-label v1.31.0
 ```
 
-## Phase 2 Reality Check
+## Current Reality Check
 
-This deployment guide is good enough for Phase 2 builder closure.
+This deployment guide is good enough for the current self-host/operator-controlled
+runtime after Phase 4 closure.
 
 It does not claim:
 - general code generation
-- a live operator backend/UI
-- a fully unified runtime enforcement engine
+- a richer multi-user operator app
+- a fully unified runtime enforcement engine across the whole stack
 - extraction-grade service boundaries across the whole stack
+- broad downstream provider orchestration beyond the current gateway surfaces
 
-That remaining work belongs to Phase 3 operatorization and Phase 4 enterprise
-hardening.
+The remaining work now belongs to the next architecture arc:
+- selective extraction readiness
+- stronger full-stack runtime enforcement
+- broader operatorization and provider workflow depth

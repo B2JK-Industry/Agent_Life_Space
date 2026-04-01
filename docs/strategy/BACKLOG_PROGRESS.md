@@ -6,7 +6,7 @@ This file tracks current strategic execution progress against:
 - the actual state of `main`
 
 Assessment basis:
-- branch: `main` (`v1.30.0`, deployment-contract hardening baseline)
+- branch: `main` (`v1.31.0`, runtime-contract closure baseline)
 - interpretation date: `2026-04-01`
 
 For the archival narrative of the 2026-04-01 merge and post-merge closure
@@ -169,6 +169,13 @@ Status legend:
 - Docker availability now stays as explicit agent runtime state, and gateway
   payment-required wiring now happens at construction time instead of post-init
   mutation.
+- Dashboard HTML now sits behind API auth instead of being publicly visible to
+  anonymous clients.
+- Settlement persistence and archival now flow through explicit public
+  control-plane methods instead of private storage reach-through.
+- Operator reporting now receives settlement dependencies at construction time,
+  reinforcing extraction-readiness boundaries.
+- Phase 4 is now `complete_for_phase` across the v1.25.1 → v1.31.0 arc.
 - Review delivery now converges on the shared `DeliveryPackage` /
   `DeliveryRecord` lifecycle, including prepared/awaiting_approval/approved/
   handed_off state, approval linkage, and explicit handoff after approval.
@@ -251,7 +258,7 @@ Status legend:
 | T5 Security, Governance, And Policy | in_progress | 99% | Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approval storage with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, capability-scoped builder guardrails, explicit gateway defaults, provider-aware gateway routing decisions, provider receipt validation, provider-outcome classification, release-readiness thresholds, no `AGENT_DEV_MODE` approval bypass, and structured denial payloads now exist across build/review/tool/web/social/finance-facing blocked flows. | Build and broader runtime execution still do not run under one fully unified enforcement engine |
 | T6 Cost, Usage, And Observability | complete_for_phase | 99% | UsageSummary on jobs, a durable per-job control-plane cost ledger, persisted duration/retry/failure telemetry for product jobs, point-in-time `TelemetrySnapshot` records with job throughput/latency/cost/delivery health/system resources, time-window aggregation with trend detection, orchestrator-visible build/review counters, durable planning/delivery/gateway/release/telemetry traces, runtime budget enforcement, budget-aware escalation controls, operator-facing reporting with telemetry summaries, review-eval smoke checks, golden review cases in CI, runtime quality telemetry with release labels, duration, and prior-baseline trend deltas, plus a CLI/CI release-readiness gate and `/telemetry` Telegram command now exist. | No richer live operator UI or broader longitudinal dashboards yet |
 | T7 External Capability Gateway | complete_for_phase | 99% | Runtime model and policy layer now expose explicit gateway defaults, separate delivery and API-call gateway contracts, a concrete `obolos.tech` provider catalog with buyer-side (catalog, wallet, API call), seller-side (publish, topup), and file-upload (marketplace_upload_v1 with multipart/form-data) capability routes, multi-provider resolution with intelligent fallback, x402 payment metadata extraction (Retry-After, x-payment-* headers, body fields), capability-to-providers map in catalog, readiness-aware env/vault config resolution, provider-aware route metadata, provider-specific request payload shaping, parsed provider receipts, persisted/ledgered external API calls with retained request/response artifacts, and a persisted settlement workflow surfaced through the orchestrator, API, dashboard, and Telegram. | Broader downstream provider workflow and additional provider integrations remain future scope |
-| T8 Enterprise Hardening | in_progress | 99% | Shared control-plane layer, explicit runtime coexistence rules, review + build bounded contexts on shared primitives, persisted job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, deterministic review/build execution policy boundaries, explicit gateway runtime boundaries, provider configuration posture, explicit startup/config posture, stricter project-root handling, configurable pidfile location, explicit vault readiness, reduced post-init runtime mutation, and architecture invariant plus deployment-contract tests now exist. | Extraction-grade enforcement is stronger, but full-stack runtime contract enforcement remains future scope. |
+| T8 Enterprise Hardening | complete_for_phase | 100% | Shared control-plane layer, explicit runtime coexistence rules, review + build bounded contexts on shared primitives, persisted job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, deterministic review/build execution policy boundaries, explicit gateway runtime boundaries, provider configuration posture, explicit startup/config posture, stricter project-root handling, configurable pidfile location, explicit vault readiness, reduced post-init runtime mutation, public control-plane archival/settlement access, dashboard auth boundary, and architecture invariant plus deployment-contract tests now exist. | Phase 4 is closed for current scope; future selective extraction and stronger full-stack enforcement remain later architecture work. |
 
 ## Epic Snapshot
 
@@ -365,6 +372,9 @@ Status legend:
 - with deployment contract hardening that removes environment-dependent
   approval bypass, rejects silent project-root fallback, makes pidfile/vault
   posture explicit, and reduces hidden post-init runtime mutation
+- with runtime contract closure that moves dashboard HTML behind auth, replaces
+  private settlement/archival reach-through with public control-plane methods,
+  and improves service-extraction readiness in the orchestrator/reporting path
 - but with builder execution still bounded to explicit structured local operations rather than general code generation
 - and with acceptance still deterministic/rule-based rather than semantic
 - and without a richer live operator app or a fully unified build/review execution-policy engine
@@ -523,23 +533,19 @@ Review/audit-driven fixes landed on `main`:
 
 See [NEXT_BACKLOG.md](/Users/danielbabjak/Desktop/Agent_Life_Space/docs/strategy/NEXT_BACKLOG.md) for the prioritized execution queue.
 
-Now that the Phase 4 merge, settlement-workflow closure, and deployment
-contract hardening all landed on `main`, the next high-leverage work is
-runtime contract closure for self-host production posture:
-1. Keep deny-by-default policy explicit across remaining execution paths and
-   runtime actions
-2. Tighten configuration discipline for project roots, secrets, pidfiles, and
-   storage posture
-3. Remove the remaining hidden coupling and implicit shared state from the
-   runtime stack
-4. Make future service extraction and startup/runtime contract violations
-   easier to see, test, and block
+Now that the full Phase 4 arc landed on `main`, the next high-leverage work is
+post-Phase-4 selective extraction readiness:
+1. Make future service extraction obvious from module boundaries and public APIs
+2. Reduce the remaining hidden coupling and implicit shared state in the runtime
+3. Keep config, storage, and data-handling posture explicit as the system grows
+4. Start the next architecture arc from clearer seams instead of another
+   cleanup-only pass
 
 ---
 
-## Phase 4 Enterprise Hardening (v1.25.1–v1.30.0, 2026-04-01)
+## Phase 4 Enterprise Hardening (v1.25.1–v1.31.0, 2026-04-01)
 
-All items landed on `main` through deployment-contract hardening at `f2345c0`.
+All items landed on `main` through runtime-contract closure at `122b152`.
 See [CHANGELOG.md](/Users/danielbabjak/Desktop/Agent_Life_Space/CHANGELOG.md)
 for release-by-release verification detail.
 
@@ -598,3 +604,12 @@ for release-by-release verification detail.
 - Vault readiness is explicit and startup config posture is logged
 - Docker availability and gateway payment wiring now live as explicit runtime
   state instead of hidden env mutation or post-init coupling
+
+### Runtime Contract Closure (v1.31.0)
+- **Status:** `complete_for_phase`
+- Dashboard HTML now requires API auth instead of being served anonymously
+- Settlement and archival now use public control-plane methods instead of
+  private storage access
+- Reporting is initialized with settlement dependency at construction time,
+  improving extraction readiness and removing post-init private mutation
+- Phase 4 closes on `1631 passed, 4 skipped` with no open PRs
