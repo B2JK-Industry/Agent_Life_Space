@@ -10,49 +10,48 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.27.0] — 2026-04-01
+
+Phase 4 continued: Operator REST API and compliance-grade archival.
+
+### Operator REST API
+- 9 new authenticated endpoints under `/api/operator/`
+- All endpoints require API key auth, graceful fallback when control plane unavailable
+
+### Archival Service
+- `ArchivalService`: CSV export for 5 compliance tables
+- `GET /api/operator/archive` endpoint: list archives or trigger export
+
+### Tests
+- 17 new tests for operator API + archival
+
 ## [1.26.0] — 2026-04-01
 
 Phase 4 enterprise hardening: CI-enforced invariants, automated retention, unified policy boundary.
 
 ### CI-enforced Architecture Invariants
-- 4 new deployment safety tests (persona, paths, sandbox) converted from shell grep
-- Explicit `pytest tests/test_architecture_invariants.py` CI step (26 tests, blocking gate)
-- Shell-based architecture checks removed from CI (replaced by pytest)
+- 26 pytest tests as explicit blocking CI gate
+- Shell-based checks replaced by pytest
 
 ### Automated Retention & Pruning
-- `hard_delete_pruned_artifacts()`, `hard_delete_old_traces()`,
-  `hard_delete_old_plans()`, `hard_delete_old_pipelines()` in storage.py
-- Retention pruning cron loop (every 6h): soft-deletes expired artifacts
-- Nightly data cleanup cron loop: hard-deletes old traces (90d), plans (365d),
-  pruned artifacts (90d), completed pipelines (180d)
-- `/report retention` Telegram subcommand with table sizes and posture
+- Hard-delete methods, retention pruning cron (6h), nightly cleanup cron
+- `/report retention` Telegram subcommand
 
 ### Unified Policy Boundary Migration
+- Gateway, review, build callers migrated to `evaluate_runtime_action()`
 - `RuntimePolicyDecision` enriched with `resolved_policy` and `policy_metadata`
-- `evaluate_runtime_action()` now checks `allow_git_subprocess` for review actions
-- Build evaluation reads `build_execution_policy_id` from `policy_overrides`
-- **Gateway callers migrated**: `send_delivery()` and `send_capability_request()`
-  now go through `evaluate_runtime_action()` instead of calling
-  `evaluate_external_gateway_access()` directly
-- **Review service migrated**: `execute_review()` routes through unified boundary
-- **Build service migrated**: `_build_execution_policy()` routes through unified boundary
-- Deferred: ReviewGatePolicy (post-execution), budget callers (cross-cutting),
-  ReleaseReadinessPolicy (standalone gate)
 
 ## [1.25.1] — 2026-04-01
 
 Production hardening: rate limits, telemetry auto-recording, persistence, cache accuracy.
 
 ### Fixed
-- **API rate limit**: localhost/terminal gets 60 req/min (was 10), external stays at 10/min
-- **Semantic cache false matches**: raised similarity threshold 0.90→0.95, added
-  length-ratio guard (3x max), skip short queries (<12 chars) and commands (/...)
+- API rate limit: 60/min for localhost, 10/min for external
+- Semantic cache: threshold 0.90→0.95, length-ratio guard, skip commands
 
 ### Added
-- **Telemetry auto-recording**: cron records runtime telemetry snapshot every hour
-- **Workflow SQLite persistence**: RecurringWorkflows survive agent restart
-- **Pipeline SQLite persistence**: JobPipelines survive agent restart
-- New `recurring_workflows` and `job_pipelines` tables in control.db
+- Telemetry auto-recording (hourly cron)
+- Workflow + Pipeline SQLite persistence
 
 ## [1.25.0] — 2026-03-31
 
