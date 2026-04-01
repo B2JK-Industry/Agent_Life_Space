@@ -10,6 +10,27 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.28.1] — 2026-04-01
+
+Post-merge closure: archive retrieval, settlement Telegram surface, docs truthfulness.
+
+### Archive Retrieval
+- `GET /api/operator/archive/download/{filename}` — serve CSV with Content-Disposition
+- Path-traversal protection: rejects `..`, `/`, non-`.csv` filenames
+
+### Settlement Telegram Surface
+- `/settlement` — list pending payment settlement requests
+- `/settlement approve <id> [note]` — operator approves topup
+- `/settlement deny <id> [note]` — operator denies
+
+### Docs
+- `AS_IS_TO_BE_2026_04_01.md` rewritten as post-merge archival snapshot
+- `BACKLOG_PROGRESS.md` updated with complete Phase 4 state
+
+### Tests
+- 4 new archive download tests (traversal rejection, valid path, auth, 404)
+- 1608 total tests pass
+
 ## [1.28.0] — 2026-04-01
 
 Phase 4: Operator dashboard, payment settlement foundation, production regression fixes.
