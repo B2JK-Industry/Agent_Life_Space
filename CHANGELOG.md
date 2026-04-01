@@ -10,6 +10,32 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.28.0] — 2026-04-01
+
+Phase 4: Operator dashboard and payment settlement workflow.
+
+### Operator Dashboard
+- Self-contained HTML dashboard served at `GET /dashboard` on port 8420
+- No React, no build tools — vanilla HTML + CSS + JS
+- Real-time metrics: jobs, cost/margin, telemetry, system status
+- Job listing table with status badges
+- Retention posture and table sizes
+- API audit log stats
+- API key auth via localStorage, auto-refresh every 30s
+- Dark theme, responsive, monospace design
+
+### Payment Settlement Service
+- `PaymentSettlementService` in `agent/control/settlement.py`
+- Parses 402 Payment Required denials from gateway
+- Wallet balance check via `wallet_balance_v1` capability
+- Settlement request creation with operator approval requirement
+- Approve/deny workflow (human-in-the-loop, no automatic spending)
+- Topup execution via `wallet_topup_v1` capability after approval
+- Full trace recording to control plane
+
+### Tests
+- 22 new tests in `test_dashboard_settlement.py` (dashboard + settlement)
+
 ## [1.27.0] — 2026-04-01
 
 Phase 4 continued: Operator REST API and compliance-grade archival.

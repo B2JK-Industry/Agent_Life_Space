@@ -622,6 +622,16 @@ class AgentAPI:
         })
 
     # ─────────────────────────────────────────────
+    # Operator Dashboard (HTML)
+    # ─────────────────────────────────────────────
+
+    async def _handle_dashboard(self, request: web.Request) -> web.Response:
+        """GET /dashboard — self-contained operator dashboard."""
+        from agent.social.dashboard import render_dashboard_html
+        html = render_dashboard_html()
+        return web.Response(text=html, content_type="text/html")
+
+    # ─────────────────────────────────────────────
     # Operator Control-Plane Endpoints (auth required)
     # ─────────────────────────────────────────────
 
@@ -824,6 +834,8 @@ class AgentAPI:
         self._app.router.add_post("/api/review", self._handle_review)
         self._app.router.add_get("/api/status", self._handle_status)
         self._app.router.add_get("/api/health", self._handle_health)
+        # Operator dashboard
+        self._app.router.add_get("/dashboard", self._handle_dashboard)
         # Operator control-plane endpoints
         self._app.router.add_get("/api/operator/jobs", self._handle_operator_jobs)
         self._app.router.add_get("/api/operator/jobs/{job_id}", self._handle_operator_job_detail)
