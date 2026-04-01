@@ -1,11 +1,11 @@
-version: 10
+version: 11
 source_of_truth: docs/strategy/MASTER_SOURCE_OF_TRUTH.md
 seed_note: >
   Machine-friendly backlog seed aligned to current main. Mirrors
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after the merged Phase 4 closure and v1.28.1 post-merge baseline."
+  assessed_state_note: "Snapshot after the merged settlement-workflow closure and deployment-contract hardening baseline on main (v1.30.0)."
   interpretation_date: "2026-04-01"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
@@ -18,21 +18,21 @@ progress_snapshot:
     T8: { status: in_progress, approx_progress: 99 }
 next_execution_backlog:
   - priority: P0
-    story_id: T4-E3-S5
-    title: "Add active settlement workflow across API, Telegram, and dashboard"
-    why_now: "Settlement is now surfaced through orchestrator, API, and Telegram, but it is still a partial operator workflow instead of an end-to-end active control loop."
+    story_id: T5-E1-S2
+    title: "Keep policy deny-by-default across execution modes"
+    why_now: "Deployment hardening removed one dangerous bypass, so the next leverage is closing the remaining runtime paths that still rely on discipline rather than one obvious contract."
   - priority: P0
-    story_id: T7-E2-S7
-    title: "Persist settlement requests and recovery state"
-    why_now: "Pending settlement state is still in-memory only, making restart recovery the biggest remaining production gap in the payment-resolution path."
+    story_id: T8-E2-S3
+    title: "Add configuration discipline for project roots, secrets, and storage"
+    why_now: "The self-host baseline is stronger now, so hidden config defaults and storage posture have become the next practical production risk."
   - priority: P1
-    story_id: T7-E2-S8
-    title: "Add approval-backed payment resolution and retry loop"
-    why_now: "The gateway already parses payment-required metadata and settlement can approve or deny manually, so the next high-leverage step is to close the 402-to-retry operator loop."
+    story_id: T8-E1-S2
+    title: "Remove hidden coupling and implicit shared state"
+    why_now: "Deployment contract work exposed how much runtime safety still depends on implicit state and post-init mutation rather than clearer seams."
   - priority: P1
-    story_id: T4-E4-S6
-    title: "Bring settlement control to parity across Telegram and the broader operator workflow"
-    why_now: "Telegram already exposes settlement listing plus approve or deny, but the rest of the operator workflow still lacks that same active control path."
+    story_id: T8-E1-S4
+    title: "Make future service extraction obvious from module boundaries"
+    why_now: "Once startup and runtime contracts are clearer, the next honest hardening step is to make extraction seams more visible instead of letting modularity stay implicit."
 themes:
   - id: T1
     name: Platform Foundation
@@ -315,8 +315,8 @@ themes:
     goal: Coordinate end-to-end work and delivery.
     status: in_progress
     approx_progress: 99
-    current_state: Unified intake routing, phase-aware JobPlan preview and submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, workspace joins, richer operator report service, authenticated operator REST API, HTML dashboard, internal and client-safe evidence export, archive download, shared build and review delivery lifecycle, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware operator reporting, release-readiness traces, execution-policy-enriched planner phases, and Telegram operator surface with /report, /intake, /build, /jobs, /deliver, /telemetry, and /settlement commands now exist alongside CI typecheck.
-    main_gap: No richer interactive operator app yet, and settlement is still a partial workflow rather than a fully closed dashboard-driven operator loop.
+    current_state: Unified intake routing, phase-aware JobPlan preview and submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, workspace joins, richer operator report service, authenticated operator REST API, HTML dashboard, internal and client-safe evidence export, archive download, shared build and review delivery lifecycle, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware operator reporting, release-readiness traces, a persisted settlement workflow with dashboard/API/Telegram controls plus auto-retry, and Telegram operator surface with /report, /intake, /build, /jobs, /deliver, /telemetry, and /settlement commands now exist alongside CI typecheck.
+    main_gap: No richer interactive operator app yet; recurring workflows and deeper dashboard drill-down remain future scope.
     epics:
       - id: T4-E1
         name: Intake And Qualification
@@ -395,9 +395,9 @@ themes:
             missing: Broader active operator workflow and live UI remain future scope.
           - id: T4-E3-S5
             name: Add active settlement workflow across API, Telegram, and dashboard
-            status: started
-            current_state: Settlement foundation now exists through the orchestrator, authenticated API, and Telegram /settlement command, so operators can already list and approve or deny pending requests outside the dashboard.
-            missing: No dashboard settlement UI/actions, no restart-safe settlement state, and no end-to-end retryable payment-resolution workflow yet.
+            status: complete_for_phase
+            current_state: Settlement now runs as a persisted operator workflow through the orchestrator, authenticated API, dashboard, and Telegram, with approve, deny, and execute actions plus retry results flowing back into operator-visible state.
+            missing: Broader recurring operator workflow and richer interactive app behavior remain future scope.
       - id: T4-E4
         name: Operator Telegram Surface
         status: complete_for_phase
@@ -431,9 +431,9 @@ themes:
             missing: Richer delivery approval flows and interactive send confirmation remain future scope.
           - id: T4-E4-S6
             name: "/settlement Telegram command"
-            status: started
-            current_state: Telegram now exposes /settlement, /settlement approve <id>, and /settlement deny <id> against the runtime settlement foundation.
-            missing: Settlement is still a partial operator workflow; there is no topup/retry orchestration, dashboard parity, or persisted recovery state yet.
+            status: complete_for_phase
+            current_state: Telegram now exposes /settlement, /settlement approve <id>, /settlement deny <id>, and /settlement execute <id> against the persisted settlement workflow, giving operators parity with the broader runtime action surface for settlement handling.
+            missing: Richer conversational settlement flows and broader interactive operator UX remain future scope.
 
   - id: T5
     name: Security, Governance, And Policy
@@ -455,9 +455,9 @@ themes:
             missing: Full cross-domain enforcement engine remains separate scope.
           - id: T5-E1-S2
             name: Keep policy deny-by-default across execution modes
-            status: mostly_complete
-            current_state: Deny-by-default is now explicit across review execution, tool execution, operator intake blockers, evidence export, build/review delivery approval plus handoff flows, and source-aware build execution policies, all with stable operator-visible denial payloads.
-            missing: Build implementation execution and some broader runtime actions still do not run under one shared enforcement boundary.
+            status: complete_for_phase
+            current_state: Deny-by-default is now explicit across review execution, tool execution, operator intake blockers, evidence export, build/review delivery approval plus handoff flows, source-aware build execution policies, and deployment posture. AGENT_DEV_MODE no longer bypasses approval discipline, and delivery without an approval queue is denied.
+            missing: A single unified enforcement engine across every runtime action remains future scope.
           - id: T5-E1-S3
             name: Add structured denial reasons everywhere
             status: complete_for_phase
@@ -608,8 +608,8 @@ themes:
     goal: Integrate external capability providers cleanly and safely.
     status: complete_for_phase
     approx_progress: 99
-    current_state: Runtime model and policy layer now expose explicit gateway defaults plus separate handoff and API-call contracts, and the runtime now enforces approval-aware delivery sends plus owner-operated API calls with gateway traces, cost entries, a concrete obolos.tech provider catalog, readiness-aware routes, retained request or response snapshots, provider-specific request payload shaping, parsed provider receipts, provider outcome classification, provider-backed delivery fallback, documented buyer-side marketplace access, seller publishing, wallet topup, file-upload-safe calls, and a settlement foundation surfaced through orchestrator, API, and Telegram.
-    main_gap: Broader downstream provider workflow and persisted or automated settlement resolution still remain future scope.
+    current_state: Runtime model and policy layer now expose explicit gateway defaults plus separate handoff and API-call contracts, and the runtime now enforces approval-aware delivery sends plus owner-operated API calls with gateway traces, cost entries, a concrete obolos.tech provider catalog, readiness-aware routes, retained request or response snapshots, provider-specific request payload shaping, parsed provider receipts, provider outcome classification, provider-backed delivery fallback, documented buyer-side marketplace access, seller publishing, wallet topup, file-upload-safe calls, and a persisted settlement workflow surfaced through orchestrator, API, dashboard, and Telegram.
+    main_gap: Broader downstream provider workflow and additional provider integrations remain future scope.
     epics:
       - id: T7-E1
         name: Gateway Foundation
@@ -638,7 +638,7 @@ themes:
             missing: Gating is now provider-aware, but it still does not represent a single unified runtime enforcement engine.
       - id: T7-E2
         name: obolos.tech Integration
-        status: in_progress
+        status: complete_for_phase
         stories:
           - id: T7-E2-S1
             name: Represent obolos.tech capabilities through the gateway model
@@ -669,25 +669,25 @@ themes:
             name: Add file-upload-safe and x402 payment-aware marketplace calls
             status: complete_for_phase
             current_state: Gateway HTTP layer now supports form_data for multipart/form-data requests, marketplace_upload_v1 exists for slug-based file upload APIs, and x402 payment metadata is parsed from Retry-After, x-payment-*, x-credits-*, x-price-*, and body fields into structured denial metadata.
-            missing: Real payment settlement flow and interactive wallet top-up before retry remain future scope.
+            missing: Multi-provider payment orchestration and richer settlement analytics remain future scope.
           - id: T7-E2-S7
             name: Persist settlement requests and recovery state
-            status: started
-            current_state: Payment settlement requests can now be created from payment-required failures and surfaced through the orchestrator, API, and Telegram command surfaces.
-            missing: Pending settlement state is still in-memory only, so restart-safe recovery and durable settlement audit state remain open.
+            status: complete_for_phase
+            current_state: Settlement requests now persist in SQLite, recover on init, retain original-request context, and remain queryable through the orchestrator and operator surfaces after restart.
+            missing: Broader settlement audit/export semantics and multi-provider orchestration remain future scope.
           - id: T7-E2-S8
             name: Add approval-backed payment resolution and retry loop
-            status: started
-            current_state: The gateway can parse x402/payment-required metadata and settlement service can already approve or deny manual top-up decisions.
-            missing: No explicit 402 → balance check → topup → retry flow exists yet, and no dashboard-driven retry loop is available to the operator.
+            status: complete_for_phase
+            current_state: The gateway now turns payment-required responses into settlement requests, approved execution can top up through the provider, and successful execution automatically retries the original API call while returning the retry result through API, dashboard, and Telegram workflow surfaces.
+            missing: Broader automatic payment strategies and additional provider support remain future scope.
 
   - id: T8
     name: Enterprise Hardening
     goal: Prepare for enterprise-grade architecture without premature fragmentation.
     status: in_progress
     approx_progress: 98
-    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, internal/client-safe evidence export, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review/build execution policy boundaries, release-readiness gating, controlled-environment deployment documentation, ADR-001 sidecar, TS operator contracts and skeleton, policy-driven redaction, provider readiness reporting, project-root inference, and explicit enterprise-facing data-handling rules.
-    main_gap: Runtime boundaries are clearer, but not yet enforced as extraction-grade invariants across the whole execution stack.
+    current_state: Shared control-plane layer, explicit runtime coexistence rules, review and build bounded contexts on shared primitives, persisted product-job/planner/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, internal/client-safe evidence export, workspace joins, tracked/resumable builder runtime, shared job/artifact/query/reporting surfaces, unified intake/planning, deterministic review/build execution policy boundaries, release-readiness gating, controlled-environment deployment documentation, ADR-001 sidecar, TS operator contracts and skeleton, policy-driven redaction, provider readiness reporting, explicit startup/config posture, stricter project-root handling, configurable pidfile location, explicit vault readiness, reduced post-init runtime mutation, and explicit enterprise-facing data-handling rules.
+    main_gap: Runtime boundaries are clearer and better tested, but not yet enforced as extraction-grade invariants across the whole execution stack.
     epics:
       - id: T8-E1
         name: Contract-First Boundaries
@@ -699,7 +699,9 @@ themes:
             status: in_progress
           - id: T8-E1-S2
             name: Remove hidden coupling and implicit shared state
-            status: in_progress
+            status: mostly_complete
+            current_state: Docker availability is now kept as explicit runtime state instead of env-var mutation, gateway payment-required callback wiring happens at construction time instead of post-init mutation, and sandbox defaults now rely on setdefault rather than implicit overwrite.
+            missing: Broader hidden coupling and future extraction seams still need cleanup across the runtime stack.
           - id: T8-E1-S3
             name: Add architecture invariants for contracts and boundaries
             status: complete_for_phase
@@ -723,14 +725,14 @@ themes:
             missing: The profile matrix exists, but it is not yet enforced as a deployment-grade contract across the whole execution stack.
           - id: T8-E2-S2
             name: Make environment-sensitive behavior explicit and testable
-            status: mostly_complete
-            current_state: Runtime model and planner metadata now expose explicit environment profiles for review, build, acquisition/import, and export-only flows, making execution boundaries visible and testable in the shared control plane.
+            status: complete_for_phase
+            current_state: Runtime model and planner metadata now expose explicit environment profiles for review, build, acquisition/import, and export-only flows, and deployment contract hardening now makes startup-sensitive behavior testable with explicit failures instead of silent fallbacks.
             missing: The higher-level profile matrix now exists, but broader deployment enforcement is still not formalized.
           - id: T8-E2-S3
             name: Add configuration discipline for project roots, secrets, and storage
             status: mostly_complete
-            current_state: Project-root inference now prefers the checked-out repo, gateway route readiness reports env/vault-backed configuration posture, and provider sends can resolve auth from either environment variables or the encrypted local vault.
-            missing: Broader deployment/storage documentation and stricter runtime enforcement still remain open.
+            current_state: Project-root inference now prefers the checked-out repo and fails explicitly instead of silently falling back, pidfile location is configurable through AGENT_PIDFILE_PATH, vault readiness is explicit through is_ready, gateway route readiness reports env/vault-backed configuration posture, and provider sends can resolve auth from either environment variables or the encrypted local vault.
+            missing: Broader deployment/storage discipline and stricter runtime enforcement still remain open.
           - id: T8-E2-S4
             name: Add deployment documentation for controlled environments
             status: complete_for_phase

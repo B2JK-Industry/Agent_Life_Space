@@ -6,43 +6,40 @@ This file is the near-term execution backlog derived from the current state of
 Assessment basis:
 - branch: `main`
 - interpretation date: `2026-04-01`
-- baseline: post-merge closure release `v1.28.1` on `f3f6b80`
+- baseline: deployment-contract hardening release `v1.30.0` on `f2345c0`
 
 For the archival narrative of how `main` reached this baseline, see
 `AS_IS_TO_BE_2026_04_01.md`.
 
 ## Ready Now
 
-Next release candidate: `v1.29.0` — Settlement Workflow Closure.
+Next release candidate: `v1.31.0` — Runtime Contract Closure.
 
 ## Why This Slice
 
-- `main` now includes the full Phase 4 merge plus the `v1.28.1` post-merge
-  closure pass.
-- Archive retrieval is already delivered, so the next highest-leverage gap is
-  not more export plumbing but turning settlement from `foundation_only` into a
-  real operator workflow.
-- The current runtime can detect payment-required failures, create settlement
-  requests, expose them via API and Telegram, and top up manually, but it still
-  loses pending state on restart and lacks a dashboard-driven retry loop.
+- `main` now includes the full Phase 4 merge, settlement-workflow closure, and
+  deployment-contract hardening through `v1.30.0`.
+- The biggest remaining production risk is no longer settlement behavior, but
+  the remaining implicit config/runtime coupling across self-host deployment.
+- The next honest step is to close startup/config/runtime contract gaps rather
+  than adding another operator surface.
 
 ## Proposed Scope
 
-- `P0` `T4-E3-S5`: Add active settlement workflow across API, Telegram, and
-  dashboard surfaces
-- `P0` `T7-E2-S7`: Persist settlement requests and recovery state
-- `P1` `T7-E2-S8`: Add approval-backed 402 → balance → topup → retry loop
-- `P1` `T4-E4-S6`: Bring settlement control to parity across Telegram and the
-  broader operator workflow
+- `P0` `T5-E1-S2`: Keep policy deny-by-default across execution modes
+- `P0` `T8-E2-S3`: Add configuration discipline for project roots, secrets,
+  and storage
+- `P1` `T8-E1-S2`: Remove hidden coupling and implicit shared state
+- `P1` `T8-E1-S4`: Make future service extraction obvious from module boundaries
 
 ## Exit Criteria For The Next Release
 
 The next slice should be considered successful when:
-- settlement requests survive restart and are queryable/recoverable like other
-  operator-facing runtime state
-- operators can list, approve, deny, and progress settlement work from both the
-  authenticated API and the dashboard, with Telegram staying in sync
-- payment-required gateway failures can move through an explicit approved retry
-  path instead of stopping at a passive denial
-- operator reporting shows pending settlement attention and recent settlement
-  outcomes without overstating automation that does not yet exist
+- self-host startup and runtime behavior fail explicitly instead of falling back
+  through hidden defaults
+- config for roots, pidfiles, secrets, storage, and runtime posture is clearer,
+  more testable, and less environment-dependent
+- deny-by-default behavior cannot be bypassed through runtime mode or setup
+  shortcuts
+- hidden coupling and post-init mutation are reduced enough that future service
+  extraction is easier to see and safer to test
