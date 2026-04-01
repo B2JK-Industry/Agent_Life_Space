@@ -3683,17 +3683,9 @@ class BuildService:
             return {"error": denial.message, "denial": denial.to_dict()}
 
         if self._approval_queue is None:
-            import os
-
-            if os.environ.get("AGENT_DEV_MODE") == "1":
-                logger.warning("build_delivery_approval_dev_bypass", job_id=job_id)
-                return {
-                    "job_id": job_id,
-                    "bundle_id": bundle["bundle_id"],
-                    "delivery_ready": True,
-                    "approval_bypassed": True,
-                    "warning": "DEV MODE: approval bypassed. Not safe for production.",
-                }
+            # Deny-by-default: no approval queue → no external delivery.
+            # AGENT_DEV_MODE bypass removed — policy enforcement must not
+            # be environment-dependent. See v1.30.0 deployment hardening.
             denial = make_denial(
                 code="build_delivery_denied_by_default",
                 summary="Build delivery blocked by default",

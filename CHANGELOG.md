@@ -10,6 +10,30 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.30.0] — 2026-04-01
+
+Deployment Contract Hardening — deny-by-default, explicit config, no hidden coupling.
+
+### Deny-by-Default Enforcement
+- Removed AGENT_DEV_MODE approval bypass from review and build services
+- Policy enforcement is no longer environment-dependent
+- Delivery without approval queue is always denied
+
+### Explicit Configuration
+- `paths.py`: raises RuntimeError instead of silent fallback to ~/.agent-life-space
+- Pidfile path configurable via AGENT_PIDFILE_PATH env var
+- Vault exposes `is_ready` property for startup validation
+- Startup config summary logged (project root, API port, vault, docker, sandbox)
+
+### Reduced Hidden Coupling
+- Docker availability stored as agent attribute (not env var mutation)
+- Gateway `on_payment_required` callback passed at construction time (not post-init)
+- Sandbox default uses setdefault instead of bracket assignment
+
+### Tests
+- 10 new deployment contract tests
+- DEV_MODE bypass test replaced with deny-without-queue test
+
 ## [1.29.0] — 2026-04-01
 
 Settlement Workflow Closure — from foundation to operator-ready workflow.
