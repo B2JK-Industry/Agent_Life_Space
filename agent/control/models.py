@@ -325,6 +325,7 @@ class PlanRecordStatus(str, Enum):
     BLOCKED = "blocked"
     EXECUTING = "executing"
     COMPLETED = "completed"
+    FAILED = "failed"
 
 
 @dataclass
