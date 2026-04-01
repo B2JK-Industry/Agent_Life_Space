@@ -72,7 +72,6 @@ from agent.control.policy import (
     get_review_gate_policy,
     list_delivery_policies,
     list_review_gate_policies,
-    select_build_execution_policy,
 )
 
 logger = structlog.get_logger(__name__)
@@ -2365,11 +2364,17 @@ class BuildService:
         return next((result for result in job.verification_results if result.kind == kind), None)
 
     def _build_execution_policy(self, job: BuildJob):
-        return select_build_execution_policy(
-            build_type=job.build_type,
+        from agent.control.policy import RuntimeActionRequest, evaluate_runtime_action
+
+        decision = evaluate_runtime_action(RuntimeActionRequest(
+            action_type="build",
+            build_type=job.build_type.value if hasattr(job.build_type, "value") else str(job.build_type),
             source=job.source or job.intake.source or "manual",
-            policy_id=job.intake.execution_policy_id or "workspace_local_mutation",
-        )
+            policy_overrides={
+                "build_execution_policy_id": job.intake.execution_policy_id or "workspace_local_mutation",
+            },
+        ))
+        return decision.resolved_policy
 
     def _build_environment_profile_id(self, job: BuildJob) -> str:
         return self._build_execution_policy(job).environment_profile_id or get_build_execution_policy().environment_profile_id

@@ -8,7 +8,7 @@ and external gateway decisions.
 from __future__ import annotations
 
 import fnmatch
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -1698,6 +1698,8 @@ class RuntimePolicyDecision:
     blocking_policies: list[str]
     warnings: list[str]
     applied_policies: list[str]
+    resolved_policy: Any = None  # The primary policy object (varies by action_type)
+    policy_metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1705,6 +1707,7 @@ class RuntimePolicyDecision:
             "blocking_policies": self.blocking_policies,
             "warnings": self.warnings,
             "applied_policies": self.applied_policies,
+            "policy_metadata": self.policy_metadata,
         }
 
 
@@ -1719,6 +1722,8 @@ def evaluate_runtime_action(action: RuntimeActionRequest) -> RuntimePolicyDecisi
     blocking: list[str] = []
     warnings: list[str] = []
     applied: list[str] = []
+    resolved: Any = None
+    metadata: dict[str, Any] = {}
 
     if action.action_type == "review":
         review_type = action.review_type or ("pr_review" if action.diff_spec else "repo_audit")
@@ -1730,16 +1735,41 @@ def evaluate_runtime_action(action: RuntimeActionRequest) -> RuntimePolicyDecisi
         applied.append(f"review_execution:{policy.id}")
         if not policy.allow_host_read:
             blocking.append(f"review_execution:{policy.id}")
+        elif action.diff_spec and not policy.allow_git_subprocess:
+            blocking.append(f"review_execution:{policy.id}")
+            warnings.append("git subprocess execution is not allowed")
+        resolved = policy
+        metadata = {
+            "policy_id": policy.id,
+            "policy_label": policy.label,
+            "policy_description": policy.description,
+            "allow_host_read": policy.allow_host_read,
+            "allow_git_subprocess": policy.allow_git_subprocess,
+            "environment_profile_id": getattr(policy, "environment_profile_id", ""),
+        }
 
     elif action.action_type == "build":
         build_type = action.build_type or "implementation"
+        policy_id = action.policy_overrides.get(
+            "build_execution_policy_id", "workspace_local_mutation",
+        )
         policy = select_build_execution_policy(
             build_type=build_type,
             source=action.source or "manual",
+            policy_id=policy_id,
         )
         applied.append(f"build_execution:{policy.id}")
         if not policy.allow_workspace_mutation:
             blocking.append(f"build_execution:{policy.id}")
+        resolved = policy
+        metadata = {
+            "policy_id": policy.id,
+            "policy_label": policy.label,
+            "policy_description": policy.description,
+            "allow_workspace_mutation": policy.allow_workspace_mutation,
+            "workspace_required": policy.workspace_required,
+            "environment_profile_id": policy.environment_profile_id,
+        }
 
     elif action.action_type == "gateway_send":
         gateway_policy_id = action.policy_overrides.get(
@@ -1756,6 +1786,8 @@ def evaluate_runtime_action(action: RuntimeActionRequest) -> RuntimePolicyDecisi
         if not allowed:
             blocking.append(f"gateway:{gw_policy.id}")
             warnings.append(reason)
+        resolved = gw_policy
+        metadata = {"policy_id": gw_policy.id, "target_kind": action.target_kind}
 
     elif action.action_type == "deliver":
         delivery_policy_id = action.policy_overrides.get(
@@ -1766,6 +1798,8 @@ def evaluate_runtime_action(action: RuntimeActionRequest) -> RuntimePolicyDecisi
         if delivery_policy.approval_required and action.approval_status != "approved":
             blocking.append(f"delivery:{delivery_policy.id}")
             warnings.append("Delivery requires approval before handoff.")
+        resolved = delivery_policy
+        metadata = {"policy_id": delivery_policy.id}
 
     elif action.action_type == "api_call":
         gateway_policy_id = action.policy_overrides.get(
@@ -1782,6 +1816,12 @@ def evaluate_runtime_action(action: RuntimeActionRequest) -> RuntimePolicyDecisi
         if not allowed:
             blocking.append(f"gateway:{gw_policy.id}")
             warnings.append(reason)
+        resolved = gw_policy
+        metadata = {"policy_id": gw_policy.id, "target_kind": action.target_kind}
+
+    else:
+        blocking.append(f"unknown_action:{action.action_type}")
+        warnings.append(f"Unknown action_type '{action.action_type}'")
 
     # Budget check (applies to all action types if cost is specified)
     if action.estimated_cost_usd > 0:
@@ -1797,4 +1837,6 @@ def evaluate_runtime_action(action: RuntimeActionRequest) -> RuntimePolicyDecisi
         blocking_policies=blocking,
         warnings=warnings,
         applied_policies=applied,
+        resolved_policy=resolved,
+        policy_metadata=metadata,
     )

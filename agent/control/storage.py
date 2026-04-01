@@ -593,6 +593,56 @@ class ControlPlaneStorage:
             ).fetchall()
         return [orjson.loads(row[0]) for row in rows]
 
+    # --- Hard-delete methods for automated pruning ---
+
+    def _safe_delete(self, sql: str, params: tuple[str, ...]) -> int:
+        """Execute a DELETE and return rowcount. Returns 0 if table missing."""
+        if self._db is None:
+            return 0
+        import sqlite3
+        try:
+            cursor = self._db.execute(sql, params)
+            self._db.commit()
+            return cursor.rowcount
+        except sqlite3.OperationalError:
+            return 0
+
+    def hard_delete_pruned_artifacts(self, older_than_days: int = 90) -> int:
+        """Hard-delete artifact retention records that have been PRUNED for >N days."""
+        from datetime import UTC, datetime, timedelta
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        return self._safe_delete(
+            "DELETE FROM artifact_retention_records WHERE status = 'PRUNED' AND updated_at < ?",
+            (cutoff,),
+        )
+
+    def hard_delete_old_traces(self, older_than_days: int = 90) -> int:
+        """Hard-delete execution trace records older than N days."""
+        from datetime import UTC, datetime, timedelta
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        return self._safe_delete(
+            "DELETE FROM execution_trace_records WHERE created_at < ?",
+            (cutoff,),
+        )
+
+    def hard_delete_old_plans(self, older_than_days: int = 365) -> int:
+        """Hard-delete job plan records older than N days."""
+        from datetime import UTC, datetime, timedelta
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        return self._safe_delete(
+            "DELETE FROM job_plan_records WHERE updated_at < ?",
+            (cutoff,),
+        )
+
+    def hard_delete_old_pipelines(self, older_than_days: int = 180) -> int:
+        """Hard-delete completed/failed pipelines older than N days."""
+        from datetime import UTC, datetime, timedelta
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        return self._safe_delete(
+            "DELETE FROM job_pipelines WHERE status IN ('completed', 'failed') AND updated_at < ?",
+            (cutoff,),
+        )
+
     def get_stats(self) -> dict[str, Any]:
         if self._db is None:
             return {

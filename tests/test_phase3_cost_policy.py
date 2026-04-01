@@ -121,8 +121,9 @@ class TestEvaluateRuntimeAction:
         assert d["allowed"] is True
         assert d["warnings"] == ["test warning"]
 
-    def test_unknown_action_type_returns_allowed(self):
+    def test_unknown_action_type_is_blocked(self):
         action = RuntimeActionRequest(action_type="unknown_type")
         decision = evaluate_runtime_action(action)
-        assert decision.allowed is True
-        assert len(decision.applied_policies) == 0
+        assert decision.allowed is False
+        assert "unknown_action:unknown_type" in decision.blocking_policies
+        assert decision.resolved_policy is None
