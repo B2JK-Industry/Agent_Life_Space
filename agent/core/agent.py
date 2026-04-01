@@ -729,7 +729,7 @@ class AgentOrchestrator:
             plan_status = (
                 "completed"
                 if job.status.value == "completed"
-                else "blocked"
+                else job.status.value  # failed, blocked, etc. — not always "blocked"
             )
             self.control_plane.update_plan_status(
                 plan_record.plan_id,
@@ -759,7 +759,7 @@ class AgentOrchestrator:
         plan_status = (
             "completed"
             if job.status.value == "completed"
-            else "blocked"
+            else job.status.value
         )
         self.control_plane.update_plan_status(
             plan_record.plan_id,

@@ -1499,6 +1499,23 @@ class TelegramHandler:
         if status == "blocked":
             error = result.get("error", "Unknown block reason")
             lines.append(f"Blokované: {error}")
+            blockers = result.get("qualification", {}).get("blockers", [])
+            if blockers:
+                for b in blockers[:5]:
+                    lines.append(f"  • {b}")
+            return "\n".join(lines)
+
+        if status == "failed":
+            job_id = result.get("job_id", "?")
+            job_data = result.get("job", {})
+            lines.append(f"Job `{job_id}` zlyhal.")
+            if job_data:
+                meta = job_data.get("metadata", {})
+                verification = meta.get("verification_passed", "?")
+                lines.append(f"Verifikácia: {'OK' if verification else 'FAILED'}")
+                error_msg = meta.get("error", "")
+                if error_msg:
+                    lines.append(f"Error: {str(error_msg)[:200]}")
             return "\n".join(lines)
 
         if status == "awaiting_approval":
