@@ -32,8 +32,10 @@ def _make_api(*, with_agent: bool = True, api_keys: list[str] | None = None) -> 
     if with_agent:
         agent = MagicMock()
         agent.control_plane = MagicMock()
+        agent.reporting = MagicMock()
         agent.recurring_workflows = MagicMock()
         agent.pipeline_orchestrator = MagicMock()
+        agent.settlement = MagicMock()
         agent.watchdog = MagicMock()
     return AgentAPI(agent=agent, api_keys=keys)
 
@@ -48,6 +50,7 @@ class TestOperatorEndpointAuth:
     OPERATOR_PATHS = [
         "jobs", "report", "telemetry", "retention",
         "margin", "workflows", "pipelines", "audit", "archive",
+        "settlements",
     ]
 
     def test_all_operator_endpoints_reject_without_auth(self):
@@ -366,6 +369,27 @@ class TestArchiveEndpointSecurity:
                 assert resp.status == 200
 
 
+class TestSettlementEndpoint:
+
+    @pytest.mark.asyncio
+    async def test_settlements_returns_pending(self):
+        api = _make_api()
+        mock_settlement = MagicMock()
+        mock_settlement.to_dict.return_value = {"settlement_id": "s1", "status": "pending"}
+        api._agent.settlement.get_pending_settlements.return_value = [mock_settlement]
+        req = _mock_request(headers={"Authorization": "Bearer test-key-123"})
+        resp = await api._handle_operator_settlements(req)
+        assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_settlements_without_service(self):
+        api = _make_api()
+        del api._agent.settlement
+        req = _mock_request(headers={"Authorization": "Bearer test-key-123"})
+        resp = await api._handle_operator_settlements(req)
+        assert resp.status == 200  # graceful empty response
+
+
 # ─────────────────────────────────────────────
 # API route registration
 # ─────────────────────────────────────────────
@@ -381,7 +405,7 @@ class TestOperatorRouteRegistration:
             attr for attr in dir(api)
             if attr.startswith("_handle_operator_")
         ]
-        assert len(handlers) >= 9, (
+        assert len(handlers) >= 10, (
             f"Expected >= 9 operator handlers, got {len(handlers)}: {handlers}"
         )
 

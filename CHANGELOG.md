@@ -12,7 +12,7 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [1.28.0] — 2026-04-01
 
-Phase 4: Operator dashboard and payment settlement workflow.
+Phase 4: Operator dashboard, payment settlement foundation, production regression fixes.
 
 ### Operator Dashboard
 - Self-contained HTML dashboard served at `GET /dashboard` on port 8420
@@ -24,17 +24,35 @@ Phase 4: Operator dashboard and payment settlement workflow.
 - API key auth via localStorage, auto-refresh every 30s
 - Dark theme, responsive, monospace design
 
-### Payment Settlement Service
-- `PaymentSettlementService` in `agent/control/settlement.py`
+### Payment Settlement Foundation
+- `PaymentSettlementService` in `agent/control/settlement.py` — **service foundation**,
+  not yet a full automated payment loop
 - Parses 402 Payment Required denials from gateway
 - Wallet balance check via `wallet_balance_v1` capability
 - Settlement request creation with operator approval requirement
 - Approve/deny workflow (human-in-the-loop, no automatic spending)
-- Topup execution via `wallet_topup_v1` capability after approval
-- Full trace recording to control plane
+- Wired into orchestrator (`agent.settlement`) and exposed via
+  `GET /api/operator/settlements`
+- Pending state is in-memory (not persisted across restarts)
+- **Not yet**: automatic 402→retry loop, dashboard approval UI, persisted state
+
+### Production Regression Fixes
+- `/api/operator/report` was broken: passed control_plane as job_queries
+  to OperatorReportService. Now delegates to `agent.reporting` (correctly wired).
+- Memory injection was epistemically unsafe: injected all semantic memories
+  as "Known facts" regardless of provenance. Now filters by
+  OBSERVED/USER_ASSERTED/VERIFIED provenance and FACT/PROCEDURE kind.
+  Framing changed to "Stored memories (may be outdated)".
+- Operator API query params returned 500 on bad input. Added `_parse_int_param()`
+  helper for structured 400 denial on all endpoints.
+- Pipeline job linkage used stale `control_plane_state` name. Fixed to `control_plane`.
+- Archival wrote to repo source tree and leaked host filesystem paths. Now writes
+  to `data/archive/` and returns filename-only.
 
 ### Tests
-- 22 new tests in `test_dashboard_settlement.py` (dashboard + settlement)
+- 22 tests in `test_dashboard_settlement.py` (dashboard + settlement)
+- 12 handler-level tests in `test_operator_api.py` catching broken wiring,
+  bad query params, 404 for missing jobs, archive path safety
 
 ## [1.27.0] — 2026-04-01
 

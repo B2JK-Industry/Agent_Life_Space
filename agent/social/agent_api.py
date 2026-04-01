@@ -866,6 +866,27 @@ class AgentAPI:
         else:
             return web.json_response({"archives": archival.list_archives()})
 
+    async def _handle_operator_settlements(self, request: web.Request) -> web.Response:
+        """GET /api/operator/settlements — list pending payment settlements.
+
+        Settlement service is foundation-level: parse/approve/deny workflow.
+        Not yet a full automated payment loop.
+        """
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.settlements",
+            )
+        if not self._agent or not hasattr(self._agent, "settlement"):
+            return web.json_response({"settlements": [], "note": "Settlement service not initialized"})
+
+        pending = self._agent.settlement.get_pending_settlements()
+        return web.json_response({
+            "settlements": [s.to_dict() for s in pending],
+            "total": len(pending),
+        })
+
     async def _handle_operator_audit(self, request: web.Request) -> web.Response:
         """GET /api/operator/audit — API audit log stats + recent entries."""
         auth_error = self._check_auth(request)
@@ -902,6 +923,7 @@ class AgentAPI:
         self._app.router.add_get("/api/operator/workflows", self._handle_operator_workflows)
         self._app.router.add_get("/api/operator/pipelines", self._handle_operator_pipelines)
         self._app.router.add_get("/api/operator/archive", self._handle_operator_archive)
+        self._app.router.add_get("/api/operator/settlements", self._handle_operator_settlements)
         self._app.router.add_get("/api/operator/audit", self._handle_operator_audit)
 
         self._runner = web.AppRunner(self._app)
