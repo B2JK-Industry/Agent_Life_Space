@@ -139,9 +139,62 @@ class ControlPlaneStorage:
             )
             """
         )
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS settlement_requests (
+                settlement_id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                status TEXT NOT NULL,
+                provider_id TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         self._db.commit()
         self._initialized = True
         logger.info("control_plane_storage_initialized", db_path=self._db_path)
+
+    # --- Settlement persistence ---
+
+    def save_settlement_request(self, request: Any) -> None:
+        if self._db is None:
+            return
+        payload = orjson.dumps(request.to_dict()).decode()
+        now = request.resolved_at or request.created_at
+        self._db.execute(
+            """
+            INSERT OR REPLACE INTO settlement_requests
+            (settlement_id, data, status, provider_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                request.settlement_id,
+                payload,
+                request.status,
+                request.payment.provider_id,
+                request.created_at,
+                now,
+            ),
+        )
+        self._db.commit()
+
+    def list_settlement_requests(
+        self, *, status: str = "", limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        if self._db is None:
+            return []
+        if status:
+            rows = self._db.execute(
+                "SELECT data FROM settlement_requests WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = self._db.execute(
+                "SELECT data FROM settlement_requests ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [orjson.loads(row[0]) for row in rows]
 
     def save_plan_record(self, record: Any) -> None:
         if self._db is None:

@@ -193,6 +193,7 @@ class AgentOrchestrator:
             control_plane_state=self.control_plane,
             workspace_queries=self.workspace_queries,
             gateway_service=self.gateway,
+            settlement_service=None,  # set after settlement init below
         )
         self.review_quality = ReviewQualityService(
             control_plane_state=self.control_plane,
@@ -219,6 +220,10 @@ class AgentOrchestrator:
             gateway=self.gateway,
             control_plane=self.control_plane,
         )
+        # Wire gateway 402 callback → settlement service auto-creates requests
+        self.gateway._on_payment_required = self._on_gateway_payment_required
+        # Wire settlement into reporting for inbox visibility
+        self.reporting._settlement_service = self.settlement
 
         # Background tasks
         self._background_tasks: list[asyncio.Task[Any]] = []
@@ -1492,6 +1497,28 @@ class AgentOrchestrator:
         if job is None:
             return None
         return job.to_dict()
+
+    def _on_gateway_payment_required(
+        self, denial: dict[str, Any], request_context: dict[str, Any],
+    ) -> None:
+        """Callback from gateway when HTTP 402 is received.
+
+        Auto-creates a settlement request so operator can see it immediately.
+        """
+        try:
+            payment = self.settlement.parse_402_denial(denial)
+            if payment:
+                self.settlement.create_settlement_request(
+                    payment,
+                    original_request=request_context,
+                )
+                logger.info(
+                    "settlement_auto_created",
+                    provider=payment.provider_id,
+                    amount=payment.amount_required,
+                )
+        except Exception:
+            logger.exception("settlement_auto_create_error")
 
     def _lookup_secret(self, name: str) -> str:
         """Resolve a secret lazily from the local encrypted vault when available."""

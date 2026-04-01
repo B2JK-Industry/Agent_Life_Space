@@ -10,6 +10,44 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.29.0] — 2026-04-01
+
+Settlement Workflow Closure — from foundation to operator-ready workflow.
+
+### Settlement Persistence
+- `settlement_requests` SQLite table — settlements survive agent restart
+- `SettlementRequest.from_dict()` for deserialization
+- Load-on-init + persist-on-create/approve/deny/execute
+
+### Settlement API Write Surface
+- `POST /api/operator/settlements/{id}/approve` — operator approves topup
+- `POST /api/operator/settlements/{id}/deny` — operator denies
+- `POST /api/operator/settlements/{id}/execute` — topup + auto-retry
+- `GET /api/operator/settlements?status=pending` — list with status filter
+
+### Approved Retry Loop
+- Successful topup automatically retries the original API call
+- `original_request` context stored with each settlement
+- Retry result included in execute response
+
+### Gateway 402 Auto-Creation
+- Gateway calls `on_payment_required` callback when HTTP 402 received
+- Orchestrator auto-creates settlement request with original request context
+- Operator sees pending settlements immediately in API and dashboard
+
+### Dashboard Settlement UI
+- Settlements section with Approve/Deny/Execute buttons
+- Real-time refresh after actions
+- Status badges (pending/approved/executed/denied/failed)
+
+### Reporting Integration
+- `settlement_attention` items in operator inbox for pending settlements
+- `OperatorReportService` accepts optional `settlement_service` dependency
+
+### Tests
+- 9 new tests: from_dict roundtrip, list by status, retry loop,
+  dashboard section, API approve/deny/execute/invalid/404
+
 ## [1.28.1] — 2026-04-01
 
 Post-merge closure: archive retrieval, settlement Telegram surface, docs truthfulness.

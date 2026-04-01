@@ -22,6 +22,7 @@ class OperatorReportService:
         control_plane_state: Any = None,
         workspace_queries: Any = None,
         gateway_service: Any = None,
+        settlement_service: Any = None,
     ) -> None:
         self._job_queries = job_queries
         self._artifact_queries = artifact_queries
@@ -31,6 +32,7 @@ class OperatorReportService:
         self._control_plane_state = control_plane_state
         self._workspace_queries = workspace_queries
         self._gateway_service = gateway_service
+        self._settlement_service = settlement_service
 
     def get_report(self, limit: int = 20) -> dict[str, Any]:
         jobs = [job.to_dict() for job in self._job_queries.list_jobs(limit=limit)]
@@ -322,6 +324,27 @@ class OperatorReportService:
                         "detail": provider_delivery["detail"],
                     }
                 )
+
+        # Settlement attention items
+        if self._settlement_service is not None:
+            try:
+                pending_settlements = self._settlement_service.get_pending_settlements()
+                for s in pending_settlements[:limit]:
+                    payment = s.payment.to_dict() if hasattr(s.payment, "to_dict") else {}
+                    inbox.append(
+                        {
+                            "kind": "settlement_attention",
+                            "id": s.settlement_id,
+                            "status": s.status,
+                            "title": f"Payment required: {payment.get('provider_id', 'unknown')}",
+                            "detail": (
+                                f"${payment.get('amount_required', 0):.4f} "
+                                f"for {payment.get('capability_id', 'unknown')}"
+                            ),
+                        }
+                    )
+            except Exception:
+                pass
 
         approval_backlog = self._approval_backlog(all_approvals)
 

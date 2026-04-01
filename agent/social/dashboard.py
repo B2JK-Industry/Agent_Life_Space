@@ -113,6 +113,10 @@ tr:hover td {{ background: rgba(108,138,255,0.05); }}
       <div class="section-title">Recent Jobs</div>
       <table id="jobs-table"><thead><tr><th>ID</th><th>Kind</th><th>Status</th><th>Duration</th><th>Cost</th></tr></thead><tbody></tbody></table>
     </div>
+    <div class="section" id="settlements-section">
+      <div class="section-title">Settlements</div>
+      <div class="card" id="settlements-card"><span class="loading">Loading...</span></div>
+    </div>
     <div class="grid">
       <div class="section" id="retention-section">
         <div class="section-title">Retention</div>
@@ -170,12 +174,13 @@ async function api(path) {{
 
 async function refreshAll() {{
   try {{
-    const [report, jobs, retention, audit, telemetry, margin] = await Promise.all([
+    const [report, jobs, retention, audit, telemetry, margin, settlements] = await Promise.all([
       api('report'), api('jobs?limit=20'), api('retention'),
-      api('audit?limit=10'), api('telemetry'), api('margin'),
+      api('audit?limit=10'), api('telemetry'), api('margin'), api('settlements'),
     ]);
     renderMetrics(report, telemetry, margin);
     renderJobs(jobs);
+    renderSettlements(settlements);
     renderRetention(retention);
     renderAudit(audit);
     document.getElementById('last-refresh').textContent = 'updated ' + new Date().toLocaleTimeString();
@@ -257,6 +262,54 @@ function renderRetention(data) {{
     <hr style="border-color:var(--border);margin:8px 0">
     ${{Object.entries(ts).map(([k,v]) => `<div class="metric-row"><span style="font-size:11px">${{k}}</span><span>${{v}}</span></div>`).join('')}}
   `;
+}}
+
+function renderSettlements(data) {{
+  const card = document.getElementById('settlements-card');
+  const items = data.settlements || [];
+  if (!items.length) {{
+    card.innerHTML = '<span style="color:var(--text-muted)">No settlement requests.</span>';
+    return;
+  }}
+  card.innerHTML = items.map(s => {{
+    const p = s.payment || {{}};
+    const actions = s.status === 'pending' ? `
+      <button onclick="settlementAction('${{s.settlement_id}}','approve')" style="background:var(--green);color:#000;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:11px;margin-right:4px">Approve</button>
+      <button onclick="settlementAction('${{s.settlement_id}}','deny')" style="background:var(--red);color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:11px">Deny</button>
+    ` : (s.status === 'approved' ? `
+      <button onclick="settlementAction('${{s.settlement_id}}','execute')" style="background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:11px">Execute Topup</button>
+    ` : '');
+    return `
+      <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+        <div class="metric-row">
+          <span style="font-family:monospace;font-size:12px">${{s.settlement_id}}</span>
+          <span class="badge ${{
+            s.status === 'pending' ? 'badge-yellow' :
+            s.status === 'approved' ? 'badge-blue' :
+            s.status === 'executed' ? 'badge-green' :
+            s.status === 'denied' ? 'badge-red' : ''
+          }}">${{s.status}}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin:4px 0">
+          ${{p.provider_id}} — $${{(p.amount_required || 0).toFixed(4)}} ${{p.currency || ''}}
+        </div>
+        <div>${{actions}}</div>
+      </div>
+    `;
+  }}).join('');
+}}
+
+async function settlementAction(id, action) {{
+  try {{
+    const r = await fetch(BASE + '/api/operator/settlements/' + id + '/' + action, {{
+      method: 'POST',
+      headers: {{'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json'}},
+      body: JSON.stringify({{}}),
+    }});
+    const data = await r.json();
+    if (data.ok) {{ refreshAll(); }}
+    else {{ alert(data.error || 'Action failed'); }}
+  }} catch(e) {{ alert('Error: ' + e.message); }}
 }}
 
 function renderAudit(data) {{
