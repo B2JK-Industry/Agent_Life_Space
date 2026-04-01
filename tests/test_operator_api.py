@@ -369,6 +369,48 @@ class TestArchiveEndpointSecurity:
                 assert resp.status == 200
 
 
+class TestArchiveDownloadEndpoint:
+
+    def test_get_archive_path_rejects_traversal(self):
+        from agent.control.archival import ArchivalService
+        svc = ArchivalService(MagicMock())
+        assert svc.get_archive_path("../etc/passwd") is None
+        assert svc.get_archive_path("foo/bar.csv") is None
+        assert svc.get_archive_path("test.txt") is None  # not .csv
+
+    def test_get_archive_path_valid(self):
+        from agent.control.archival import ArchivalService
+        svc = ArchivalService(MagicMock())
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csvfile = Path(tmpdir) / "test_2026-04-01.csv"
+            csvfile.write_text("a,b\n1,2\n")
+            with patch("agent.control.archival._get_archive_dir", return_value=Path(tmpdir)):
+                result = svc.get_archive_path("test_2026-04-01.csv")
+                assert result is not None
+                assert result.name == "test_2026-04-01.csv"
+
+    @pytest.mark.asyncio
+    async def test_download_requires_auth(self):
+        api = _make_api()
+        req = _mock_request(headers={}, match_info={"filename": "test.csv"})
+        resp = await api._handle_operator_archive_download(req)
+        assert resp.status == 401
+
+    @pytest.mark.asyncio
+    async def test_download_not_found(self):
+        api = _make_api()
+        api._agent.control_plane._storage = MagicMock()
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            match_info={"filename": "nonexistent.csv"},
+        )
+        with patch("agent.control.archival._get_archive_dir") as mock_dir:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                mock_dir.return_value = Path(tmpdir)
+                resp = await api._handle_operator_archive_download(req)
+                assert resp.status == 404
+
+
 class TestSettlementEndpoint:
 
     @pytest.mark.asyncio
