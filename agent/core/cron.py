@@ -55,9 +55,10 @@ class AgentCron:
         self._tasks.append(asyncio.create_task(self._consolidation_loop()))
         self._tasks.append(asyncio.create_task(self._dead_man_switch_loop()))
         self._tasks.append(asyncio.create_task(self._recurring_workflow_loop()))
+        self._tasks.append(asyncio.create_task(self._telemetry_loop()))
         self._tasks.append(asyncio.create_task(self._retention_pruning_loop()))
         self._tasks.append(asyncio.create_task(self._data_cleanup_loop()))
-        logger.info("cron_started", jobs=10)
+        logger.info("cron_started", jobs=11)
 
     async def stop(self) -> None:
         self._running = False
@@ -338,6 +339,38 @@ class AgentCron:
                         escalations=len(escalations),
                         cancelled=len(cancelled))
 
+    # --- Telemetry Snapshot (every hour) ---
+
+    async def _telemetry_loop(self) -> None:
+        """Record a runtime telemetry snapshot every hour."""
+        await asyncio.sleep(300)  # First run after 5 minutes
+        while self._running:
+            try:
+                await self._do_telemetry_snapshot()
+                await asyncio.sleep(3600)  # 1 hour
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("cron_telemetry_error")
+
+    async def _do_telemetry_snapshot(self) -> None:
+        if not hasattr(self._agent, "control_plane"):
+            return
+        cp = self._agent.control_plane
+        try:
+            snapshot = cp.record_telemetry_snapshot(
+                status_provider=lambda: self._agent.watchdog.get_system_health().__dict__
+                if hasattr(self._agent, "watchdog")
+                else {},
+            )
+            logger.info(
+                "cron_telemetry_recorded",
+                jobs_completed=snapshot.jobs_completed,
+                cost=snapshot.total_cost_usd,
+            )
+        except Exception:
+            logger.exception("cron_telemetry_snapshot_error")
+
     # --- Retention Pruning (every 6 hours) ---
 
     async def _retention_pruning_loop(self) -> None:
@@ -371,7 +404,6 @@ class AgentCron:
         await asyncio.sleep(1800)  # First run after 30 minutes
         while self._running:
             try:
-                # Wait until next midnight UTC
                 now = datetime.now(UTC)
                 next_midnight = now.replace(
                     hour=0, minute=0, second=0, microsecond=0,

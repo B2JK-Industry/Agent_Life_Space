@@ -45,6 +45,31 @@ class RecurringWorkflowManager:
     def __init__(self, control_plane_state: Any = None) -> None:
         self._state = control_plane_state
         self._workflows: dict[str, RecurringWorkflow] = {}
+        self._load_from_storage()
+
+    def _load_from_storage(self) -> None:
+        """Load persisted workflows from SQLite on startup."""
+        if not self._state:
+            return
+        try:
+            storage = self._state._storage
+            rows = storage.list_recurring_workflows(limit=200)
+            for data in rows:
+                wf = RecurringWorkflow.from_dict(data)
+                self._workflows[wf.workflow_id] = wf
+            if rows:
+                logger.info("recurring_workflows_loaded", count=len(rows))
+        except Exception:
+            logger.exception("recurring_workflows_load_error")
+
+    def _persist(self, workflow: RecurringWorkflow) -> None:
+        """Persist a single workflow to SQLite."""
+        if not self._state:
+            return
+        try:
+            self._state._storage.save_recurring_workflow(workflow)
+        except Exception:
+            logger.exception("recurring_workflow_persist_error", workflow_id=workflow.workflow_id)
 
     def create(
         self,
@@ -66,6 +91,7 @@ class RecurringWorkflowManager:
             metadata=metadata or {},
         )
         self._workflows[workflow.workflow_id] = workflow
+        self._persist(workflow)
         logger.info(
             "recurring_workflow_created",
             workflow_id=workflow.workflow_id,
@@ -87,6 +113,7 @@ class RecurringWorkflowManager:
         workflow = self._workflows.get(workflow_id)
         if workflow and workflow.status == "active":
             workflow.status = "paused"
+            self._persist(workflow)
             return True
         return False
 
@@ -96,6 +123,7 @@ class RecurringWorkflowManager:
             workflow.status = "active"
             workflow.error_count = 0
             workflow.next_run_at = compute_next_run(workflow.schedule)
+            self._persist(workflow)
             return True
         return False
 
@@ -138,6 +166,7 @@ class RecurringWorkflowManager:
                 )
             else:
                 workflow.next_run_at = compute_next_run(workflow.schedule, now)
+        self._persist(workflow)
         logger.info(
             "recurring_workflow_executed",
             workflow_id=workflow_id,

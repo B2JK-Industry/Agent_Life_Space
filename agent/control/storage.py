@@ -113,6 +113,32 @@ class ControlPlaneStorage:
             )
             """
         )
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS recurring_workflows (
+                workflow_id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                schedule TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS job_pipelines (
+                pipeline_id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                triggered_by TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         self._db.commit()
         self._initialized = True
         logger.info("control_plane_storage_initialized", db_path=self._db_path)
@@ -472,6 +498,101 @@ class ControlPlaneStorage:
         rows = self._db.execute(query, tuple(params)).fetchall()
         return [orjson.loads(row[0]) for row in rows]
 
+    # --- Recurring Workflow persistence ---
+
+    def save_recurring_workflow(self, workflow: Any) -> None:
+        if self._db is None:
+            return
+        from datetime import UTC, datetime
+        payload = orjson.dumps(workflow.to_dict()).decode()
+        now = datetime.now(UTC).isoformat()
+        self._db.execute(
+            """
+            INSERT OR REPLACE INTO recurring_workflows
+            (workflow_id, data, name, status, schedule, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                workflow.workflow_id,
+                payload,
+                workflow.name,
+                workflow.status,
+                workflow.schedule,
+                workflow.created_at,
+                now,
+            ),
+        )
+        self._db.commit()
+
+    def list_recurring_workflows(
+        self, *, status: str = "", limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if self._db is None:
+            return []
+        if status:
+            rows = self._db.execute(
+                "SELECT data FROM recurring_workflows WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = self._db.execute(
+                "SELECT data FROM recurring_workflows ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [orjson.loads(row[0]) for row in rows]
+
+    def delete_recurring_workflow(self, workflow_id: str) -> None:
+        if self._db is None:
+            return
+        self._db.execute(
+            "DELETE FROM recurring_workflows WHERE workflow_id = ?",
+            (workflow_id,),
+        )
+        self._db.commit()
+
+    # --- Job Pipeline persistence ---
+
+    def save_job_pipeline(self, pipeline: Any) -> None:
+        if self._db is None:
+            return
+        from datetime import UTC, datetime
+        payload = orjson.dumps(pipeline.to_dict()).decode()
+        now = datetime.now(UTC).isoformat()
+        self._db.execute(
+            """
+            INSERT OR REPLACE INTO job_pipelines
+            (pipeline_id, data, name, status, triggered_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                pipeline.pipeline_id,
+                payload,
+                pipeline.name,
+                pipeline.status,
+                pipeline.triggered_by,
+                pipeline.created_at,
+                now,
+            ),
+        )
+        self._db.commit()
+
+    def list_job_pipelines(
+        self, *, status: str = "", limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if self._db is None:
+            return []
+        if status:
+            rows = self._db.execute(
+                "SELECT data FROM job_pipelines WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = self._db.execute(
+                "SELECT data FROM job_pipelines ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [orjson.loads(row[0]) for row in rows]
+
     # --- Hard-delete methods for automated pruning ---
 
     def _safe_delete(self, sql: str, params: tuple[str, ...]) -> int:
@@ -484,7 +605,6 @@ class ControlPlaneStorage:
             self._db.commit()
             return cursor.rowcount
         except sqlite3.OperationalError:
-            # Table may not exist yet (e.g. added in a newer migration)
             return 0
 
     def hard_delete_pruned_artifacts(self, older_than_days: int = 90) -> int:
@@ -551,6 +671,12 @@ class ControlPlaneStorage:
         cost_entries = self._db.execute(
             "SELECT COUNT(*) FROM cost_ledger_entries"
         ).fetchone()[0]
+        workflows = self._db.execute(
+            "SELECT COUNT(*) FROM recurring_workflows"
+        ).fetchone()[0]
+        pipelines = self._db.execute(
+            "SELECT COUNT(*) FROM job_pipelines"
+        ).fetchone()[0]
         return {
             "plans": plans,
             "traces": traces,
@@ -558,6 +684,8 @@ class ControlPlaneStorage:
             "product_jobs": product_jobs,
             "retained_artifacts": retained_artifacts,
             "cost_entries": cost_entries,
+            "recurring_workflows": workflows,
+            "job_pipelines": pipelines,
         }
 
     def close(self) -> None:

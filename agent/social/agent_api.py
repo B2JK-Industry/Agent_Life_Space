@@ -11,7 +11,7 @@ Endpoint:
     GET  /api/health  — zdravie (verejný)
 
 Bezpečnosť:
-    - Rate limit: 10 req/min per IP
+    - Rate limit: 10 req/min per IP (60/min for localhost)
     - Max message length: 2000 chars
     - Odpoveď cez rovnaký kanál (sync response)
     - Žiadne peniaze, žiadne súbory — len text
@@ -34,8 +34,11 @@ from agent.core.identity import get_agent_identity
 logger = structlog.get_logger(__name__)
 
 _DEFAULT_PORT = 8420
-_RATE_LIMIT = 10  # requests per minute per IP
+_RATE_LIMIT_EXTERNAL = 10  # requests per minute per IP (external)
+_RATE_LIMIT_LOCAL = 60  # requests per minute for localhost (terminal/CLI)
 _MAX_MESSAGE_LENGTH = 2000
+
+_LOCAL_IPS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 def _runtime_agent_slug() -> str:
@@ -175,11 +178,12 @@ class AgentAPI:
         return None
 
     def _check_rate_limit(self, ip: str) -> bool:
-        """Max N requests per minute per IP."""
+        """Max N requests per minute per IP. Localhost gets a higher limit."""
         now = time.monotonic()
         times = self._request_times[ip]
         times[:] = [t for t in times if now - t < 60]
-        if len(times) >= _RATE_LIMIT:
+        limit = _RATE_LIMIT_LOCAL if ip in _LOCAL_IPS else _RATE_LIMIT_EXTERNAL
+        if len(times) >= limit:
             return False
         times.append(now)
         return True
@@ -233,6 +237,7 @@ class AgentAPI:
             )
 
         if not self._check_rate_limit(ip):
+            limit = _RATE_LIMIT_LOCAL if ip in _LOCAL_IPS else _RATE_LIMIT_EXTERNAL
             self._audit.record(ApiAuditEntry(
                 ip=ip, status_code=429, error="rate_limited",
             ))
@@ -240,7 +245,7 @@ class AgentAPI:
                 status=429,
                 code="agent_api_rate_limited",
                 summary="Agent API rate limit exceeded",
-                detail="Rate limit exceeded (10/min)",
+                detail=f"Rate limit exceeded ({limit}/min)",
                 scope="api.message",
                 suggested_action="Retry later or reduce request frequency.",
                 metadata={"endpoint": "/api/message", "ip": ip},
@@ -408,6 +413,7 @@ class AgentAPI:
             )
 
         if not self._check_rate_limit(ip):
+            limit = _RATE_LIMIT_LOCAL if ip in _LOCAL_IPS else _RATE_LIMIT_EXTERNAL
             self._audit.record(ApiAuditEntry(
                 ip=ip, intent="review", status_code=429, error="rate_limited",
             ))
@@ -415,7 +421,7 @@ class AgentAPI:
                 status=429,
                 code="agent_api_rate_limited",
                 summary="Agent API rate limit exceeded",
-                detail="Rate limit exceeded (10/min)",
+                detail=f"Rate limit exceeded ({limit}/min)",
                 scope="api.review",
                 suggested_action="Retry later or reduce request frequency.",
                 metadata={"endpoint": "/api/review", "ip": ip},
