@@ -467,6 +467,55 @@ class BuildService:
         job.status = JobStatus.RUNNING
         job.phase = BuildPhase.BUILDING
 
+        # If codegen produced the plan, run Docker-isolated build+test
+        # instead of host workspace execution + host verification
+        codegen_produced = hasattr(job, "_codegen_produced") and job._codegen_produced
+        if not codegen_produced and job.intake.implementation_plan and not any(
+            hasattr(op, "_from_codegen") for op in job.intake.implementation_plan
+        ):
+            # Check if this plan came from codegen by looking at trace
+            codegen_produced = any(
+                t.label == "codegen" for t in job.execution_traces
+            )
+
+        if codegen_produced and job.intake.implementation_plan:
+            t_docker = job.trace("docker_build")
+            try:
+                from agent.build.docker_executor import run_project_in_docker
+                docker_result = await run_project_in_docker(
+                    operations=job.intake.implementation_plan,
+                    description=job.intake.description,
+                    retry_on_failure=True,
+                    max_retries=2,
+                )
+                # Write results back to workspace for artifact capture
+                self._execute_build(job, workspace_path)
+
+                if docker_result.success:
+                    t_docker.complete(
+                        f"Docker build+test OK: {docker_result.summary}"
+                    )
+                    job.status = JobStatus.COMPLETED
+                    job.metadata["docker_result"] = docker_result.to_dict()
+                    job.metadata["verification_passed"] = True
+                    self._finalize(job, workspace_path)
+                    return job
+                else:
+                    t_docker.fail(
+                        f"Docker build failed: {docker_result.summary}\n"
+                        f"{docker_result.test_output[:500]}"
+                    )
+                    job.status = JobStatus.FAILED
+                    job.error = f"Docker build failed: {docker_result.summary}"
+                    job.metadata["docker_result"] = docker_result.to_dict()
+                    job.metadata["verification_passed"] = False
+                    self._finalize(job, workspace_path)
+                    return job
+            except Exception as e:
+                t_docker.fail(str(e))
+                logger.warning("docker_executor_unavailable", error=str(e))
+                # Fall through to host verification as fallback
+
         if can_skip_completed_steps and self._can_reuse_checkpoint(
             job, BuildCheckpointPhase.BUILT
         ):

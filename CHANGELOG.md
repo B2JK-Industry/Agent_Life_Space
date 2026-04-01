@@ -10,6 +10,36 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.33.0] — 2026-04-01
+
+Docker-Isolated Build Execution — end-to-end project builds in containers.
+
+### Docker Project Executor
+- New `agent/build/docker_executor.py`: runs generated projects entirely
+  inside Docker containers (pip install → pytest → ruff)
+- Phases: deps install (with network) → tests (no network) → lint
+- Safety: 512MB RAM, 1 CPU, 5min timeout, no network during tests
+- Files mounted read-only, copied to writable /work inside container
+
+### Auto-Fix Retry Loop
+- When tests fail, Opus receives the test output and all source files
+- Generates fixed code → re-runs tests in Docker → up to 2 retries
+- Each retry is a full cycle: write files → install deps → run tests
+
+### Build Pipeline Integration
+- Codegen-produced builds now route through Docker executor instead of
+  host workspace verification
+- Falls back to host verification if Docker is unavailable
+- Docker results stored in job metadata for reporting
+
+### Improved Build Reporting
+- Telegram/API shows Docker build details: files, deps, tests, lint, retries
+- Failed builds show truncated test output for debugging
+- Completed builds show LLM cost and retry count
+
+### Tests
+- 9 new tests in `test_docker_executor.py` (file writing, result model)
+
 ## [1.32.0] — 2026-04-01
 
 LLM Build Pipeline — description-driven code generation with sandbox execution.

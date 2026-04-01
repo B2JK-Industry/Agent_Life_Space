@@ -1511,8 +1511,18 @@ class TelegramHandler:
             lines.append(f"Job `{job_id}` zlyhal.")
             if job_data:
                 meta = job_data.get("metadata", {})
-                verification = meta.get("verification_passed", "?")
-                lines.append(f"Verifikácia: {'OK' if verification else 'FAILED'}")
+                docker = meta.get("docker_result", {})
+                if docker:
+                    lines.append(f"Files: {docker.get('files_written', 0)} | "
+                                 f"Deps: {'OK' if docker.get('deps_installed') else 'FAIL'} | "
+                                 f"Tests: {'PASS' if docker.get('test_passed') else 'FAIL'} | "
+                                 f"Retries: {docker.get('retries', 0)}")
+                    test_out = docker.get("test_output", "")
+                    if test_out:
+                        lines.append(f"```\n{test_out[:500]}\n```")
+                else:
+                    verification = meta.get("verification_passed", "?")
+                    lines.append(f"Verifikácia: {'OK' if verification else 'FAILED'}")
                 error_msg = meta.get("error", "")
                 if error_msg:
                     lines.append(f"Error: {str(error_msg)[:200]}")
@@ -1544,6 +1554,17 @@ class TelegramHandler:
             job_status = job_data.get("status", "?")
             lines.append(f"Job status: {job_status}")
             metadata = job_data.get("metadata", {})
+            docker = metadata.get("docker_result", {})
+            if docker:
+                lines.append(
+                    f"Docker: files={docker.get('files_written', 0)} | "
+                    f"tests={'PASS' if docker.get('test_passed') else 'FAIL'} | "
+                    f"lint={'PASS' if docker.get('lint_passed') else 'FAIL'}"
+                )
+                if docker.get("retries"):
+                    lines.append(f"Auto-fix retries: {docker['retries']}")
+                if docker.get("total_cost_usd"):
+                    lines.append(f"LLM cost: ${docker['total_cost_usd']:.4f}")
             if metadata.get("verdict"):
                 lines.append(f"Verdict: {metadata['verdict']}")
             if metadata.get("finding_counts"):
