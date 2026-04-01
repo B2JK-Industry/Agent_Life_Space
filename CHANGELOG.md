@@ -10,6 +10,47 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.32.0] — 2026-04-01
+
+LLM Build Pipeline — description-driven code generation with sandbox execution.
+
+### LLM Code Generation
+- New `agent/build/codegen.py`: Opus generates `BuildOperation[]` from natural
+  language description — bridges "user describes what to build" to deterministic
+  WRITE_FILE execution
+- Robust JSON parser handles markdown fences, newlines in content, trailing
+  commas, and invalid entries
+- Safety: only WRITE_FILE ops, relative paths only, max operation cap enforced
+
+### Build Pipeline Integration
+- `BuildService.run_build()` now auto-generates implementation plan via LLM when
+  `implementation_plan` is empty but `description` exists
+- Previously empty plans triggered AUDIT_MARKER_ONLY (no mutations); now they
+  trigger full code generation → workspace execution → verification
+
+### Task Classification (Bilingual)
+- All classifier keyword sets now include English equivalents (programming,
+  simple, action, capability, implementation intent)
+- New `_TECHNICAL_TERMS` signal: 2+ technical terms boost programming score
+- New `_IMPLEMENTATION_INTENTS` + tech term combo signal prevents false routing
+- Sonnet max_turns increased from 3 to 5
+
+### API & Channel Trust
+- Authenticated API callers now get terminal-level trust (full response class)
+- API timeout scales with task complexity (300s for programming, 90s for chat)
+- Sandbox-first: AGENT_SANDBOX_ONLY=1 downgrades to conversational mode instead
+  of hard-blocking
+
+### Bug Fixes
+- `PlanRecordStatus.FAILED` added — failed builds no longer crash on enum lookup
+- Build/review job status now passes through real status (failed, blocked, etc.)
+  instead of mapping all non-completed to "blocked"
+- Telegram handler shows explicit failed job details (ID, verification, error)
+
+### Tests
+- 12 new tests in `test_build_codegen.py` (parsing, validation, edge cases)
+- Updated `test_llm_provider.py` for sandbox downgrade behavior
+
 ## [1.31.0] — 2026-04-01
 
 Runtime Contract Closure — auth boundary, public API discipline, extraction readiness.
