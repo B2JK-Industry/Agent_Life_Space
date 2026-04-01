@@ -53,7 +53,7 @@ PROVIDER_MODELS: dict[str, dict[ModelTier, str]] = {
 # Tier -> (max_turns, timeout) defaults
 _TIER_DEFAULTS: dict[ModelTier, tuple[int, int]] = {
     ModelTier.FAST: (1, 60),
-    ModelTier.BALANCED: (3, 180),
+    ModelTier.BALANCED: (5, 180),
     ModelTier.POWERFUL: (15, 300),
 }
 
@@ -106,7 +106,7 @@ HAIKU = ModelConfig(
 
 SONNET = ModelConfig(
     model_id=PROVIDER_MODELS["anthropic"][ModelTier.BALANCED],
-    max_turns=3,
+    max_turns=5,
     timeout=180,
     tier=ModelTier.BALANCED,
 )
@@ -131,6 +131,19 @@ _PROGRAMMING_KEYWORDS = frozenset([
     "naprogramuj", "implementuj", "napíš kód", "pridaj", "oprav bug",
     "vytvor modul", "refaktoruj", "fix bug", "uprav kód", "pridaj príkaz",
     "napíš test", "debug", "commitni", "pushni",
+    # Implementation / build requests
+    "postav", "potrebujem", "vytvor", "build", "implement",
+    "write code", "fix", "refactor", "deploy", "nasaď",
+])
+
+# Technical terms — strong signal that request is about code/implementation
+_TECHNICAL_TERMS = frozenset([
+    "api", "rest", "fastapi", "flask", "django", "endpoint",
+    "microservice", "backend", "frontend", "server", "databáza",
+    "database", "sqlite", "postgres", "redis", "docker",
+    "pytest", "coverage", "test", "testy", "middleware",
+    "websocket", "graphql", "crud", "orm", "migration",
+    "rate limit", "auth", "jwt", "oauth", "http",
 ])
 
 _SIMPLE_KEYWORDS = frozenset([
@@ -225,6 +238,13 @@ def classify_task_detailed(text: str) -> ClassificationResult:
     if has_code:
         signals["code_content"] = 5
         total += 5
+
+    # Technical terms (API, framework, database, etc.)
+    tech_matches = sum(1 for t in _TECHNICAL_TERMS if t in text_lower)
+    if tech_matches >= 2:
+        tech_score = min(tech_matches * 2, 6)
+        signals["technical_terms"] = tech_score
+        total += tech_score
 
     # === Thresholds ===
     if total >= _THRESHOLD_PROGRAMMING:
