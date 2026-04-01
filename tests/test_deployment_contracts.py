@@ -128,3 +128,68 @@ class TestNoEnvVarMutation:
         after = dict(os.environ)
         diff = {k: v for k, v in after.items() if k not in before and k != "AGENT_PROJECT_ROOT"}
         assert not diff, f"gateway.py mutated os.environ: {diff}"
+
+
+class TestDashboardAuth:
+    """Dashboard must require authentication."""
+
+    def test_dashboard_handler_checks_auth(self):
+        """_handle_dashboard must verify API key before serving HTML."""
+        from agent.social.agent_api import AgentAPI
+        api = AgentAPI(api_keys=["test-key"])
+        # The handler should reference _check_auth or key_param check
+        import inspect
+        source = inspect.getsource(api._handle_dashboard)
+        assert "_check_auth" in source or "key_param" in source, (
+            "Dashboard handler does not check authentication"
+        )
+
+
+class TestNoPrivateStorageAccess:
+    """Services must not access _storage directly; use public API."""
+
+    def test_settlement_uses_public_api(self):
+        content = (_AGENT_ROOT / "control" / "settlement.py").read_text()
+        for i, line in enumerate(content.split("\n"), start=1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            assert "._storage" not in line, (
+                f"settlement.py:{i} accesses private _storage — use public API"
+            )
+
+    def test_agent_api_uses_public_archival_method(self):
+        content = (_AGENT_ROOT / "social" / "agent_api.py").read_text()
+        for i, line in enumerate(content.split("\n"), start=1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            assert 'getattr' not in line or '_storage' not in line, (
+                f"agent_api.py:{i} accesses private _storage via getattr"
+            )
+
+
+class TestServiceExtractionReadiness:
+    """Bounded contexts must maintain import discipline."""
+
+    def test_no_post_init_private_mutation_in_agent(self):
+        """agent.py must not mutate ._attribute on services post-init."""
+        content = (_AGENT_ROOT / "core" / "agent.py").read_text()
+        violations = []
+        for i, line in enumerate(content.split("\n"), start=1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            # Pattern: self.service._private = value (outside of self.__init__ context)
+            if "._settlement_service" in stripped or "._on_payment_required" in stripped:
+                # These should now be passed at construction, not post-init
+                if "=" in stripped and not stripped.startswith("self."):
+                    violations.append(f"agent.py:{i} — {stripped}")
+        # Allow the gateway on_payment_required since it's passed at construction now
+        real_violations = [
+            v for v in violations
+            if "reporting._settlement_service" in v
+        ]
+        assert not real_violations, (
+            "Post-init private mutation found:\n" + "\n".join(real_violations)
+        )

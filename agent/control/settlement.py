@@ -147,8 +147,7 @@ class PaymentSettlementService:
         if not self._control_plane:
             return
         try:
-            storage = self._control_plane._storage
-            rows = storage.list_settlement_requests(limit=200)
+            rows = self._control_plane.list_settlement_requests(limit=200)
             for data in rows:
                 sr = SettlementRequest.from_dict(data)
                 self._requests[sr.settlement_id] = sr
@@ -158,11 +157,11 @@ class PaymentSettlementService:
             logger.exception("settlements_load_error")
 
     def _persist(self, request: SettlementRequest) -> None:
-        """Persist a single settlement request to SQLite."""
+        """Persist a single settlement request via control plane public API."""
         if not self._control_plane:
             return
         try:
-            self._control_plane._storage.save_settlement_request(request)
+            self._control_plane.save_settlement_request(request)
         except Exception:
             logger.exception("settlement_persist_error", settlement_id=request.settlement_id)
 

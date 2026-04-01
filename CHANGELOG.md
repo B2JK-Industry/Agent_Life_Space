@@ -10,6 +10,30 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.31.0] — 2026-04-01
+
+Runtime Contract Closure — auth boundary, public API discipline, extraction readiness.
+
+### Dashboard Authentication
+- `/dashboard` now requires API key (header or `?key=` query param)
+- Unauthenticated access returns a minimal login page
+- Dashboard HTML no longer served to anonymous clients
+
+### Public API Discipline
+- `ControlPlaneStateService` now exposes `save_settlement_request()`,
+  `list_settlement_requests()`, and `get_storage_for_archival()`
+- Settlement service uses public methods (no `._storage` private access)
+- Archival API handlers use `get_storage_for_archival()` (no `getattr`)
+
+### Service Extraction Readiness
+- `OperatorReportService` now receives `settlement_service` at construction
+  (no post-init `._settlement_service` mutation)
+- Reporting initialization moved after settlement in orchestrator init order
+
+### Tests
+- 4 new contract tests: dashboard auth, no private storage access,
+  no post-init mutation, archival public API
+
 ## [1.30.0] — 2026-04-01
 
 Deployment Contract Hardening — deny-by-default, explicit config, no hidden coupling.
