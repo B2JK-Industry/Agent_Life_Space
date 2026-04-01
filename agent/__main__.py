@@ -35,7 +35,7 @@ structlog.configure(
 logger = structlog.get_logger(__name__)
 
 
-PIDFILE = "/tmp/agent-life-space.pid"
+PIDFILE = os.environ.get("AGENT_PIDFILE_PATH", "/tmp/agent-life-space.pid")
 
 
 def _check_pidfile() -> None:
@@ -114,15 +114,27 @@ async def run_agent(data_dir: str = "agent") -> None:
                 error=docker_status.get("error", "unknown"),
                 hint="Docker je povinný pre sandbox. Programovacie úlohy budú odmietnuté.",
             )
-        # Store docker status for runtime checks
-        os.environ.update({"_DOCKER_AVAILABLE": "1" if docker_available else "0"})
+        # Store docker status as agent attribute (not env var mutation)
+        agent._docker_available = docker_available
         # SECURITY: Sandbox-only mode is DEFAULT. Host file access blocked unless
         # explicitly overridden with AGENT_SANDBOX_ONLY=0.
         if os.environ.get("AGENT_SANDBOX_ONLY") is None:
-            os.environ.update({"AGENT_SANDBOX_ONLY": "1"})
+            os.environ.setdefault("AGENT_SANDBOX_ONLY", "1")
             logger.info("sandbox_only_mode", status="enabled (default)")
         elif os.environ.get("AGENT_SANDBOX_ONLY") == "0":
             logger.warning("sandbox_only_disabled", hint="Host file access enabled. CLI has full FS access.")
+
+        # Startup configuration summary
+        logger.info(
+            "deployment_config",
+            project_root=agent._data_dir.parent if hasattr(agent, "_data_dir") else "unknown",
+            api_port=os.environ.get("AGENT_API_PORT", "8420"),
+            api_host=os.environ.get("AGENT_API_HOST", "127.0.0.1"),
+            vault_ready=agent._secrets_manager.is_ready if hasattr(agent, "_secrets_manager") and agent._secrets_manager else False,
+            docker=docker_available,
+            sandbox=os.environ.get("AGENT_SANDBOX_ONLY", "1"),
+            pidfile=PIDFILE,
+        )
 
         # Start agent in background
         agent_task = asyncio.create_task(agent.start())

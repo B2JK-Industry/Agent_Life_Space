@@ -971,8 +971,8 @@ class TestDeliveryApproval:
             assert result["denial"]["code"] == "review_delivery_denied_by_default"
         os.unlink(db_path)
 
-    async def test_delivery_dev_mode_bypass(self):
-        """DEV MODE only: bypass requires explicit env var."""
+    async def test_delivery_denied_without_approval_queue(self):
+        """Without approval queue, delivery must be denied (no env-based bypass)."""
         from agent.review.service import ReviewService
         from agent.review.storage import ReviewStorage
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -982,18 +982,9 @@ class TestDeliveryApproval:
             (Path(tmpdir) / "app.py").write_text("x = 1\n")
             intake = ReviewIntake(repo_path=tmpdir)
             job = await service.run_review(intake)
-            import os as _os
-            old = _os.environ.get("AGENT_DEV_MODE")
-            _os.environ["AGENT_DEV_MODE"] = "1"
-            try:
-                result = service.request_delivery_approval(job.id)
-                assert result.get("approval_bypassed") is True
-                assert "DEV MODE" in result.get("warning", "")
-            finally:
-                if old is None:
-                    _os.environ.pop("AGENT_DEV_MODE", None)
-                else:
-                    _os.environ["AGENT_DEV_MODE"] = old
+            result = service.request_delivery_approval(job.id)
+            assert result.get("delivery_ready") is False
+            assert result.get("denial") is not None
         os.unlink(db_path)
 
     async def test_delivery_bundle_tracks_shared_lifecycle(self, sample_repo):

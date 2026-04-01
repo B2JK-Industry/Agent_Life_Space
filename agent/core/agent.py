@@ -183,6 +183,7 @@ class AgentOrchestrator:
             approval_queue=self.approval_queue,
             environment=os.environ,
             secret_lookup=self._lookup_secret,
+            on_payment_required=self._on_gateway_payment_required,
         )
         self.reporting = OperatorReportService(
             job_queries=self.jobs,
@@ -220,9 +221,7 @@ class AgentOrchestrator:
             gateway=self.gateway,
             control_plane=self.control_plane,
         )
-        # Wire gateway 402 callback → settlement service auto-creates requests
-        self.gateway._on_payment_required = self._on_gateway_payment_required
-        # Wire settlement into reporting for inbox visibility
+        # Wire settlement into reporting for inbox visibility (deferred from above)
         self.reporting._settlement_service = self.settlement
 
         # Background tasks

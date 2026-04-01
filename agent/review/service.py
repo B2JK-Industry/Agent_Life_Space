@@ -745,17 +745,9 @@ class ReviewService:
         # Approval queue is REQUIRED for external delivery.
         # Without it, delivery is blocked — not silently bypassed.
         if self._approval_queue is None:
-            import os
-            if os.environ.get("AGENT_DEV_MODE") == "1":
-                # Development-only bypass — never in production
-                logger.warning("delivery_approval_dev_bypass", job_id=job_id)
-                return {
-                    "job_id": job_id,
-                    "bundle_id": self._delivery_bundle_id(job_id),
-                    "delivery_ready": True,
-                    "approval_bypassed": True,
-                    "warning": "DEV MODE: approval bypassed. Not safe for production.",
-                }
+            # Deny-by-default: no approval queue → no external delivery.
+            # AGENT_DEV_MODE bypass removed — policy enforcement must not
+            # be environment-dependent. See v1.30.0 deployment hardening.
             denial = make_denial(
                 code="review_delivery_denied_by_default",
                 summary="Review delivery blocked by default",

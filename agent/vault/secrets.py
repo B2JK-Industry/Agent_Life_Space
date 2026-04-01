@@ -71,6 +71,11 @@ class SecretsManager:
         # In-memory decrypted cache (cleared on close)
         self._cache: dict[str, str] = {}
 
+    @property
+    def is_ready(self) -> bool:
+        """Whether the vault has an encryption key and can store/retrieve secrets."""
+        return self._fernet is not None
+
     @staticmethod
     def _derive_fernet(master_key: str) -> Fernet:
         """Derive a Fernet key from a master password using PBKDF2."""
