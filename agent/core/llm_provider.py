@@ -148,20 +148,20 @@ class ClaudeCliProvider(LLMProvider):
         start = time.monotonic()
 
         # SECURITY: Host file access is blocked by default.
-        # Only allowed when AGENT_SANDBOX_ONLY=0 is explicitly set AND allow_file_access=True.
+        # When AGENT_SANDBOX_ONLY=1 (default), downgrade to conversational mode
+        # instead of hard-blocking. Opus can still plan and reason about code.
+        file_access_granted = False
         if request.allow_file_access:
-            sandbox_only = os.environ.get("AGENT_SANDBOX_ONLY", "1")  # Default: sandbox only
+            sandbox_only = os.environ.get("AGENT_SANDBOX_ONLY", "1")
             if sandbox_only != "0":
-                return GenerateResponse(
-                    error="Host file access is blocked by default. "
-                          "Set AGENT_SANDBOX_ONLY=0 to explicitly allow CLI host access. "
-                          "Prefer Docker sandbox for code execution.",
-                    success=False,
-                    model=request.model,
-                )
-            logger.warning("cli_host_file_access",
-                           hint="CLI running on host FS with --dangerously-skip-permissions. "
-                                "This bypasses sandbox isolation.")
+                logger.info("cli_file_access_downgraded",
+                            hint="AGENT_SANDBOX_ONLY=1, running without file access. "
+                                 "Use /build for Docker-sandboxed execution.")
+            else:
+                file_access_granted = True
+                logger.warning("cli_host_file_access",
+                               hint="CLI running on host FS with --dangerously-skip-permissions. "
+                                    "This bypasses sandbox isolation.")
 
         # Build prompt from messages
         prompt = self._build_prompt(request)
@@ -176,7 +176,7 @@ class ClaudeCliProvider(LLMProvider):
             cli_args.extend(["--model", request.model])
         if request.max_turns > 1:
             cli_args.extend(["--max-turns", str(request.max_turns)])
-        if request.allow_file_access:
+        if file_access_granted:
             cli_args.append("--dangerously-skip-permissions")
 
         # Environment

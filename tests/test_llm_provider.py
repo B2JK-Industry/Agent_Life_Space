@@ -109,7 +109,11 @@ class TestClaudeCliProvider:
         assert not resp.success
 
     @pytest.mark.asyncio
-    async def test_sandbox_only_blocks_file_access(self):
+    async def test_sandbox_only_downgrades_file_access(self):
+        """When SANDBOX_ONLY=1, file access is downgraded (not hard-blocked).
+
+        Opus runs in conversational mode without --dangerously-skip-permissions.
+        """
         provider = ClaudeCliProvider()
         with patch.dict(os.environ, {"AGENT_SANDBOX_ONLY": "1"}):
             req = GenerateRequest(
@@ -117,8 +121,8 @@ class TestClaudeCliProvider:
                 allow_file_access=True,
             )
             resp = await provider.generate(req)
-            assert not resp.success
-            assert "AGENT_SANDBOX_ONLY" in resp.error
+            # Should succeed — runs without file access, not blocked
+            assert resp.success
 
 
 class TestAnthropicProvider:

@@ -305,9 +305,18 @@ class AgentBrain:
         memory_block = f"\n{memory_context}\n" if memory_context else ""
 
         if task_type == "programming":
+            sandbox_mode = os.environ.get("AGENT_SANDBOX_ONLY", "1") != "0"
+            sandbox_instruction = (
+                "\nIMPORTANT: You are running in sandbox mode (no host file access). "
+                "Generate all code as text in your response. Do NOT try to create, "
+                "edit, or read files. Present the complete implementation plan and "
+                "code inline. The operator can then use /build to execute it in a "
+                "Docker sandbox.\n"
+            ) if sandbox_mode else ""
             prompt = (
                 f"{active_prompt}\n"
                 f"Si programátor.\n\n"
+                f"{sandbox_instruction}"
                 f"{memory_block}"
                 f"ÚLOHA: {text}\n\n"
                 f"At the end always include a short summary. {get_response_language_instruction()}"
