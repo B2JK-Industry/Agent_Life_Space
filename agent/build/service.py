@@ -430,6 +430,39 @@ class BuildService:
         workspace_path: str,
         can_skip_completed_steps: bool,
     ) -> BuildJob:
+        # ── Step 2.5: LLM Code Generation (if no explicit plan) ──
+        if not job.intake.implementation_plan and job.intake.description:
+            t_codegen = job.trace("codegen")
+            try:
+                from agent.build.codegen import generate_build_operations
+                generated_ops = await generate_build_operations(
+                    description=job.intake.description,
+                    max_operations=20,
+                )
+                job.intake.implementation_plan = generated_ops
+                t_codegen.complete(
+                    f"LLM generated {len(generated_ops)} file operations"
+                )
+                logger.info(
+                    "build_codegen_complete",
+                    job_id=job.id,
+                    operations=len(generated_ops),
+                    files=[op.path for op in generated_ops],
+                )
+            except Exception as e:
+                t_codegen.fail(str(e))
+                job.status = JobStatus.FAILED
+                job.error = f"Code generation failed: {e}"
+                job.denial = make_denial(
+                    code="build_codegen_failed",
+                    summary="LLM code generation failed",
+                    detail=str(e)[:500],
+                    scope=job.intake.repo_path,
+                    suggested_action="Simplify the description or provide explicit implementation_plan.",
+                ).to_dict()
+                self._finalize(job, workspace_path)
+                return job
+
         # ── Step 3: Build (execute implementation) ──
         job.status = JobStatus.RUNNING
         job.phase = BuildPhase.BUILDING
