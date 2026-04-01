@@ -217,6 +217,7 @@ class TelegramHandler:
             "/telemetry": self._cmd_telemetry,
             "/workflow": self._cmd_workflow,
             "/pipeline": self._cmd_pipeline,
+            "/settlement": self._cmd_settlement,
             "/help": self._cmd_help,
         }
 
@@ -1772,6 +1773,42 @@ class TelegramHandler:
             lines.append(f"• `{p.pipeline_id}` {p.name} [{stage_summary}] — {p.status}")
         lines.append("\n`/pipeline create` | `/pipeline run <id>`")
         return "\n".join(lines)
+
+    async def _cmd_settlement(self, args: str) -> str:
+        """Settlement management: list pending, approve, deny."""
+        if not hasattr(self._agent, "settlement"):
+            return "*Settlement service not initialized.*"
+
+        svc = self._agent.settlement
+        parts = args.strip().split()
+
+        if not parts or parts[0] == "list":
+            pending = svc.get_pending_settlements()
+            if not pending:
+                return "*Settlements:* Žiadne pending platobné požiadavky."
+            lines = [f"*Pending Settlements ({len(pending)}):*"]
+            for s in pending:
+                p = s.payment
+                lines.append(
+                    f"  `{s.settlement_id}` — {p.provider_id} "
+                    f"${p.amount_required:.4f} (balance: ${s.wallet_balance:.4f})"
+                )
+            lines.append("\n`/settlement approve <id>` | `/settlement deny <id>`")
+            return "\n".join(lines)
+
+        if parts[0] == "approve" and len(parts) >= 2:
+            result = svc.approve_settlement(parts[1], note=" ".join(parts[2:]))
+            if result:
+                return f"*Settlement approved:* `{parts[1]}`\nNote: {result.operator_note or '—'}"
+            return f"*Error:* Settlement `{parts[1]}` not found or not pending."
+
+        if parts[0] == "deny" and len(parts) >= 2:
+            result = svc.deny_settlement(parts[1], note=" ".join(parts[2:]))
+            if result:
+                return f"*Settlement denied:* `{parts[1]}`"
+            return f"*Error:* Settlement `{parts[1]}` not found or not pending."
+
+        return "*Použitie:* `/settlement` | `/settlement approve <id>` | `/settlement deny <id>`"
 
     async def _cmd_telemetry(self, args: str) -> str:
         """Runtime telemetry dashboard — throughput, latency, cost, delivery health."""

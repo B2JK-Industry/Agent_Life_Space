@@ -146,6 +146,22 @@ class ArchivalService:
             })
         return archives
 
+    def get_archive_path(self, filename: str) -> Path | None:
+        """Resolve an archive filename to its full path, if it exists.
+
+        Only serves files from the archive directory — rejects path traversal.
+        Returns None if file doesn't exist or filename is suspicious.
+        """
+        # Reject path traversal
+        if "/" in filename or "\\" in filename or ".." in filename:
+            return None
+        if not filename.endswith(".csv"):
+            return None
+        filepath = _get_archive_dir() / filename
+        if not filepath.is_file():
+            return None
+        return filepath
+
     @staticmethod
     def _flatten(data: dict[str, Any], prefix: str = "") -> dict[str, str]:
         """Flatten a nested dict one level deep for CSV export."""

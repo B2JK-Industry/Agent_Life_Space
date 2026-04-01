@@ -866,6 +866,46 @@ class AgentAPI:
         else:
             return web.json_response({"archives": archival.list_archives()})
 
+    async def _handle_operator_archive_download(self, request: web.Request) -> web.Response:
+        """GET /api/operator/archive/download/{filename} — download a CSV archive."""
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401, code="auth_failed", summary="Auth failed",
+                detail=auth_error, scope="api.operator.archive.download",
+            )
+        if not self._agent or not hasattr(self._agent, "control_plane"):
+            return self._json_error_response(
+                status=503, code="archival_unavailable",
+                summary="Archival unavailable",
+                detail="Control plane not initialized",
+                scope="api.operator.archive.download",
+            )
+
+        from agent.control.archival import ArchivalService
+        storage = getattr(self._agent.control_plane, "_storage", None)
+        if storage is None:
+            return self._json_error_response(
+                status=503, code="archival_unavailable",
+                summary="Archival unavailable",
+                detail="Control plane storage not initialized",
+                scope="api.operator.archive.download",
+            )
+
+        filename = request.match_info["filename"]
+        archival = ArchivalService(storage)
+        filepath = archival.get_archive_path(filename)
+        if filepath is None:
+            return web.json_response(
+                {"error": f"Archive '{filename}' not found or invalid"},
+                status=404,
+            )
+
+        return web.FileResponse(
+            filepath,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     async def _handle_operator_settlements(self, request: web.Request) -> web.Response:
         """GET /api/operator/settlements — list pending payment settlements.
 
@@ -923,6 +963,7 @@ class AgentAPI:
         self._app.router.add_get("/api/operator/workflows", self._handle_operator_workflows)
         self._app.router.add_get("/api/operator/pipelines", self._handle_operator_pipelines)
         self._app.router.add_get("/api/operator/archive", self._handle_operator_archive)
+        self._app.router.add_get("/api/operator/archive/download/{filename}", self._handle_operator_archive_download)
         self._app.router.add_get("/api/operator/settlements", self._handle_operator_settlements)
         self._app.router.add_get("/api/operator/audit", self._handle_operator_audit)
 

@@ -515,23 +515,39 @@ work is Phase 3 operatorization:
 
 ---
 
-## Phase 4 Enterprise Hardening (v1.26.0, 2026-04-01)
+## Phase 4 Enterprise Hardening (v1.25.1–v1.28.0, 2026-04-01)
+
+All items landed on `main` at `e512f25`. 1604 tests pass.
+
+### Production Hardening (v1.25.1)
+- **Status:** `complete_for_phase`
+- Rate limit split (60/min localhost, 10/min external)
+- Telemetry auto-recording (hourly), workflow/pipeline SQLite persistence
+- Semantic cache hardening (threshold 0.95, length-ratio guard)
 
 ### CI-enforced Architecture Invariants (T8-E1-S2)
 - **Status:** `complete_for_phase`
-- 26 pytest invariant tests now explicit blocking CI gate
-- Shell grep checks converted to proper pytest (persona, paths, sandbox)
+- 26 pytest invariant tests as explicit blocking CI gate
 
 ### Automated Retention & Pruning (T1-E2-S4)
-- **Status:** `in_progress` (foundations done, archival deferred)
-- Hard-delete methods for: pruned artifacts (90d), traces (90d), plans (365d), pipelines (180d)
-- Retention pruning cron loop (every 6h) + nightly data cleanup loop
+- **Status:** `complete_for_phase`
+- Hard-delete methods, retention pruning cron (6h), nightly cleanup cron
 - `/report retention` operator command
-- Remaining: CSV/Parquet archival before hard-delete for compliance tables
+- Archival CSV export service (foundation, download endpoint pending)
 
 ### Unified Policy Boundary Migration (T5-E1-S2)
-- **Status:** `in_progress` (5 of 9 callers migrated)
-- `RuntimePolicyDecision` enriched with `resolved_policy` + `policy_metadata`
-- Gateway (2 callers), Review (1 caller), Build (1 caller) migrated
-- Deferred: ReviewGatePolicy (post-exec), budget (cross-cutting), release readiness (standalone)
-- All 1551 tests pass after migration
+- **Status:** `mostly_complete` (5 of 9 callers migrated, 4 deferred by design)
+- Gateway (2), Review (1), Build (1) callers routed through `evaluate_runtime_action()`
+- Deferred: ReviewGatePolicy, budget, release readiness (different concerns)
+
+### Operator REST API & Dashboard (T4-E1-S3)
+- **Status:** `complete_for_phase`
+- 11 authenticated endpoints under `/api/operator/`
+- Self-contained HTML dashboard at `/dashboard`
+- 6 production regression fixes (report wiring, query params, memory truthfulness,
+  pipeline linkage, archival path safety)
+
+### Payment Settlement (T7-E2-S6)
+- **Status:** `foundation_only`
+- Service wired into orchestrator, API endpoint exists
+- Missing: persisted state, dashboard UI, Telegram command, full 402→retry loop
