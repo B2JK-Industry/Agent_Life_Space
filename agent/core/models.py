@@ -128,22 +128,27 @@ OPUS = ModelConfig(
 # Thresholds map total score → task type.
 
 _PROGRAMMING_KEYWORDS = frozenset([
-    "naprogramuj", "implementuj", "napíš kód", "pridaj", "oprav bug",
+    # Unambiguously about code — safe to trigger programming alone
+    "naprogramuj", "implementuj", "napíš kód", "oprav bug",
     "vytvor modul", "refaktoruj", "fix bug", "uprav kód", "pridaj príkaz",
     "napíš test", "debug", "commitni", "pushni",
-    # Implementation / build requests
-    "postav", "potrebujem", "vytvor", "build", "implement",
-    "write code", "fix", "refactor", "deploy", "nasaď",
+    "write code", "refactor",
 ])
 
-# Technical terms — strong signal that request is about code/implementation
+# Technical terms — need 2+ matches OR combo with intent verb to trigger programming
 _TECHNICAL_TERMS = frozenset([
     "api", "rest", "fastapi", "flask", "django", "endpoint",
-    "microservice", "backend", "frontend", "server", "databáza",
+    "microservice", "backend", "frontend", "databáza",
     "database", "sqlite", "postgres", "redis", "docker",
-    "pytest", "coverage", "test", "testy", "middleware",
+    "pytest", "coverage", "middleware",
     "websocket", "graphql", "crud", "orm", "migration",
-    "rate limit", "auth", "jwt", "oauth", "http",
+    "rate limit", "jwt", "oauth",
+])
+
+# General intent verbs — only boost score when combined with technical terms
+_IMPLEMENTATION_INTENTS = frozenset([
+    "potrebujem", "postav", "vytvor", "build", "implement",
+    "deploy", "nasaď", "pridaj", "sprav", "make",
 ])
 
 _SIMPLE_KEYWORDS = frozenset([
@@ -241,10 +246,17 @@ def classify_task_detailed(text: str) -> ClassificationResult:
 
     # Technical terms (API, framework, database, etc.)
     tech_matches = sum(1 for t in _TECHNICAL_TERMS if t in text_lower)
+    has_intent = any(v in text_lower for v in _IMPLEMENTATION_INTENTS)
+
     if tech_matches >= 2:
         tech_score = min(tech_matches * 2, 6)
         signals["technical_terms"] = tech_score
         total += tech_score
+
+    # Intent verb + technical term combo (e.g. "potrebujem API" → programming)
+    if has_intent and tech_matches >= 1:
+        signals["intent_plus_tech"] = 5
+        total += 5
 
     # === Thresholds ===
     if total >= _THRESHOLD_PROGRAMMING:
