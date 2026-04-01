@@ -149,12 +149,13 @@ class TestArchivalService:
         svc = ArchivalService(storage)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("agent.control.archival._ARCHIVE_DIR", Path(tmpdir)):
+            with patch("agent.control.archival._get_archive_dir", return_value=Path(tmpdir)):
                 result = svc.export_table("cost_ledger_entries")
                 assert result.endswith(".csv")
-                assert Path(result).exists()
+                # Result is now filename only, not full path
+                assert "/" not in result
 
-                content = Path(result).read_text()
+                content = (Path(tmpdir) / result).read_text()
                 reader = csv.DictReader(io.StringIO(content))
                 records = list(reader)
                 assert len(records) == 2
@@ -186,7 +187,7 @@ class TestArchivalService:
         storage = MagicMock()
         svc = ArchivalService(storage)
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("agent.control.archival._ARCHIVE_DIR", Path(tmpdir)):
+            with patch("agent.control.archival._get_archive_dir", return_value=Path(tmpdir)):
                 archives = svc.list_archives()
                 assert archives == []
 
@@ -197,11 +198,172 @@ class TestArchivalService:
         with tempfile.TemporaryDirectory() as tmpdir:
             csvfile = Path(tmpdir) / "test_2026-04-01.csv"
             csvfile.write_text("a,b\n1,2\n")
-            with patch("agent.control.archival._ARCHIVE_DIR", Path(tmpdir)):
+            with patch("agent.control.archival._get_archive_dir", return_value=Path(tmpdir)):
                 archives = svc.list_archives()
                 assert len(archives) == 1
                 assert archives[0]["filename"] == "test_2026-04-01.csv"
                 assert archives[0]["size_bytes"] > 0
+
+
+# ─────────────────────────────────────────────
+# API route registration
+# ─────────────────────────────────────────────
+
+# ─────────────────────────────────────────────
+# Handler-level tests (actually invoke handlers)
+# ─────────────────────────────────────────────
+
+def _mock_request(*, headers: dict | None = None, query: dict | None = None, match_info: dict | None = None):
+    """Build a mock aiohttp.web.Request."""
+    req = MagicMock()
+    req.headers = headers or {}
+    req.query = query or {}
+    req.match_info = match_info or {}
+    req.remote = "127.0.0.1"
+    return req
+
+
+class TestReportEndpointWiring:
+    """Catch the broken wiring that shallow tests missed."""
+
+    @pytest.mark.asyncio
+    async def test_report_requires_reporting_attr(self):
+        """Without agent.reporting, endpoint must return 503."""
+        api = _make_api()
+        # Remove the 'reporting' attribute to simulate missing wiring
+        del api._agent.reporting
+        req = _mock_request(headers={"Authorization": "Bearer test-key-123"})
+        resp = await api._handle_operator_report(req)
+        assert resp.status == 503
+
+    @pytest.mark.asyncio
+    async def test_report_with_valid_agent_calls_reporting(self):
+        """With agent.reporting, endpoint delegates to get_report()."""
+        api = _make_api()
+        api._agent.reporting.get_report.return_value = {"summary": {}, "inbox": []}
+        req = _mock_request(headers={"Authorization": "Bearer test-key-123"})
+        resp = await api._handle_operator_report(req)
+        assert resp.status == 200
+        api._agent.reporting.get_report.assert_called_once_with(limit=20)
+
+    @pytest.mark.asyncio
+    async def test_report_rejects_auth_failure(self):
+        api = _make_api()
+        req = _mock_request(headers={})
+        resp = await api._handle_operator_report(req)
+        assert resp.status == 401
+
+
+class TestQueryParamValidation:
+    """Operator API must return structured 400, never 500, for bad params."""
+
+    @pytest.mark.asyncio
+    async def test_jobs_invalid_limit(self):
+        api = _make_api()
+        api._agent.control_plane.list_product_jobs.return_value = []
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            query={"limit": "not_a_number"},
+        )
+        resp = await api._handle_operator_jobs(req)
+        assert resp.status == 400
+
+    @pytest.mark.asyncio
+    async def test_telemetry_invalid_window(self):
+        api = _make_api()
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            query={"window_hours": "abc"},
+        )
+        resp = await api._handle_operator_telemetry(req)
+        assert resp.status == 400
+
+    @pytest.mark.asyncio
+    async def test_margin_invalid_limit(self):
+        api = _make_api()
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            query={"limit": ""},
+        )
+        resp = await api._handle_operator_margin(req)
+        assert resp.status == 400
+
+    @pytest.mark.asyncio
+    async def test_audit_invalid_limit(self):
+        api = _make_api()
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            query={"limit": "xyz"},
+        )
+        resp = await api._handle_operator_audit(req)
+        assert resp.status == 400
+
+    @pytest.mark.asyncio
+    async def test_report_invalid_limit(self):
+        api = _make_api()
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            query={"limit": "bad"},
+        )
+        resp = await api._handle_operator_report(req)
+        assert resp.status == 400
+
+    @pytest.mark.asyncio
+    async def test_jobs_valid_params_work(self):
+        api = _make_api()
+        api._agent.control_plane.list_product_jobs.return_value = []
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            query={"limit": "10", "kind": "review", "status": "completed"},
+        )
+        resp = await api._handle_operator_jobs(req)
+        assert resp.status == 200
+
+
+class TestJobDetailEndpoint:
+
+    @pytest.mark.asyncio
+    async def test_job_not_found_returns_404(self):
+        api = _make_api()
+        api._agent.control_plane.get_product_job.return_value = None
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            match_info={"job_id": "nonexistent"},
+        )
+        resp = await api._handle_operator_job_detail(req)
+        assert resp.status == 404
+
+    @pytest.mark.asyncio
+    async def test_job_found_returns_200(self):
+        api = _make_api()
+        mock_job = MagicMock()
+        mock_job.to_dict.return_value = {"job_id": "abc", "status": "completed"}
+        api._agent.control_plane.get_product_job.return_value = mock_job
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            match_info={"job_id": "abc"},
+        )
+        resp = await api._handle_operator_job_detail(req)
+        assert resp.status == 200
+
+
+class TestArchiveEndpointSecurity:
+    """Archive API must not leak host paths."""
+
+    @pytest.mark.asyncio
+    async def test_archive_list_returns_filenames_not_paths(self):
+        api = _make_api()
+        api._agent.control_plane._storage = MagicMock()
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            query={"action": "list"},
+        )
+        with patch("agent.control.archival._get_archive_dir") as mock_dir:
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmpdir:
+                mock_dir.return_value = Path(tmpdir)
+                resp = await api._handle_operator_archive(req)
+                assert resp.status == 200
 
 
 # ─────────────────────────────────────────────

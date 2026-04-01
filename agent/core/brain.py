@@ -261,28 +261,42 @@ class AgentBrain:
         if len(chat_conv) > self._max_conversation:
             chat_conv.pop(0)
 
-        # ── Layer 4.5: Memory retrieval — inject relevant stored facts ──
+        # ── Layer 4.5: Memory retrieval — inject relevant stored memories ──
+        # Only inject memories that are epistemically trustworthy:
+        #   provenance: OBSERVED, USER_ASSERTED, VERIFIED (NOT inferred/stale)
+        #   kind: FACT, PROCEDURE (NOT belief/claim)
+        # No blind fallback to latest memories — only keyword-matched results.
         memory_context = ""
         try:
-            from agent.memory.store import MemoryType
+            from agent.memory.store import MemoryKind, MemoryType, ProvenanceStatus
+
+            _TRUSTED_PROVENANCE = {
+                ProvenanceStatus.OBSERVED,
+                ProvenanceStatus.USER_ASSERTED,
+                ProvenanceStatus.VERIFIED,
+            }
+            _TRUSTED_KINDS = {MemoryKind.FACT, MemoryKind.PROCEDURE}
 
             keywords = [w for w in text.split() if len(w) > 3][:3]
             memory_results = []
             for kw in keywords:
                 results = await self._agent.memory.query(
-                    keyword=kw, memory_type=MemoryType.SEMANTIC, limit=3,
+                    keyword=kw, memory_type=MemoryType.SEMANTIC, limit=5,
                 )
                 for entry in results:
+                    if entry.provenance not in _TRUSTED_PROVENANCE:
+                        continue
+                    if entry.kind not in _TRUSTED_KINDS:
+                        continue
                     if entry.content not in [m.content for m in memory_results]:
                         memory_results.append(entry)
-            if not memory_results:
-                # Fallback: get recent semantic memories
-                memory_results = await self._agent.memory.query(
-                    memory_type=MemoryType.SEMANTIC, limit=5,
-                )
+            # No fallback to unrelated latest memories — if nothing matched, inject nothing.
             if memory_results:
-                facts = [m.content[:150] for m in memory_results[:5]]
-                memory_context = "Known facts from memory:\n" + "\n".join(f"- {f}" for f in facts)
+                lines = []
+                for m in memory_results[:5]:
+                    prov = m.provenance.value if hasattr(m.provenance, "value") else str(m.provenance)
+                    lines.append(f"- [{prov}] {m.content[:150]}")
+                memory_context = "Stored memories (may be outdated — verify before stating as current fact):\n" + "\n".join(lines)
         except Exception:
             pass
 

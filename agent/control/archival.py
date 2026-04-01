@@ -26,7 +26,10 @@ from agent.core.paths import get_project_root
 
 logger = structlog.get_logger(__name__)
 
-_ARCHIVE_DIR = Path(get_project_root()) / "agent" / "archive"
+
+def _get_archive_dir() -> Path:
+    """Resolve archive directory inside the data area (not repo source tree)."""
+    return Path(get_project_root()) / "data" / "archive"
 
 # Tables eligible for archival with their date column
 _ARCHIVABLE_TABLES: dict[str, str] = {
@@ -106,10 +109,11 @@ class ArchivalService:
                     seen.add(k)
 
         # Write CSV
-        _ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+        archive_dir = _get_archive_dir()
+        archive_dir.mkdir(parents=True, exist_ok=True)
         date_str = datetime.now(UTC).strftime("%Y-%m-%d")
         filename = f"{table_name}_{date_str}.csv"
-        filepath = _ARCHIVE_DIR / filename
+        filepath = archive_dir / filename
 
         buf = io.StringIO()
         writer = csv.DictWriter(buf, fieldnames=all_keys, extrasaction="ignore")
@@ -122,16 +126,18 @@ class ArchivalService:
             "archival_exported",
             table=table_name,
             rows=len(flat_records),
-            path=str(filepath),
+            filename=filename,
         )
-        return str(filepath)
+        # Return only the filename — never expose host filesystem paths in API responses
+        return filename
 
     def list_archives(self) -> list[dict[str, Any]]:
         """List all existing archive files."""
-        if not _ARCHIVE_DIR.exists():
+        archive_dir = _get_archive_dir()
+        if not archive_dir.exists():
             return []
         archives = []
-        for f in sorted(_ARCHIVE_DIR.glob("*.csv")):
+        for f in sorted(archive_dir.glob("*.csv")):
             stat = f.stat()
             archives.append({
                 "filename": f.name,
