@@ -1357,7 +1357,7 @@ class TelegramHandler:
                 lines.append("\n*By policy:*")
                 for pid, count in sorted(by_policy.items()):
                     lines.append(f"  {pid}: {count}")
-            storage_stats = self._agent.control_plane._storage.get_stats()
+            storage_stats = self._agent.control_plane.get_stats()
             lines.append("\n*Table sizes:*")
             for table, count in sorted(storage_stats.items()):
                 lines.append(f"  {table}: {count}")

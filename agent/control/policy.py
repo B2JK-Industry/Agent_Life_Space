@@ -1819,6 +1819,10 @@ def evaluate_runtime_action(action: RuntimeActionRequest) -> RuntimePolicyDecisi
         resolved = gw_policy
         metadata = {"policy_id": gw_policy.id, "target_kind": action.target_kind}
 
+    else:
+        blocking.append(f"unknown_action:{action.action_type}")
+        warnings.append(f"Unknown action_type '{action.action_type}'")
+
     # Budget check (applies to all action types if cost is specified)
     if action.estimated_cost_usd > 0:
         budget_policy_id = action.policy_overrides.get(
