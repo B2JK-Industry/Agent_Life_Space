@@ -265,3 +265,76 @@ class TestPaymentSettlementService:
         result = await svc.execute_topup(sr.settlement_id)
         assert result["ok"] is False
         assert sr.status == "failed"
+
+
+# ─────────────────────────────────────────────
+# v1.29.0 — Persistence and workflow tests
+# ─────────────────────────────────────────────
+
+class TestSettlementPersistence:
+
+    def test_from_dict_roundtrip(self):
+        from agent.control.settlement import PaymentRequired, SettlementRequest
+        orig = SettlementRequest(
+            payment=PaymentRequired(provider_id="obolos", amount_required=25.0),
+            wallet_balance=10.0,
+            topup_amount=15.0,
+            original_request={"provider_id": "obolos", "capability_id": "test"},
+        )
+        data = orig.to_dict()
+        restored = SettlementRequest.from_dict(data)
+        assert restored.settlement_id == orig.settlement_id
+        assert restored.payment.provider_id == "obolos"
+        assert restored.payment.amount_required == 25.0
+        assert restored.topup_amount == 15.0
+        assert restored.original_request["capability_id"] == "test"
+
+    def test_list_settlements_by_status(self):
+        from agent.control.settlement import PaymentRequired, PaymentSettlementService
+        svc = PaymentSettlementService()
+        p1 = PaymentRequired(amount_required=5.0)
+        p2 = PaymentRequired(amount_required=10.0)
+        svc.create_settlement_request(p1)
+        sr2 = svc.create_settlement_request(p2)
+        svc.deny_settlement(sr2.settlement_id)
+        assert len(svc.list_settlements()) == 2
+        assert len(svc.list_settlements(status="pending")) == 1
+        assert len(svc.list_settlements(status="denied")) == 1
+
+    def test_original_request_stored(self):
+        from agent.control.settlement import PaymentRequired, PaymentSettlementService
+        svc = PaymentSettlementService()
+        payment = PaymentRequired(amount_required=5.0)
+        sr = svc.create_settlement_request(
+            payment,
+            original_request={"provider_id": "obolos", "capability_id": "catalog_v1"},
+        )
+        assert sr.original_request["capability_id"] == "catalog_v1"
+
+    @pytest.mark.asyncio
+    async def test_execute_topup_includes_retry(self):
+        from agent.control.settlement import PaymentRequired, PaymentSettlementService
+        gateway = MagicMock()
+        # First call: topup succeeds. Second call: retry succeeds.
+        gateway.call_api_via_capability = AsyncMock(side_effect=[
+            {"ok": True, "response": {"new_balance": 50.0}},
+            {"ok": True, "response": {"data": "catalog_result"}},
+        ])
+        svc = PaymentSettlementService(gateway=gateway)
+        payment = PaymentRequired(amount_required=10.0, provider_id="obolos")
+        sr = svc.create_settlement_request(
+            payment,
+            original_request={"provider_id": "obolos", "capability_id": "catalog_v1", "request_data": {}},
+        )
+        svc.approve_settlement(sr.settlement_id)
+        result = await svc.execute_topup(sr.settlement_id)
+        assert result["ok"] is True
+        assert result["retry"]["retried"] is True
+        assert result["retry"]["ok"] is True
+
+    def test_dashboard_contains_settlements_section(self):
+        from agent.social.dashboard import render_dashboard_html
+        html = render_dashboard_html()
+        assert "settlements-card" in html
+        assert "settlementAction" in html
+        assert "Settlements" in html

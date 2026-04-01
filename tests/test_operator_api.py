@@ -15,7 +15,7 @@ import csv
 import io
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -409,6 +409,60 @@ class TestArchiveDownloadEndpoint:
                 mock_dir.return_value = Path(tmpdir)
                 resp = await api._handle_operator_archive_download(req)
                 assert resp.status == 404
+
+
+class TestSettlementActionEndpoint:
+
+    @pytest.mark.asyncio
+    async def test_approve_via_api(self):
+        api = _make_api()
+        mock_result = MagicMock()
+        mock_result.to_dict.return_value = {"settlement_id": "s1", "status": "approved"}
+        api._agent.settlement.approve_settlement.return_value = mock_result
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            match_info={"settlement_id": "s1", "action": "approve"},
+        )
+        req.json = AsyncMock(return_value={"note": "ok"})
+        resp = await api._handle_operator_settlement_action(req)
+        assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_deny_via_api(self):
+        api = _make_api()
+        mock_result = MagicMock()
+        mock_result.to_dict.return_value = {"settlement_id": "s1", "status": "denied"}
+        api._agent.settlement.deny_settlement.return_value = mock_result
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            match_info={"settlement_id": "s1", "action": "deny"},
+        )
+        req.json = AsyncMock(return_value={})
+        resp = await api._handle_operator_settlement_action(req)
+        assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_invalid_action(self):
+        api = _make_api()
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            match_info={"settlement_id": "s1", "action": "invalid"},
+        )
+        req.json = AsyncMock(return_value={})
+        resp = await api._handle_operator_settlement_action(req)
+        assert resp.status == 400
+
+    @pytest.mark.asyncio
+    async def test_approve_not_found(self):
+        api = _make_api()
+        api._agent.settlement.approve_settlement.return_value = None
+        req = _mock_request(
+            headers={"Authorization": "Bearer test-key-123"},
+            match_info={"settlement_id": "nonexistent", "action": "approve"},
+        )
+        req.json = AsyncMock(return_value={})
+        resp = await api._handle_operator_settlement_action(req)
+        assert resp.status == 404
 
 
 class TestSettlementEndpoint:

@@ -70,6 +70,8 @@ class SettlementRequest:
     operator_note: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     resolved_at: str = ""
+    # Original request context for retry after successful topup
+    original_request: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -83,7 +85,37 @@ class SettlementRequest:
             "operator_note": self.operator_note,
             "created_at": self.created_at,
             "resolved_at": self.resolved_at,
+            "original_request": self.original_request,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SettlementRequest:
+        payment_data = data.get("payment", {})
+        return cls(
+            settlement_id=data.get("settlement_id", ""),
+            payment=PaymentRequired(
+                request_id=payment_data.get("request_id", ""),
+                provider_id=payment_data.get("provider_id", ""),
+                capability_id=payment_data.get("capability_id", ""),
+                target_url=payment_data.get("target_url", ""),
+                amount_required=float(payment_data.get("amount_required", 0.0)),
+                currency=payment_data.get("currency", "USD"),
+                payment_url=payment_data.get("payment_url", ""),
+                payment_address=payment_data.get("payment_address", ""),
+                retry_after_seconds=int(payment_data.get("retry_after_seconds", 0)),
+                raw_metadata=dict(payment_data.get("raw_metadata", {})),
+                created_at=payment_data.get("created_at", ""),
+            ),
+            wallet_balance=float(data.get("wallet_balance", 0.0)),
+            wallet_currency=data.get("wallet_currency", "credits"),
+            sufficient_balance=bool(data.get("sufficient_balance", False)),
+            topup_amount=float(data.get("topup_amount", 0.0)),
+            status=data.get("status", "pending"),
+            operator_note=data.get("operator_note", ""),
+            created_at=data.get("created_at", ""),
+            resolved_at=data.get("resolved_at", ""),
+            original_request=dict(data.get("original_request", {})),
+        )
 
 
 # ─────────────────────────────────────────────
@@ -107,7 +139,32 @@ class PaymentSettlementService:
     def __init__(self, gateway: Any = None, control_plane: Any = None) -> None:
         self._gateway = gateway
         self._control_plane = control_plane
-        self._pending: dict[str, SettlementRequest] = {}
+        self._requests: dict[str, SettlementRequest] = {}
+        self._load_from_storage()
+
+    def _load_from_storage(self) -> None:
+        """Load persisted settlement requests from SQLite on startup."""
+        if not self._control_plane:
+            return
+        try:
+            storage = self._control_plane._storage
+            rows = storage.list_settlement_requests(limit=200)
+            for data in rows:
+                sr = SettlementRequest.from_dict(data)
+                self._requests[sr.settlement_id] = sr
+            if rows:
+                logger.info("settlements_loaded", count=len(rows))
+        except Exception:
+            logger.exception("settlements_load_error")
+
+    def _persist(self, request: SettlementRequest) -> None:
+        """Persist a single settlement request to SQLite."""
+        if not self._control_plane:
+            return
+        try:
+            self._control_plane._storage.save_settlement_request(request)
+        except Exception:
+            logger.exception("settlement_persist_error", settlement_id=request.settlement_id)
 
     def parse_402_denial(self, denial: dict[str, Any]) -> PaymentRequired | None:
         """Extract PaymentRequired from a gateway denial with code 'external_api_payment_required'."""
@@ -115,7 +172,7 @@ class PaymentSettlementService:
             return None
 
         meta = denial.get("metadata", {})
-        payment_meta = meta.get("payment_metadata", {})
+        payment_meta = meta.get("payment_metadata") or meta.get("payment", {})
 
         # Extract amount from various provider formats
         amount = 0.0
@@ -177,6 +234,7 @@ class PaymentSettlementService:
         payment: PaymentRequired,
         wallet_balance: float = 0.0,
         wallet_currency: str = "credits",
+        original_request: dict[str, Any] | None = None,
     ) -> SettlementRequest:
         """Create a settlement request for operator approval."""
         sufficient = wallet_balance >= payment.amount_required
@@ -188,8 +246,10 @@ class PaymentSettlementService:
             wallet_currency=wallet_currency,
             sufficient_balance=sufficient,
             topup_amount=topup_needed if not sufficient else 0.0,
+            original_request=dict(original_request) if original_request else {},
         )
-        self._pending[request.settlement_id] = request
+        self._requests[request.settlement_id] = request
+        self._persist(request)
 
         # Record trace if control plane available
         if self._control_plane:
@@ -221,21 +281,29 @@ class PaymentSettlementService:
 
     def get_pending_settlements(self) -> list[SettlementRequest]:
         """Get all pending settlement requests."""
-        return [s for s in self._pending.values() if s.status == "pending"]
+        return [s for s in self._requests.values() if s.status == "pending"]
 
     def get_settlement(self, settlement_id: str) -> SettlementRequest | None:
-        return self._pending.get(settlement_id)
+        return self._requests.get(settlement_id)
+
+    def list_settlements(self, *, status: str = "") -> list[SettlementRequest]:
+        """List all settlement requests, optionally filtered by status."""
+        requests = list(self._requests.values())
+        if status:
+            requests = [s for s in requests if s.status == status]
+        return sorted(requests, key=lambda s: s.created_at, reverse=True)
 
     def approve_settlement(
         self, settlement_id: str, *, note: str = "",
     ) -> SettlementRequest | None:
         """Operator approves a settlement request."""
-        request = self._pending.get(settlement_id)
+        request = self._requests.get(settlement_id)
         if not request or request.status != "pending":
             return None
         request.status = "approved"
         request.operator_note = note
         request.resolved_at = datetime.now(UTC).isoformat()
+        self._persist(request)
         logger.info("settlement_approved", settlement_id=settlement_id)
         return request
 
@@ -243,12 +311,13 @@ class PaymentSettlementService:
         self, settlement_id: str, *, note: str = "",
     ) -> SettlementRequest | None:
         """Operator denies a settlement request."""
-        request = self._pending.get(settlement_id)
+        request = self._requests.get(settlement_id)
         if not request or request.status != "pending":
             return None
         request.status = "denied"
         request.operator_note = note
         request.resolved_at = datetime.now(UTC).isoformat()
+        self._persist(request)
         logger.info("settlement_denied", settlement_id=settlement_id)
         return request
 
@@ -262,7 +331,7 @@ class PaymentSettlementService:
 
         Only works if settlement status is 'approved'. Requires gateway.
         """
-        request = self._pending.get(settlement_id)
+        request = self._requests.get(settlement_id)
         if not request:
             return {"ok": False, "error": "Settlement not found"}
         if request.status != "approved":
@@ -280,18 +349,55 @@ class PaymentSettlementService:
             )
             if result.get("ok"):
                 request.status = "executed"
+                self._persist(request)
                 logger.info(
                     "settlement_topup_executed",
                     settlement_id=settlement_id,
                     amount=amount,
                 )
-                return {"ok": True, "amount": amount, "result": result.get("response", {})}
+                # Attempt retry of original request if stored
+                retry_result = await self._retry_original(request, provider_id)
+                return {
+                    "ok": True,
+                    "amount": amount,
+                    "result": result.get("response", {}),
+                    "retry": retry_result,
+                }
             else:
                 request.status = "failed"
+                self._persist(request)
                 error = result.get("error", "Topup failed")
                 logger.error("settlement_topup_failed", settlement_id=settlement_id, error=error)
                 return {"ok": False, "error": error}
         except Exception as e:
             request.status = "failed"
+            self._persist(request)
             logger.error("settlement_topup_error", settlement_id=settlement_id, error=str(e))
             return {"ok": False, "error": str(e)}
+
+    async def _retry_original(
+        self,
+        request: SettlementRequest,
+        provider_id: str,
+    ) -> dict[str, Any]:
+        """Retry the original API call that triggered the 402, after successful topup."""
+        orig = request.original_request
+        if not orig or not self._gateway:
+            return {"retried": False, "reason": "No original request context or gateway"}
+
+        try:
+            result = await self._gateway.call_api_via_capability(
+                provider_id=orig.get("provider_id", provider_id),
+                capability_id=orig.get("capability_id", ""),
+                request_data=orig.get("request_data", {}),
+                requester=f"settlement_retry:{request.settlement_id}",
+            )
+            logger.info(
+                "settlement_retry_completed",
+                settlement_id=request.settlement_id,
+                ok=result.get("ok", False),
+            )
+            return {"retried": True, "ok": result.get("ok", False), "result": result}
+        except Exception as e:
+            logger.error("settlement_retry_error", settlement_id=request.settlement_id, error=str(e))
+            return {"retried": True, "ok": False, "error": str(e)}

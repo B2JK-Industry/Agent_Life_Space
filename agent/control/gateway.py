@@ -41,6 +41,7 @@ class ExternalGatewayService:
         monotonic: Any = None,
         environment: dict[str, str] | None = None,
         secret_lookup: Any = None,
+        on_payment_required: Any = None,
     ) -> None:
         self._control_plane_state = control_plane_state
         self._approval_queue = approval_queue
@@ -49,6 +50,7 @@ class ExternalGatewayService:
         self._environment = environment or {}
         self._secret_lookup = secret_lookup
         self._rate_limit_hits: dict[tuple[str, str], list[float]] = {}
+        self._on_payment_required = on_payment_required  # callback(denial_dict, request_context)
 
     async def send_delivery(
         self,
@@ -1561,7 +1563,7 @@ class ExternalGatewayService:
                 response_headers=response_headers,
                 response_json=dict(result.get("response_json", {})),
             )
-            return make_denial(
+            denial = make_denial(
                 code="external_api_payment_required",
                 summary="External API call requires payment or credits",
                 detail=(
@@ -1583,6 +1585,20 @@ class ExternalGatewayService:
                     "payment": payment_metadata,
                 },
             )
+            # Notify settlement service if callback registered
+            if self._on_payment_required and callable(self._on_payment_required):
+                try:
+                    self._on_payment_required(
+                        denial.to_dict(),
+                        {
+                            "provider_id": provider_id,
+                            "capability_id": capability_id,
+                            "request_data": dict(request_spec.get("body", {})),
+                        },
+                    )
+                except Exception:
+                    pass  # settlement hook failure must not break gateway
+            return denial
         return make_denial(
             code="external_api_call_failed",
             summary="External API call failed",
