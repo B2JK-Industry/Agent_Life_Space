@@ -22,8 +22,12 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 _DEFAULT_TTL = 3600  # 1 hour
-_DEFAULT_THRESHOLD = 0.90  # cosine similarity for cache hit
+_DEFAULT_THRESHOLD = 0.95  # cosine similarity for cache hit (raised from 0.90 to reduce false matches)
 _MAX_CACHE_SIZE = 200
+# Queries shorter than this are too ambiguous for semantic matching
+_MIN_QUERY_LENGTH = 12
+# Max length ratio between query and cached query (prevents "hi" matching "what is X")
+_MAX_LENGTH_RATIO = 3.0
 
 
 @dataclass
@@ -70,6 +74,17 @@ class SemanticCache:
         Check if we have a cached response for a similar query.
         Returns cached response or None.
         """
+        # Skip very short queries — too ambiguous for semantic matching
+        if len(query.strip()) < _MIN_QUERY_LENGTH:
+            self._misses += 1
+            return None
+
+        # Skip command-like queries (/, zapamätaj, remember, etc.)
+        stripped = query.strip().lower()
+        if stripped.startswith("/") or stripped.startswith("zapam") or stripped.startswith("remember"):
+            self._misses += 1
+            return None
+
         model = self._get_model()
         if model is None:
             return None
@@ -88,6 +103,13 @@ class SemanticCache:
         best_entry: CacheEntry | None = None
 
         for entry in self._entries:
+            # Length ratio guard: skip if queries are wildly different lengths
+            q_len = max(len(query), 1)
+            c_len = max(len(entry.query_text), 1)
+            ratio = max(q_len, c_len) / min(q_len, c_len)
+            if ratio > _MAX_LENGTH_RATIO:
+                continue
+
             dot = np.dot(query_emb, entry.query_embedding)
             norm = np.linalg.norm(query_emb) * np.linalg.norm(entry.query_embedding)
             if norm > 0:
@@ -113,12 +135,16 @@ class SemanticCache:
 
     def store(self, query: str, response: str) -> None:
         """Store a query-response pair in cache."""
-        model = self._get_model()
-        if model is None:
+        # Don't cache very short queries, commands, or error responses
+        if len(query.strip()) < _MIN_QUERY_LENGTH:
+            return
+        if query.strip().startswith("/"):
+            return
+        if len(response) < 10 or "chyba" in response.lower():
             return
 
-        # Don't cache very short or error responses
-        if len(response) < 10 or "chyba" in response.lower():
+        model = self._get_model()
+        if model is None:
             return
 
         query_emb = model.encode([query], convert_to_numpy=True)[0]

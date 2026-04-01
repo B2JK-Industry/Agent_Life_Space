@@ -23,6 +23,31 @@ class PipelineOrchestrator:
     def __init__(self, agent: Any = None) -> None:
         self._agent = agent
         self._pipelines: dict[str, JobPipeline] = {}
+        self._load_from_storage()
+
+    def _load_from_storage(self) -> None:
+        """Load persisted pipelines from SQLite on startup."""
+        if not self._agent or not hasattr(self._agent, "control_plane"):
+            return
+        try:
+            storage = self._agent.control_plane._storage
+            rows = storage.list_job_pipelines(limit=200)
+            for data in rows:
+                pl = JobPipeline.from_dict(data)
+                self._pipelines[pl.pipeline_id] = pl
+            if rows:
+                logger.info("pipelines_loaded", count=len(rows))
+        except Exception:
+            logger.exception("pipelines_load_error")
+
+    def _persist(self, pipeline: JobPipeline) -> None:
+        """Persist a single pipeline to SQLite."""
+        if not self._agent or not hasattr(self._agent, "control_plane"):
+            return
+        try:
+            self._agent.control_plane._storage.save_job_pipeline(pipeline)
+        except Exception:
+            logger.exception("pipeline_persist_error", pipeline_id=pipeline.pipeline_id)
 
     def create_pipeline(
         self,
@@ -58,6 +83,7 @@ class PipelineOrchestrator:
             metadata=metadata or {},
         )
         self._pipelines[pipeline.pipeline_id] = pipeline
+        self._persist(pipeline)
         logger.info(
             "pipeline_created",
             pipeline_id=pipeline.pipeline_id,
@@ -131,6 +157,7 @@ class PipelineOrchestrator:
         all_completed = all(s.status in ("completed", "skipped") for s in pipeline.stages)
         pipeline.status = "completed" if all_completed else "failed"
 
+        self._persist(pipeline)
         logger.info(
             "pipeline_completed",
             pipeline_id=pipeline_id,

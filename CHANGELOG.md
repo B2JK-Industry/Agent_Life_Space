@@ -10,6 +10,21 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.25.1] — 2026-04-01
+
+Production hardening: rate limits, telemetry auto-recording, persistence, cache accuracy.
+
+### Fixed
+- **API rate limit**: localhost/terminal gets 60 req/min (was 10), external stays at 10/min
+- **Semantic cache false matches**: raised similarity threshold 0.90→0.95, added
+  length-ratio guard (3x max), skip short queries (<12 chars) and commands (/...)
+
+### Added
+- **Telemetry auto-recording**: cron records runtime telemetry snapshot every hour
+- **Workflow SQLite persistence**: RecurringWorkflows survive agent restart
+- **Pipeline SQLite persistence**: JobPipelines survive agent restart
+- New `recurring_workflows` and `job_pipelines` tables in control.db
+
 ## [1.25.0] — 2026-03-31
 
 Phase 3 operatorization closure: recurring workflows, pipelines, margin tracking.
