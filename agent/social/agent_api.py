@@ -222,6 +222,7 @@ class AgentAPI:
 
         # Auth check
         auth_error = self._check_auth(request)
+        is_authenticated = not auth_error
         if auth_error:
             self._audit.record(ApiAuditEntry(
                 ip=ip, status_code=401, error=auth_error,
@@ -334,10 +335,14 @@ class AgentAPI:
                     from agent.core.models import classify_task
                     task_type = classify_task(text)
                     api_timeout = 300 if task_type == "programming" else 90
+                    # Authenticated API callers get terminal-level trust
+                    # (same as owner in private Telegram chat)
+                    channel = "terminal" if is_authenticated else "agent_api"
                     response = await _aio.wait_for(
                         self._handler(
                             text, 0, 0,
-                            username=sender, chat_type="agent_api",
+                            username=sender, chat_type=channel,
+                            is_owner=is_authenticated,
                         ),
                         timeout=api_timeout,
                     )
