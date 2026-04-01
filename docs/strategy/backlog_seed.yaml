@@ -1,12 +1,12 @@
-version: 9
+version: 10
 source_of_truth: docs/strategy/MASTER_SOURCE_OF_TRUTH.md
 seed_note: >
   Machine-friendly backlog seed aligned to current main. Mirrors
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after the documented buyer-side Obolos API-call slice."
-  interpretation_date: "2026-03-31"
+  assessed_state_note: "Snapshot after the merged Phase 4 closure and v1.28.1 post-merge baseline."
+  interpretation_date: "2026-04-01"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
     T2: { status: complete_for_phase, approx_progress: 96 }
@@ -16,8 +16,23 @@ progress_snapshot:
     T6: { status: complete_for_phase, approx_progress: 99 }
     T7: { status: complete_for_phase, approx_progress: 99 }
     T8: { status: in_progress, approx_progress: 99 }
-next_execution_backlog: []
-  # Phase 3 backlog is fully closed. All P0-P2 items delivered.
+next_execution_backlog:
+  - priority: P0
+    story_id: T4-E3-S5
+    title: "Add active settlement workflow across API, Telegram, and dashboard"
+    why_now: "Settlement is now surfaced through orchestrator, API, and Telegram, but it is still a partial operator workflow instead of an end-to-end active control loop."
+  - priority: P0
+    story_id: T7-E2-S7
+    title: "Persist settlement requests and recovery state"
+    why_now: "Pending settlement state is still in-memory only, making restart recovery the biggest remaining production gap in the payment-resolution path."
+  - priority: P1
+    story_id: T7-E2-S8
+    title: "Add approval-backed payment resolution and retry loop"
+    why_now: "The gateway already parses payment-required metadata and settlement can approve or deny manually, so the next high-leverage step is to close the 402-to-retry operator loop."
+  - priority: P1
+    story_id: T4-E4-S6
+    title: "Bring settlement control to parity across Telegram and the broader operator workflow"
+    why_now: "Telegram already exposes settlement listing plus approve or deny, but the rest of the operator workflow still lacks that same active control path."
 themes:
   - id: T1
     name: Platform Foundation
@@ -56,7 +71,7 @@ themes:
           - id: T1-E1-S5
             name: Reconcile coexistence rules between ReviewJob, JobRunner, Task, and AgentLoop
             status: complete_for_phase
-            current_state: RuntimeModelService now makes the coexistence rules explicit: BuildJob/ReviewJob are canonical product jobs, Task remains planning state, JobRunner remains infrastructure execution, and AgentLoop remains an ephemeral conversational queue.
+            current_state: "RuntimeModelService now makes the coexistence rules explicit: BuildJob/ReviewJob are canonical product jobs, Task remains planning state, JobRunner remains infrastructure execution, and AgentLoop remains an ephemeral conversational queue."
             missing: Rules are explicit, but not yet enforced through stronger invariants or migrations.
 
       - id: T1-E2
@@ -299,9 +314,9 @@ themes:
     name: Operator Product
     goal: Coordinate end-to-end work and delivery.
     status: in_progress
-    approx_progress: 98
-    current_state: Unified intake routing, phase-aware JobPlan preview and submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, workspace joins, richer operator report service, internal and client-safe evidence export, shared build and review delivery lifecycle, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware operator reporting, release-readiness traces, execution-policy-enriched planner phases, and Telegram operator surface with /report, /intake, /build, /jobs, and /deliver commands now exist alongside CI typecheck.
-    main_gap: No live backend/UI and no richer active provider-specific operator workflow yet.
+    approx_progress: 99
+    current_state: Unified intake routing, phase-aware JobPlan preview and submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, pre-execution approval gating, workspace joins, richer operator report service, authenticated operator REST API, HTML dashboard, internal and client-safe evidence export, archive download, shared build and review delivery lifecycle, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware operator reporting, release-readiness traces, execution-policy-enriched planner phases, and Telegram operator surface with /report, /intake, /build, /jobs, /deliver, /telemetry, and /settlement commands now exist alongside CI typecheck.
+    main_gap: No richer interactive operator app yet, and settlement is still a partial workflow rather than a fully closed dashboard-driven operator loop.
     epics:
       - id: T4-E1
         name: Intake And Qualification
@@ -312,22 +327,22 @@ themes:
             name: Create intake model for repo paths, git URLs, diff ranges, and work type
             status: complete_for_phase
             current_state: agent/control/intake.py now defines a unified operator intake envelope for repo paths, git URLs, diff ranges, work type, build type, structured acceptance criteria, structured builder implementation plans, routing metadata, and managed acquisition hints for supported git sources.
-            missing: Live operator UI and broader remote-provider workflows remain outside the current phase.
+            missing: Richer interactive operator UI and broader remote-provider workflows remain outside the current phase.
           - id: T4-E1-S2
             name: Add qualification logic for scope, risk, and budget
             status: mostly_complete
             current_state: OperatorIntakeService.qualify() plus JobPlan creation now resolve scope size, scope signals, risk factors, and a policy-backed budget envelope using BudgetPolicy plus live finance budget state when available.
-            missing: Cost estimates are still deterministic heuristics, and there is no live operator UI.
+            missing: Cost estimates are still deterministic heuristics, and there is no richer interactive operator UI yet.
           - id: T4-E1-S3
             name: Add operator-facing intake summary and recommended plan
             status: complete_for_phase
             current_state: python -m agent --intake-* --intake-preview now returns qualification plus a structured JobPlan with acceptance-summary metadata, and preview/submit both persist a first-class plan record for later operator handoff through orchestrator and CLI list/get surfaces.
-            missing: No live operator UI yet.
+            missing: No richer interactive operator UI yet.
           - id: T4-E1-S4
             name: Reject unsupported work cleanly and honestly
             status: complete_for_phase
             current_state: Unified intake now rejects unsupported git inputs honestly, returns explicit blocked or awaiting_approval runtime states, and can acquire supported sources into a managed local mirror before routing runtime work.
-            missing: Broader remote acquisition behavior still depends on host/network policy and there is no live operator UI.
+            missing: Broader remote acquisition behavior still depends on host/network policy and there is no richer interactive operator UI yet.
       - id: T4-E2
         name: Job Planning And Routing
         status: in_progress
@@ -355,8 +370,8 @@ themes:
             missing: Trace coverage is still strongest for planning/build delivery, not yet the whole runtime.
       - id: T4-E3
         name: Delivery Workflow
-        status: mostly_complete
-        approx_progress: 96
+        status: in_progress
+        approx_progress: 97
         stories:
           - id: T4-E3-S1
             name: Define delivery package model
@@ -378,6 +393,11 @@ themes:
             status: complete_for_phase
             current_state: Build and review delivery now persist lifecycle state (prepared, awaiting_approval, approved, rejected, handed_off) plus explicit audit events for gateway request, success, and failure, and provider-specific outcomes now flow into delivery summaries, operator report summaries, inbox attention, and recent provider-delivery views.
             missing: Broader active operator workflow and live UI remain future scope.
+          - id: T4-E3-S5
+            name: Add active settlement workflow across API, Telegram, and dashboard
+            status: started
+            current_state: Settlement foundation now exists through the orchestrator, authenticated API, and Telegram /settlement command, so operators can already list and approve or deny pending requests outside the dashboard.
+            missing: No dashboard settlement UI/actions, no restart-safe settlement state, and no end-to-end retryable payment-resolution workflow yet.
       - id: T4-E4
         name: Operator Telegram Surface
         status: complete_for_phase
@@ -409,6 +429,11 @@ themes:
             status: complete_for_phase
             current_state: Delivery listing, detail, and gateway send accessible from Telegram.
             missing: Richer delivery approval flows and interactive send confirmation remain future scope.
+          - id: T4-E4-S6
+            name: "/settlement Telegram command"
+            status: started
+            current_state: Telegram now exposes /settlement, /settlement approve <id>, and /settlement deny <id> against the runtime settlement foundation.
+            missing: Settlement is still a partial operator workflow; there is no topup/retry orchestration, dashboard parity, or persisted recovery state yet.
 
   - id: T5
     name: Security, Governance, And Policy
@@ -526,7 +551,7 @@ themes:
             name: Surface cost and margin hints to the operator
             status: complete_for_phase
             current_state: Finance budget state now exposes warnings, hard/soft/stop-loss posture, single-transaction approval cap, and persisted product-job attention signals through the operator report and CLI.
-            missing: There is still no live operator UI.
+            missing: There is still no richer live operator UI.
       - id: T6-E2
         name: Runtime Observability
         status: in_progress
@@ -581,10 +606,10 @@ themes:
   - id: T7
     name: External Capability Gateway
     goal: Integrate external capability providers cleanly and safely.
-    status: in_progress
-    approx_progress: 95
-    current_state: Runtime model and policy layer now expose explicit gateway defaults plus separate handoff and API-call contracts, and the runtime now enforces approval-aware delivery sends plus owner-operated API calls with gateway traces, cost entries, a concrete obolos.tech provider catalog, readiness-aware routes, retained request or response snapshots, provider-specific request payload shaping, parsed provider receipts, provider outcome classification, provider-backed delivery fallback, and documented buyer-side marketplace access.
-    main_gap: Only one provider exists so far, and seller publishing, x402 payment flow, file-upload calls, and broader downstream provider workflow still remain future scope.
+    status: complete_for_phase
+    approx_progress: 99
+    current_state: Runtime model and policy layer now expose explicit gateway defaults plus separate handoff and API-call contracts, and the runtime now enforces approval-aware delivery sends plus owner-operated API calls with gateway traces, cost entries, a concrete obolos.tech provider catalog, readiness-aware routes, retained request or response snapshots, provider-specific request payload shaping, parsed provider receipts, provider outcome classification, provider-backed delivery fallback, documented buyer-side marketplace access, seller publishing, wallet topup, file-upload-safe calls, and a settlement foundation surfaced through orchestrator, API, and Telegram.
+    main_gap: Broader downstream provider workflow and persisted or automated settlement resolution still remain future scope.
     epics:
       - id: T7-E1
         name: Gateway Foundation
@@ -637,9 +662,24 @@ themes:
             missing: Additional providers and richer downstream error semantics remain future scope.
           - id: T7-E2-S5
             name: Add documented seller-side Obolos publishing and wallet-topup flow
-            status: not_started
-            current_state: Buyer-side catalog, wallet balance, and slug-based API calls now exist behind the gateway boundary, but seller registration, API publishing, and wallet top-up are not yet modeled.
-            missing: The documented seller flow and top-up helper remain future scope.
+            status: complete_for_phase
+            current_state: seller_publish_v1 capability with POST /api/seller/apis route and wallet_topup_v1 capability with POST /api/wallet/topup route now exist. Both use wallet auth, gateway request/response modes handle slug/api_id/status for publish and new_balance/transaction_id for topup, and both routes are registered in the provider catalog.
+            missing: File-upload-safe publishing and x402 payment flow remain future scope.
+          - id: T7-E2-S6
+            name: Add file-upload-safe and x402 payment-aware marketplace calls
+            status: complete_for_phase
+            current_state: Gateway HTTP layer now supports form_data for multipart/form-data requests, marketplace_upload_v1 exists for slug-based file upload APIs, and x402 payment metadata is parsed from Retry-After, x-payment-*, x-credits-*, x-price-*, and body fields into structured denial metadata.
+            missing: Real payment settlement flow and interactive wallet top-up before retry remain future scope.
+          - id: T7-E2-S7
+            name: Persist settlement requests and recovery state
+            status: started
+            current_state: Payment settlement requests can now be created from payment-required failures and surfaced through the orchestrator, API, and Telegram command surfaces.
+            missing: Pending settlement state is still in-memory only, so restart-safe recovery and durable settlement audit state remain open.
+          - id: T7-E2-S8
+            name: Add approval-backed payment resolution and retry loop
+            status: started
+            current_state: The gateway can parse x402/payment-required metadata and settlement service can already approve or deny manual top-up decisions.
+            missing: No explicit 402 → balance check → topup → retry flow exists yet, and no dashboard-driven retry loop is available to the operator.
 
   - id: T8
     name: Enterprise Hardening
@@ -656,16 +696,18 @@ themes:
         stories:
           - id: T8-E1-S1
             name: Define contracts between control plane, execution plane, verification, and delivery
-            status: started
+            status: in_progress
           - id: T8-E1-S2
             name: Remove hidden coupling and implicit shared state
-            status: started
+            status: in_progress
           - id: T8-E1-S3
             name: Add architecture invariants for contracts and boundaries
-            status: started
+            status: complete_for_phase
+            current_state: 22 enforcement tests now cover import graph boundaries, execution mode contracts, gateway boundary enforcement, cross-domain isolation, shared control-plane contracts, and multi-provider gateway contracts.
+            missing: CI enforcement is now available, but optional downstream release discipline still remains.
           - id: T8-E1-S4
             name: Make future service extraction obvious from module boundaries
-            status: started
+            status: in_progress
           - id: T8-E1-S5
             name: Remove duplicated reviewer flows and hidden channel-to-product coupling
             status: mostly_complete

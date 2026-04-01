@@ -6,11 +6,11 @@ This file tracks current strategic execution progress against:
 - the actual state of `main`
 
 Assessment basis:
-- branch: `main` (after the documented buyer-side Obolos API-call slice)
-- interpretation date: `2026-03-31`
+- branch: `main` (`v1.28.1`, post-merge closure baseline)
+- interpretation date: `2026-04-01`
 
-For open PR / local audit reality beyond `main`, see
-`AS_IS_TO_BE_2026_04_01.md`.
+For the archival narrative of the 2026-04-01 merge and post-merge closure
+event, see `AS_IS_TO_BE_2026_04_01.md`.
 
 Important:
 - this is a product-and-architecture progress snapshot, not a merge history log
@@ -239,10 +239,10 @@ Status legend:
 | T1 Platform Foundation | in_progress | 96% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted plan/trace/delivery records, first-class workspace joins, shared product-job persistence, retention-aware artifact records, explicit retention posture/prune flows, and explicit environment profiles exposed through the orchestrator and CLI. | No unified cross-domain action layer yet. |
 | T2 Reviewer Product | complete_for_phase | 96% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode, Telegram `/review`, structured API review entrypoint, shared delivery lifecycle, and reusable handoff summary artifacts now converge through the shared runtime. | LLM analysis and richer external delivery automation are v2 |
 | T3 Builder Product | complete_for_phase | 99% | Builder bounded context is tracked on `main`, capability-declared, resumable, orchestrator-wired, CLI-reachable, workspace-synced, repo-aware verification-discovering across Python/Node/Make/CI signals, source-aware execution-policy-gated, includes a bounded local implementation engine with copy/move-aware capability guardrails, implementation-backed acceptance criteria, release-readiness gating, and can hand approved build delivery bundles through the explicit external gateway boundary. | No general code generation and no semantic requirement engine yet |
-| T4 Operator Product | in_progress | 99% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, multi-step approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report service, operation-count-aware builder planning, acceptance-summary-aware planning, explicit gateway handoff actions, provider-outcome-aware delivery reporting with enriched provider detail/retry/filter/report, release-readiness traces, and Telegram operator surface with /report, /intake, /build, /jobs, /deliver, and /telemetry commands now exist. | No live backend/UI yet |
+| T4 Operator Product | in_progress | 99% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, multi-step approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report service, authenticated operator REST API, HTML dashboard, archival download, release-readiness traces, and Telegram operator surface with `/report`, `/intake`, `/build`, `/jobs`, `/deliver`, `/telemetry`, and `/settlement` now exist. | No richer interactive operator app yet; settlement is still foundation-level rather than a fully closed dashboard-driven workflow |
 | T5 Security, Governance, And Policy | in_progress | 99% | Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approval storage with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, capability-scoped builder guardrails, explicit gateway defaults, provider-aware gateway routing decisions, provider receipt validation, provider-outcome classification, release-readiness thresholds, and structured denial payloads now exist across build/review/tool/web/social/finance-facing blocked flows. | Build and broader runtime execution still do not run under one fully unified enforcement engine |
-| T6 Cost, Usage, And Observability | complete_for_phase | 99% | UsageSummary on jobs, a durable per-job control-plane cost ledger, persisted duration/retry/failure telemetry for product jobs, point-in-time `TelemetrySnapshot` records with job throughput/latency/cost/delivery health/system resources, time-window aggregation with trend detection, orchestrator-visible build/review counters, durable planning/delivery/gateway/release/telemetry traces, runtime budget enforcement, budget-aware escalation controls, operator-facing reporting with telemetry summaries, review-eval smoke checks, golden review cases in CI, runtime quality telemetry with release labels, duration, and prior-baseline trend deltas, plus a CLI/CI release-readiness gate and `/telemetry` Telegram command now exist. | No live operator UI or broader longitudinal dashboards yet |
-| T7 External Capability Gateway | complete_for_phase | 99% | Runtime model and policy layer now expose explicit gateway defaults, separate delivery and API-call gateway contracts, a concrete `obolos.tech` provider catalog with buyer-side (catalog, wallet, API call), seller-side (publish, topup), and file-upload (marketplace_upload_v1 with multipart/form-data) capability routes, multi-provider resolution with intelligent fallback, x402 payment metadata extraction (Retry-After, x-payment-* headers, body fields), capability-to-providers map in catalog, readiness-aware env/vault config resolution, provider-aware route metadata, provider-specific request payload shaping, parsed provider receipts, and persisted/ledgered external API calls with retained request/response artifacts. | Broader downstream provider workflow and real payment settlement remain future scope |
+| T6 Cost, Usage, And Observability | complete_for_phase | 99% | UsageSummary on jobs, a durable per-job control-plane cost ledger, persisted duration/retry/failure telemetry for product jobs, point-in-time `TelemetrySnapshot` records with job throughput/latency/cost/delivery health/system resources, time-window aggregation with trend detection, orchestrator-visible build/review counters, durable planning/delivery/gateway/release/telemetry traces, runtime budget enforcement, budget-aware escalation controls, operator-facing reporting with telemetry summaries, review-eval smoke checks, golden review cases in CI, runtime quality telemetry with release labels, duration, and prior-baseline trend deltas, plus a CLI/CI release-readiness gate and `/telemetry` Telegram command now exist. | No richer live operator UI or broader longitudinal dashboards yet |
+| T7 External Capability Gateway | complete_for_phase | 99% | Runtime model and policy layer now expose explicit gateway defaults, separate delivery and API-call gateway contracts, a concrete `obolos.tech` provider catalog with buyer-side (catalog, wallet, API call), seller-side (publish, topup), and file-upload (marketplace_upload_v1 with multipart/form-data) capability routes, multi-provider resolution with intelligent fallback, x402 payment metadata extraction (Retry-After, x-payment-* headers, body fields), capability-to-providers map in catalog, readiness-aware env/vault config resolution, provider-aware route metadata, provider-specific request payload shaping, parsed provider receipts, persisted/ledgered external API calls with retained request/response artifacts, and a settlement foundation surfaced through the orchestrator, API, and Telegram. | Broader downstream provider workflow plus persisted and automated settlement resolution remain future scope |
 | T8 Enterprise Hardening | in_progress | 99% | Shared control-plane layer, explicit runtime coexistence rules, review + build bounded contexts on shared primitives, persisted job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, deterministic review/build execution policy boundaries, explicit gateway runtime boundaries, provider configuration posture, enterprise-facing data-handling rules, and 22 architecture invariant enforcement tests (import graph boundaries, execution mode contracts, gateway boundary, cross-domain isolation, shared control-plane contracts, multi-provider contracts) now exist. | Extraction-grade enforcement is now test-backed; automated enforcement in CI remains optional. |
 
 ## Epic Snapshot
@@ -276,10 +276,10 @@ Status legend:
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T4-E1 Intake And Qualification | in_progress | 95% | Unified operator intake now resolves scope size/signals, risk factors, policy-backed budget envelopes, runtime budget blocks, approval-gated execution, managed repo acquisition/import, review/build routing, structured builder implementation plans, and structured acceptance criteria, plus CLI preview/submit surfaces and persisted handoff records. | Cost estimates are still heuristic and there is no live operator UI |
-| T4-E2 Job Planning And Routing | in_progress | 87% | `JobPlan` now includes explicit phases, capability assignments, structured budget metadata, persisted planner handoff records, durable planning traces, builder operation-count-aware planning metadata, and acceptance summaries with required/optional/structured breakdown. | Planner output is durable, but not yet a distributed execution history or live backend workflow. |
-| T4-E3 Delivery Workflow | complete_for_phase | 99% | Shared `DeliveryPackage`/`DeliveryRecord` now back both build and review delivery previews, approval linkage, lifecycle refresh, explicit handoff audit events, approval-gated gateway send actions, provider-outcome-aware delivery summaries, enriched `/deliver` detail with provider outcome/receipt/attention, `/deliver retry` for failed deliveries, `/deliver pending\|failed\|delivered` outcome filters, and `/report delivery` provider summary through the orchestrator, CLI, Telegram, and operator report. | No live operator workflow or broader delivery automation yet. |
-| T4-E4 Operator Telegram Surface | complete_for_phase | 100% | `/report`, `/intake`, `/build`, `/jobs`, and `/deliver` Telegram commands now delegate to unified operator services, providing overview/inbox/budget reporting, qualify-plan-execute intake flow, product job listing/detail, and delivery listing/detail/gateway send directly from Telegram (v1.19.0, v1.20.0). | Richer interactive Telegram flows and live UI remain future scope. |
+| T4-E1 Intake And Qualification | in_progress | 95% | Unified operator intake now resolves scope size/signals, risk factors, policy-backed budget envelopes, runtime budget blocks, approval-gated execution, managed repo acquisition/import, review/build routing, structured builder implementation plans, structured acceptance criteria, CLI preview/submit surfaces, and persisted handoff records. | Cost estimates are still heuristic and there is no richer interactive operator UI yet |
+| T4-E2 Job Planning And Routing | in_progress | 87% | `JobPlan` now includes explicit phases, capability assignments, structured budget metadata, persisted planner handoff records, durable planning traces, builder operation-count-aware planning metadata, and acceptance summaries with required/optional/structured breakdown. | Planner output is durable, but not yet a distributed execution history or richer interactive operator workflow. |
+| T4-E3 Delivery Workflow | in_progress | 97% | Shared `DeliveryPackage`/`DeliveryRecord` now back both build and review delivery previews, approval linkage, lifecycle refresh, explicit handoff audit events, approval-gated gateway send actions, provider-outcome-aware delivery summaries, archive retrieval, settlement foundations, enriched `/deliver` detail with provider outcome/receipt/attention, `/deliver retry` for failed deliveries, `/deliver pending\|failed\|delivered` outcome filters, and `/report delivery` provider summary through the orchestrator, API, dashboard, CLI, Telegram, and operator report. | Settlement is still not a fully closed operator workflow, and broader delivery automation remains future scope. |
+| T4-E4 Operator Telegram Surface | complete_for_phase | 100% | `/report`, `/intake`, `/build`, `/jobs`, `/deliver`, `/telemetry`, and `/settlement` Telegram commands now delegate to unified operator services, providing overview/inbox/budget reporting, qualify-plan-execute intake flow, product job listing/detail, delivery listing/detail/gateway send, telemetry views, and settlement list/approve/deny directly from Telegram. | Richer interactive Telegram flows and dashboard parity for settlement remain future scope. |
 
 ### T5 Security, Governance, And Policy
 
@@ -293,22 +293,22 @@ Status legend:
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T6-E1 Cost Ledger | in_progress | 86% | Per-job usage, token, and cost entries now persist into the shared control-plane ledger for build and review jobs, finance budget state exposes hard/soft/stop-loss posture plus warnings/forecast, unified intake enforces runtime budget blocks, brain-side escalation is budget-aware, cost accuracy feedback loop validates estimates against actuals, and the operator report surfaces budget posture, approval caps, and margin hints. | No live operator UI yet |
-| T6-E2 Runtime Observability | mostly_complete | 97% | Status and traces exist locally, including orchestrator-visible build/review counters, persisted plan/trace/delivery telemetry, shared job/artifact/workspace queries, approval backlog visibility with blocked reasons, operator-facing report output, point-in-time `TelemetrySnapshot` records capturing job throughput/latency percentiles/cost/delivery health/system resources, time-window aggregation with trend detection (stable/improving/degrading), `/telemetry [hours]` Telegram command, telemetry in operator report, plus workspace health, worker execution, persisted job, retention posture, cost, and product-job duration/retry/failure summaries. | No live UI or push updates yet |
+| T6-E1 Cost Ledger | in_progress | 86% | Per-job usage, token, and cost entries now persist into the shared control-plane ledger for build and review jobs, finance budget state exposes hard/soft/stop-loss posture plus warnings/forecast, unified intake enforces runtime budget blocks, brain-side escalation is budget-aware, cost accuracy feedback loop validates estimates against actuals, and the operator report surfaces budget posture, approval caps, and margin hints. | No richer live operator UI yet |
+| T6-E2 Runtime Observability | mostly_complete | 97% | Status and traces exist locally, including orchestrator-visible build/review counters, persisted plan/trace/delivery telemetry, shared job/artifact/workspace queries, approval backlog visibility with blocked reasons, operator-facing report output, point-in-time `TelemetrySnapshot` records capturing job throughput/latency percentiles/cost/delivery health/system resources, time-window aggregation with trend detection (stable/improving/degrading), `/telemetry [hours]` Telegram command, telemetry in operator report, plus workspace health, worker execution, persisted job, retention posture, cost, and product-job duration/retry/failure summaries. | No richer live UI or push updates yet |
 | T6-E3 Quality Evals | mostly_complete | 99% | Tests are strong, review-eval smoke coverage guards handoff artifacts and client-safe redaction in CI, durable golden review verdict cases pin clean, secret, and unsafe-repo outcomes, runtime quality evaluation now records precision, false-positive/false-negative counts, release labels, duration, and regression deltas against the previous baseline into the control plane and operator report, and the same telemetry now drives a deterministic CLI/CI release-readiness gate. | No live longitudinal dashboard or broader non-review latency trend surface yet |
 
 ### T7 External Capability Gateway
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T7-E1 Gateway Foundation | mostly_complete | 96% | Runtime model and policy now expose separate webhook-handoff and external API-call contracts plus dedicated gateway policies, and the runtime now executes approval- or policy-gated external sends with auth, timeout, retry, rate-limit, denial, trace, cost-record handling, retained request/response artifacts, and provider receipt validation through one explicit boundary. | The boundary is stronger, but it is not yet multi-provider or backed by richer operator workflow |
-| T7-E2 obolos.tech Integration | in_progress | 96% | `obolos.tech` is now represented through explicit provider and route records for both the earlier handoff-compatible delivery path and the documented buyer-side marketplace catalog, wallet-balance, and slug-based API-call flow, with CLI/runtime access plus targeted routing/error-mode test coverage. | Integration is still one-provider, and seller-side publishing, file-upload calls, x402 payment flow, and broader downstream workflow/telemetry remain future scope |
+| T7-E1 Gateway Foundation | mostly_complete | 96% | Runtime model and policy now expose separate webhook-handoff and external API-call contracts plus dedicated gateway policies, and the runtime now executes approval- or policy-gated external sends with auth, timeout, retry, rate-limit, denial, trace, cost-record handling, retained request/response artifacts, provider receipt validation, and settlement-request creation through one explicit boundary. | The boundary is stronger, but a broader operator settlement workflow still remains outside the core gateway contract. |
+| T7-E2 obolos.tech Integration | complete_for_phase | 99% | `obolos.tech` is now represented through explicit provider and route records for the earlier handoff-compatible delivery path, documented buyer-side marketplace catalog/wallet/API-call flow, seller publishing, wallet topup, file-upload-safe marketplace calls, x402-aware denial parsing, and runtime/API/Telegram settlement foundations, with CLI/runtime access plus targeted routing/error-mode test coverage. | Integration is still one-provider, and persisted or automated settlement resolution plus broader downstream workflow/telemetry remain future scope |
 
 ### T8 Enterprise Hardening
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T8-E1 Contract-First Boundaries | in_progress | 79% | Shared control-plane primitives now back build and review directly. ADR-001 sidecar, unified intake/planning, explicit runtime coexistence rules, cross-system job/artifact/query/report surfaces, and deterministic review execution policy boundaries reinforce the boundary. | Boundaries are documented and queryable, but not yet enforced as extraction-grade invariants. |
+| T8-E1 Contract-First Boundaries | in_progress | 93% | Shared control-plane primitives now back build and review directly. ADR-001 sidecar, unified intake/planning, explicit runtime coexistence rules, cross-system job/artifact/query/report surfaces, deterministic review execution policy boundaries, and 22 CI-enforced architecture invariant tests now reinforce the boundary. | Boundaries are now test-backed, but selective extraction and stricter deployment-grade enforcement remain future scope. |
 | T8-E2 Deployment And Environment Profiles | in_progress | 90% | Explicit lower-level execution environment profiles now define review, build, acquisition/import, and export-only boundaries, the runtime model now also exposes local-owner, operator-controlled, and enterprise-hardened operating profiles with default build/delivery/gateway posture, and controlled-environment deployment documentation now explains how to run those profiles in practice. | The higher-level profile matrix now exists, but it is not yet enforced as a deployment-grade runtime contract across the whole stack |
 | T8-E3 Compliance-Friendly Foundations | in_progress | 90% | Redaction module, client-safe review bundle export, client-safe evidence export, delivery gating, retained artifact records with expiry/recoverability/prune state, shared artifact traceability, dedicated evidence export workflow, and explicit internal/client-safe/retained-trace data-handling rules now exist. | Broader non-review client-safe packaging and stronger enforcement of those rules remain partial. |
 
@@ -321,6 +321,8 @@ Status legend:
 - with the builder runtime now actually wired into the orchestrator, capability-declared, resumable, reachable through real entrypoints, tracked on `main`, able to emit deterministic patch/diff outputs, and able to execute bounded local workspace mutations from a structured implementation plan
 - with shared control-plane query/report layers for build, review, operate, and artifacts
 - with unified operator intake qualification, planning, and routing for build and review requests, now including structured builder implementation plans, structured acceptance criteria, and acceptance-summary-aware planning signals
+- with authenticated operator REST API, HTML dashboard, archival download, and
+  Telegram operator surfaces now available for self-hosted runtime control
 - with a shared delivery-package model plus build and review delivery previews, approval linkage, and handoff audit state
 - with managed git-source acquisition/import before runtime routing
 - with retention-aware artifact and persisted product-job state now feeding both internal and client-safe evidence export packages
@@ -342,6 +344,8 @@ Status legend:
 - with a concrete provider-ready gateway catalog for `obolos.tech`, including
   route readiness, env/vault-backed auth resolution, and fallback-capable
   provider sends for build/review delivery handoff
+- with settlement foundation now exposed through the orchestrator, API, and
+  Telegram command surface after payment-required external calls
 - with provider-outcome-aware delivery reporting and controlled-environment
   deployment guidance for local-owner, operator-controlled, and
   enterprise-hardened setups
@@ -350,7 +354,7 @@ Status legend:
   posture through the control plane and operator report
 - but with builder execution still bounded to explicit structured local operations rather than general code generation
 - and with acceptance still deterministic/rule-based rather than semantic
-- and without a live operator UI or a fully unified build/review execution-policy engine
+- and without a richer live operator app or a fully unified build/review execution-policy engine
 
 Reviewer v1: `complete_for_phase` and practically closed for Phase 1
 Builder v1: `complete_for_phase` and practically closed for Phase 2
@@ -506,18 +510,21 @@ Review/audit-driven fixes landed on `main`:
 
 See [NEXT_BACKLOG.md](/Users/danielbabjak/Desktop/Agent_Life_Space/docs/strategy/NEXT_BACKLOG.md) for the prioritized execution queue.
 
-Now that Builder v1 is effectively closed for Phase 2, the next high-leverage
-work is Phase 3 operatorization:
-1. Bind review, verify, and deliver planner phases to stronger runtime capabilities
-2. Finish provider-specific operator delivery workflow beyond report/CLI surfaces
-3. Push policy toward one broader runtime action boundary
-4. Deepen persisted telemetry, cost feedback, and operator-facing runtime history
+Now that the Phase 4 merge and post-merge closure landed on `main`, the next
+high-leverage work is not another new surface but closure of the biggest
+remaining operator/runtime gap:
+1. Persist settlement requests, outcomes, and recovery across restarts
+2. Turn settlement from foundation into an active operator workflow across API,
+   Telegram, and dashboard surfaces
+3. Add an approval-backed 402 → balance check → topup → retry loop
+4. Keep report, backlog, and release notes truthful as settlement moves from
+   foundation to workflow
 
 ---
 
-## Phase 4 Enterprise Hardening (v1.25.1–v1.28.0, 2026-04-01)
+## Phase 4 Enterprise Hardening (v1.25.1–v1.28.1, 2026-04-01)
 
-All items landed on `main` at `e512f25`. 1604 tests pass.
+All items landed on `main` at `f3f6b80`. 1608 tests pass.
 
 ### Production Hardening (v1.25.1)
 - **Status:** `complete_for_phase`
@@ -525,7 +532,7 @@ All items landed on `main` at `e512f25`. 1604 tests pass.
 - Telemetry auto-recording (hourly), workflow/pipeline SQLite persistence
 - Semantic cache hardening (threshold 0.95, length-ratio guard)
 
-### CI-enforced Architecture Invariants (T8-E1-S2)
+### CI-enforced Architecture Invariants (T8-E1-S3)
 - **Status:** `complete_for_phase`
 - 26 pytest invariant tests as explicit blocking CI gate
 
@@ -533,7 +540,7 @@ All items landed on `main` at `e512f25`. 1604 tests pass.
 - **Status:** `complete_for_phase`
 - Hard-delete methods, retention pruning cron (6h), nightly cleanup cron
 - `/report retention` operator command
-- Archival CSV export service (foundation, download endpoint pending)
+- Archival CSV export plus authenticated CSV download surface
 
 ### Unified Policy Boundary Migration (T5-E1-S2)
 - **Status:** `mostly_complete` (5 of 9 callers migrated, 4 deferred by design)
@@ -542,12 +549,21 @@ All items landed on `main` at `e512f25`. 1604 tests pass.
 
 ### Operator REST API & Dashboard (T4-E1-S3)
 - **Status:** `complete_for_phase`
-- 11 authenticated endpoints under `/api/operator/`
+- Authenticated operator REST API under `/api/operator/`
 - Self-contained HTML dashboard at `/dashboard`
 - 6 production regression fixes (report wiring, query params, memory truthfulness,
   pipeline linkage, archival path safety)
 
+### Post-Merge Closure (v1.28.1)
+- **Status:** `complete_for_phase`
+- Authenticated archive download endpoint for exported CSV artifacts
+- Telegram settlement listing plus approve/deny command surface
+- Strategy docs now reflect the merged `main` baseline instead of the earlier
+  open-PR snapshot
+
 ### Payment Settlement (T7-E2-S6)
 - **Status:** `foundation_only`
-- Service wired into orchestrator, API endpoint exists
-- Missing: persisted state, dashboard UI, Telegram command, full 402→retry loop
+- Service wired into orchestrator, API endpoint exists, and Telegram
+  `/settlement` command now supports list/approve/deny
+- Missing: persisted state, dashboard UI/actions, and a full
+  402→balance→topup→retry loop
