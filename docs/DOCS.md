@@ -21,6 +21,7 @@ Tento súbor je len rozcestník. Detailná dokumentácia je na wiki stránkach:
 | [Security Model](./SECURITY_MODEL.md) | Bezpečnostný model, execution boundaries, tool policy |
 | [Learning Model](./LEARNING_MODEL.md) | Definícia learning systému, 4 typy, safety rules |
 | [Operator Handbook](./OPERATOR_HANDBOOK.md) | Praktický sprievodca pre vlastníka |
+| [End-to-End Use Case](./END_TO_END_USE_CASE.md) | Jeden realistický operator workflow, ktorý prejde väčšinou ALS komponentov |
 | [Product Identity](./PRODUCT_IDENTITY.md) | Rozhodnutie: personal sovereign operator |
 | [Controlled Environments](./CONTROLLED_ENVIRONMENTS.md) | Runtime profily, gateway config, self-host posture po Phase 4 closure |
 | [Release Checklist](./RELEASE_CHECKLIST.md) | Checklist pre každý release |
@@ -61,9 +62,18 @@ python -m pytest tests/ -q   # Testy
 
 ## Verzia
 
-Aktuálna: **v1.31.0** — Phase 4 closure: runtime contract hardening.
+Aktuálna: **v1.32.0** — LLM build pipeline, sandbox-first, bilingual classification.
 
-Nové v `v1.31.0`:
+Nové v `v1.32.0`:
+- LLM code generation pre build pipeline (description → WRITE_FILE ops)
+- FAILED status pre PlanRecordStatus enum
+- fix: failed build/review joby už nie sú hlásené ako "blocked"
+- sandbox-first: file access downgrade namiesto blokovania + sandbox prompt
+- authenticated API callers dostávajú terminal-level trust
+- bilingual task classification (EN + SK) + complexity-scaled API timeouts
+- fix: implementation requesty routované na Opus
+
+Predchádzajúce v `v1.31.0`:
 - dashboard auth boundary
 - public control-plane methods pre settlement a archival
 - runtime contract closure pre extraction readiness

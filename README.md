@@ -39,7 +39,10 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Runtime model** — explicit coexistence rules for product jobs, planning tasks, infrastructure jobs, and conversational queue items
 - **Release readiness gate** — deterministic CLI/CI quality and gateway posture gate before release or handoff
 - **Operator CLI surfaces** — `--report`, `--runtime-model`, `--export-evidence-job`, `--export-evidence-mode client_safe`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, `--list-persisted-jobs`, `--list-retained-artifacts`, `--prune-expired-retained-artifacts`, `--list-cost-ledger`, unified `--intake-*`, and explicit delivery handoff
-- **1632+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **LLM code generation** — build pipeline can generate implementation files from natural-language descriptions
+- **Sandbox-first file access** — host file access downgrades gracefully instead of hard-blocking, with sandbox prompt
+- **Bilingual task classification** — full EN + SK keyword coverage, complexity-scaled API timeouts
+- **1648+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -65,6 +68,12 @@ export AGENT_API_KEY="your_api_key"         # python -c "import secrets; print(f
 ```
 
 See **[Deployment guide](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Deployment)** for full setup (Docker, systemd, Cloudflare tunnel, firewall).
+
+## End-to-End Use Case
+
+For one realistic operator workflow that exercises intake, approvals, provider
+calls, settlement, bounded build, review, evidence export, and reporting, see
+[docs/END_TO_END_USE_CASE.md](docs/END_TO_END_USE_CASE.md).
 
 ## Architecture
 
@@ -99,7 +108,7 @@ Response -> Telegram + memory + learning
 | `control/` | Control-plane queries, runtime model, release readiness gate | Stable |
 | `work/` | Isolated workspaces | Beta |
 
-~39,000 lines of code. Details: **[Modules wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Modules)**
+~44,000 lines of code. Details: **[Modules wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Modules)**
 
 ## Security
 
@@ -120,7 +129,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 1371+ passed, ~24s, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1648+ passed, ~24s, $0.00
 ```
 
 | Layer | Tests | What |
