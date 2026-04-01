@@ -8,6 +8,9 @@ Assessment basis:
 - interpretation date: `2026-03-31`
 - baseline: after the documented buyer-side Obolos API-call slice
 
+For open PR / local audit reality beyond `main`, see
+`AS_IS_TO_BE_2026_04_01.md`.
+
 ## Ready Now
 
 Phase 3 backlog is fully closed. All P0-P2 items delivered.

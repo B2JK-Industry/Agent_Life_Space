@@ -19,9 +19,11 @@ Recommended usage:
    and masterplan.
 5. `NEXT_BACKLOG.md` is the near-term prioritized execution backlog derived
    from the current state of `main`.
-6. `backlog_seed.yaml` is the machine-friendly seed for future backlog
+6. `AS_IS_TO_BE_2026_04_01.md` is the truthful review-time snapshot for open
+   PRs and local audit fixes when `main` and in-flight work diverge.
+7. `backlog_seed.yaml` is the machine-friendly seed for future backlog
    generation, ticket import, or automation.
-7. `prompts/` contains durable Claude Code task prompts derived from current
+8. `prompts/` contains durable Claude Code task prompts derived from current
    architectural findings.
 
 Recommended governance:
