@@ -20,7 +20,6 @@ from agent.control.denials import make_denial
 from agent.control.models import ArtifactKind, JobKind, TraceRecordKind, UsageSummary
 from agent.control.policy import (
     classify_provider_delivery_outcome,
-    evaluate_external_gateway_access,
     get_external_capability_route,
     get_external_gateway_contract,
     get_external_gateway_policy,
@@ -68,15 +67,23 @@ class ExternalGatewayService:
         provider_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Send a delivery bundle through the explicit external gateway."""
+        from agent.control.policy import RuntimeActionRequest, evaluate_runtime_action
+
         contract = get_external_gateway_contract(gateway_contract_id)
         approval_status = self._approval_status(approval_request_id)
-        allowed, reason, policy = evaluate_external_gateway_access(
-            policy_id=gateway_policy_id,
+        decision = evaluate_runtime_action(RuntimeActionRequest(
+            action_type="gateway_send",
             target_kind=target_kind,
             target_url=target_url,
             approval_status=approval_status,
-            auth_token_provided=bool(auth_token),
-        )
+            auth_provided=bool(auth_token),
+            estimated_cost_usd=estimated_cost_usd,
+            export_mode=export_mode,
+            policy_overrides={"gateway_policy_id": gateway_policy_id},
+        ))
+        allowed = decision.allowed
+        policy = decision.resolved_policy
+        reason = decision.warnings[0] if decision.warnings else ""
         if target_kind not in contract.supported_target_kinds:
             allowed = False
             reason = (
@@ -915,15 +922,21 @@ class ExternalGatewayService:
                     "denial": denial.to_dict(),
                     "attempted_routes": attempted_routes,
                 }
+            from agent.control.policy import RuntimeActionRequest, evaluate_runtime_action
+
             policy_id = gateway_policy_id or route.gateway_policy_id
             policy = get_external_gateway_policy(policy_id)
-            allowed, reason, resolved_policy = evaluate_external_gateway_access(
-                policy_id=policy_id,
+            api_decision = evaluate_runtime_action(RuntimeActionRequest(
+                action_type="api_call",
                 target_kind=route.target_kind,
                 target_url=request_spec["target_url"],
                 approval_status="approved" if not policy.require_approval else "",
-                auth_token_provided=bool(readiness["auth_token"]),
-            )
+                auth_provided=bool(readiness["auth_token"]),
+                policy_overrides={"gateway_policy_id": policy_id},
+            ))
+            allowed = api_decision.allowed
+            reason = api_decision.warnings[0] if api_decision.warnings else ""
+            resolved_policy = api_decision.resolved_policy
             if route.target_kind not in get_external_gateway_contract(
                 route.gateway_contract_id
             ).supported_target_kinds:

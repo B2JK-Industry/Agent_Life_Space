@@ -63,6 +63,9 @@ jobs:
       - name: Release readiness gate
         run: python -m agent --release-readiness --release-readiness-release-label ci
 
+      - name: Architecture invariants (pytest)
+        run: pytest tests/test_architecture_invariants.py -v --tb=short
+
       - name: Performance budget
         timeout-minutes: 3
         run: |
@@ -97,13 +100,5 @@ jobs:
         run: |
           cd operator && npm ci && npm run typecheck
 
-      - name: Architecture invariants
-        run: |
-          # No duplicate persona definitions — prompts must come from persona.py
-          ! grep -rn "Som John\. Autonómna bytosť" agent/ --include="*.py" | grep -v persona.py | grep -v "# noqa"
-          # No hardcoded ~/agent-life-space paths
-          ! grep -rn "~/agent-life-space" agent/ --include="*.py"
-          # Path.home() / "agent-life-space" only allowed in paths.py (centralized resolver)
-          ! grep -rn 'Path.home().*agent-life-space' agent/ --include="*.py" | grep -v paths.py
-          # AGENT_SANDBOX_ONLY default must be "1" (safe)
-          grep -q 'AGENT_SANDBOX_ONLY.*"1"' agent/core/llm_provider.py
+      # Shell-based architecture checks replaced by pytest in
+      # tests/test_architecture_invariants.py::TestDeploymentSafetyInvariants

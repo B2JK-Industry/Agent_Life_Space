@@ -1338,6 +1338,31 @@ class TelegramHandler:
             ]
             return "\n".join(lines)
 
+        if section == "retention":
+            try:
+                posture = self._agent.control_plane.get_retention_posture()
+            except Exception as e:
+                return f"*Retention error:* {e!s}"
+            by_status = posture.get("by_status", {})
+            by_policy = posture.get("by_policy", {})
+            lines = [
+                "*Retention Posture:*",
+                f"Total records: {posture.get('total', 0)}",
+                f"Active: {by_status.get('active', 0)}",
+                f"Expired: {by_status.get('expired', 0)}",
+                f"Pruned: {by_status.get('pruned', 0)}",
+                f"Recoverable: {posture.get('recoverable_records', 0)}",
+            ]
+            if by_policy:
+                lines.append("\n*By policy:*")
+                for pid, count in sorted(by_policy.items()):
+                    lines.append(f"  {pid}: {count}")
+            storage_stats = self._agent.control_plane._storage.get_stats()
+            lines.append("\n*Table sizes:*")
+            for table, count in sorted(storage_stats.items()):
+                lines.append(f"  {table}: {count}")
+            return "\n".join(lines)
+
         if section.startswith("margin set"):
             # /report margin set <job_id> <usd> [source]
             parts = section.split()
@@ -1383,7 +1408,7 @@ class TelegramHandler:
                 lines.append(f"• `{kind}` — {title}")
         else:
             lines.append("\nŽiadne attention items. ✓")
-        lines.append("\n`/report inbox` | `/report budget` | `/report cost` | `/report delivery` | `/report telemetry` | `/report margin`")
+        lines.append("\n`/report inbox` | `/report budget` | `/report cost` | `/report delivery` | `/report telemetry` | `/report margin` | `/report retention`")
         return "\n".join(lines)
 
     async def _cmd_intake(self, args: str) -> str:

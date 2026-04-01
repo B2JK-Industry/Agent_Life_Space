@@ -509,3 +509,26 @@ work is Phase 3 operatorization:
 2. Finish provider-specific operator delivery workflow beyond report/CLI surfaces
 3. Push policy toward one broader runtime action boundary
 4. Deepen persisted telemetry, cost feedback, and operator-facing runtime history
+
+---
+
+## Phase 4 Enterprise Hardening (v1.26.0, 2026-04-01)
+
+### CI-enforced Architecture Invariants (T8-E1-S2)
+- **Status:** `complete_for_phase`
+- 26 pytest invariant tests now explicit blocking CI gate
+- Shell grep checks converted to proper pytest (persona, paths, sandbox)
+
+### Automated Retention & Pruning (T1-E2-S4)
+- **Status:** `in_progress` (foundations done, archival deferred)
+- Hard-delete methods for: pruned artifacts (90d), traces (90d), plans (365d), pipelines (180d)
+- Retention pruning cron loop (every 6h) + nightly data cleanup loop
+- `/report retention` operator command
+- Remaining: CSV/Parquet archival before hard-delete for compliance tables
+
+### Unified Policy Boundary Migration (T5-E1-S2)
+- **Status:** `in_progress` (5 of 9 callers migrated)
+- `RuntimePolicyDecision` enriched with `resolved_policy` + `policy_metadata`
+- Gateway (2 callers), Review (1 caller), Build (1 caller) migrated
+- Deferred: ReviewGatePolicy (post-exec), budget (cross-cutting), release readiness (standalone)
+- All 1551 tests pass after migration

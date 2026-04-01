@@ -143,14 +143,18 @@ class ReviewService:
                 t_ws.fail(str(e))
                 logger.warning("review_workspace_failed", error=str(e))
 
-        # ── Step 1c: Execution policy audit ──
+        # ── Step 1c: Execution policy audit (via unified boundary) ──
+        from agent.control.policy import RuntimeActionRequest, evaluate_runtime_action
+
         t_policy = job.trace("execution_policy")
         analysis_path = self._get_analysis_path(job)
-        review_policy = select_review_execution_policy(
-            review_type=intake.review_type,
+        _policy_decision = evaluate_runtime_action(RuntimeActionRequest(
+            action_type="review",
+            review_type=intake.review_type.value if hasattr(intake.review_type, "value") else str(intake.review_type),
             diff_spec=intake.diff_spec,
             source=job.source,
-        )
+        ))
+        review_policy = _policy_decision.resolved_policy
         if not review_policy.allow_host_read:
             denial = make_denial(
                 code="review_execution_blocked",

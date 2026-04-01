@@ -10,6 +10,35 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.26.0] — 2026-04-01
+
+Phase 4 enterprise hardening: CI-enforced invariants, automated retention, unified policy boundary.
+
+### CI-enforced Architecture Invariants
+- 4 new deployment safety tests (persona, paths, sandbox) converted from shell grep
+- Explicit `pytest tests/test_architecture_invariants.py` CI step (26 tests, blocking gate)
+- Shell-based architecture checks removed from CI (replaced by pytest)
+
+### Automated Retention & Pruning
+- `hard_delete_pruned_artifacts()`, `hard_delete_old_traces()`,
+  `hard_delete_old_plans()`, `hard_delete_old_pipelines()` in storage.py
+- Retention pruning cron loop (every 6h): soft-deletes expired artifacts
+- Nightly data cleanup cron loop: hard-deletes old traces (90d), plans (365d),
+  pruned artifacts (90d), completed pipelines (180d)
+- `/report retention` Telegram subcommand with table sizes and posture
+
+### Unified Policy Boundary Migration
+- `RuntimePolicyDecision` enriched with `resolved_policy` and `policy_metadata`
+- `evaluate_runtime_action()` now checks `allow_git_subprocess` for review actions
+- Build evaluation reads `build_execution_policy_id` from `policy_overrides`
+- **Gateway callers migrated**: `send_delivery()` and `send_capability_request()`
+  now go through `evaluate_runtime_action()` instead of calling
+  `evaluate_external_gateway_access()` directly
+- **Review service migrated**: `execute_review()` routes through unified boundary
+- **Build service migrated**: `_build_execution_policy()` routes through unified boundary
+- Deferred: ReviewGatePolicy (post-execution), budget callers (cross-cutting),
+  ReleaseReadinessPolicy (standalone gate)
+
 ## [1.25.0] — 2026-03-31
 
 Phase 3 operatorization closure: recurring workflows, pipelines, margin tracking.

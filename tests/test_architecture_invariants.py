@@ -327,6 +327,76 @@ class TestSharedControlPlaneContracts:
 # 6. Gateway multi-provider contract
 # ─────────────────────────────────────────────
 
+# ─────────────────────────────────────────────
+# 6. Deployment safety invariants (converted from CI shell checks)
+# ─────────────────────────────────────────────
+
+class TestDeploymentSafetyInvariants:
+    """Invariants previously enforced by shell grep in CI.
+
+    These ensure no deployment-unsafe patterns creep into production code.
+    """
+
+    def test_no_duplicate_persona_definitions(self):
+        """Persona prompts must come from persona.py only."""
+        persona_marker = "Som John"
+        for py_file in _AGENT_ROOT.rglob("*.py"):
+            if py_file.name == "persona.py":
+                continue
+            content = py_file.read_text(encoding="utf-8")
+            for i, line in enumerate(content.split("\n"), start=1):
+                if "# noqa" in line:
+                    continue
+                assert persona_marker not in line, (
+                    f"{py_file.relative_to(_AGENT_ROOT)}:{i} contains persona definition — "
+                    "prompts must come from agent/core/persona.py"
+                )
+
+    def test_no_hardcoded_agent_paths(self):
+        """No hardcoded ~/agent-life-space paths in production code."""
+        marker = "~/agent-life-space"
+        for py_file in _AGENT_ROOT.rglob("*.py"):
+            content = py_file.read_text(encoding="utf-8")
+            for i, line in enumerate(content.split("\n"), start=1):
+                assert marker not in line, (
+                    f"{py_file.relative_to(_AGENT_ROOT)}:{i} has hardcoded path '{marker}' — "
+                    "use agent.core.paths instead"
+                )
+
+    def test_centralized_path_resolver(self):
+        """Path.home() / 'agent-life-space' only allowed in paths.py."""
+        pattern = "agent-life-space"
+        for py_file in _AGENT_ROOT.rglob("*.py"):
+            if py_file.name == "paths.py":
+                continue
+            content = py_file.read_text(encoding="utf-8")
+            for i, line in enumerate(content.split("\n"), start=1):
+                if "Path.home()" in line and pattern in line:
+                    raise AssertionError(
+                        f"{py_file.relative_to(_AGENT_ROOT)}:{i} uses Path.home() with "
+                        f"'{pattern}' — must use agent.core.paths centralized resolver"
+                    )
+
+    def test_sandbox_default_safe(self):
+        """AGENT_SANDBOX_ONLY default must be '1' (safe)."""
+        llm_provider = _AGENT_ROOT / "core" / "llm_provider.py"
+        if not llm_provider.exists():
+            pytest.skip("llm_provider.py not found")
+        content = llm_provider.read_text(encoding="utf-8")
+        assert 'AGENT_SANDBOX_ONLY' in content, "AGENT_SANDBOX_ONLY not found in llm_provider.py"
+        # Find the line with the default and verify it's "1"
+        for line in content.split("\n"):
+            if "AGENT_SANDBOX_ONLY" in line and '"1"' in line:
+                return
+        raise AssertionError(
+            "AGENT_SANDBOX_ONLY default is not '1' — sandbox must be enabled by default"
+        )
+
+
+# ─────────────────────────────────────────────
+# 7. Gateway multi-provider contract
+# ─────────────────────────────────────────────
+
 class TestMultiProviderContract:
     """Ensure multi-provider gateway infrastructure is consistent."""
 

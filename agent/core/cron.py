@@ -55,7 +55,9 @@ class AgentCron:
         self._tasks.append(asyncio.create_task(self._consolidation_loop()))
         self._tasks.append(asyncio.create_task(self._dead_man_switch_loop()))
         self._tasks.append(asyncio.create_task(self._recurring_workflow_loop()))
-        logger.info("cron_started", jobs=8)
+        self._tasks.append(asyncio.create_task(self._retention_pruning_loop()))
+        self._tasks.append(asyncio.create_task(self._data_cleanup_loop()))
+        logger.info("cron_started", jobs=10)
 
     async def stop(self) -> None:
         self._running = False
@@ -335,6 +337,67 @@ class AgentCron:
                         warnings=len(warnings),
                         escalations=len(escalations),
                         cancelled=len(cancelled))
+
+    # --- Retention Pruning (every 6 hours) ---
+
+    async def _retention_pruning_loop(self) -> None:
+        """Soft-delete expired artifact retention records."""
+        await asyncio.sleep(900)  # First run after 15 minutes
+        while self._running:
+            try:
+                await self._do_retention_pruning()
+                await asyncio.sleep(21600)  # 6 hours
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("cron_retention_pruning_error")
+
+    async def _do_retention_pruning(self) -> None:
+        if not hasattr(self._agent, "control_plane"):
+            return
+        try:
+            pruned = self._agent.control_plane.prune_retained_artifacts(limit=5000)
+            if pruned:
+                logger.info("cron_retention_pruned", count=len(pruned))
+            else:
+                logger.info("cron_retention_pruned", count=0)
+        except Exception:
+            logger.exception("cron_retention_prune_error")
+
+    # --- Data Cleanup (nightly at ~00:00 UTC) ---
+
+    async def _data_cleanup_loop(self) -> None:
+        """Hard-delete old data to prevent unbounded table growth."""
+        await asyncio.sleep(1800)  # First run after 30 minutes
+        while self._running:
+            try:
+                # Wait until next midnight UTC
+                now = datetime.now(UTC)
+                next_midnight = now.replace(
+                    hour=0, minute=0, second=0, microsecond=0,
+                ) + timedelta(days=1)
+                wait_seconds = (next_midnight - now).total_seconds()
+                await asyncio.sleep(max(wait_seconds, 60))
+
+                await self._do_data_cleanup()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("cron_data_cleanup_error")
+
+    async def _do_data_cleanup(self) -> None:
+        if not hasattr(self._agent, "control_plane"):
+            return
+        storage = self._agent.control_plane._storage
+        total = 0
+        try:
+            total += storage.hard_delete_pruned_artifacts(older_than_days=90)
+            total += storage.hard_delete_old_traces(older_than_days=90)
+            total += storage.hard_delete_old_plans(older_than_days=365)
+            total += storage.hard_delete_old_pipelines(older_than_days=180)
+            logger.info("cron_data_cleanup_done", total_deleted=total)
+        except Exception:
+            logger.exception("cron_data_cleanup_error")
 
     # --- Recurring Workflows (every 60s check) ---
 

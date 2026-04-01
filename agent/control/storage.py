@@ -472,6 +472,60 @@ class ControlPlaneStorage:
         rows = self._db.execute(query, tuple(params)).fetchall()
         return [orjson.loads(row[0]) for row in rows]
 
+    # --- Hard-delete methods for automated pruning ---
+
+    def hard_delete_pruned_artifacts(self, older_than_days: int = 90) -> int:
+        """Hard-delete artifact retention records that have been PRUNED for >N days."""
+        if self._db is None:
+            return 0
+        from datetime import UTC, datetime, timedelta
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        cursor = self._db.execute(
+            "DELETE FROM artifact_retention_records WHERE status = 'PRUNED' AND updated_at < ?",
+            (cutoff,),
+        )
+        self._db.commit()
+        return cursor.rowcount
+
+    def hard_delete_old_traces(self, older_than_days: int = 90) -> int:
+        """Hard-delete execution trace records older than N days."""
+        if self._db is None:
+            return 0
+        from datetime import UTC, datetime, timedelta
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        cursor = self._db.execute(
+            "DELETE FROM execution_trace_records WHERE created_at < ?",
+            (cutoff,),
+        )
+        self._db.commit()
+        return cursor.rowcount
+
+    def hard_delete_old_plans(self, older_than_days: int = 365) -> int:
+        """Hard-delete job plan records older than N days."""
+        if self._db is None:
+            return 0
+        from datetime import UTC, datetime, timedelta
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        cursor = self._db.execute(
+            "DELETE FROM job_plan_records WHERE updated_at < ?",
+            (cutoff,),
+        )
+        self._db.commit()
+        return cursor.rowcount
+
+    def hard_delete_old_pipelines(self, older_than_days: int = 180) -> int:
+        """Hard-delete completed/failed pipelines older than N days."""
+        if self._db is None:
+            return 0
+        from datetime import UTC, datetime, timedelta
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        cursor = self._db.execute(
+            "DELETE FROM job_pipelines WHERE status IN ('completed', 'failed') AND updated_at < ?",
+            (cutoff,),
+        )
+        self._db.commit()
+        return cursor.rowcount
+
     def get_stats(self) -> dict[str, Any]:
         if self._db is None:
             return {
