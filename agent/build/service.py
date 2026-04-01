@@ -469,14 +469,9 @@ class BuildService:
 
         # If codegen produced the plan, run Docker-isolated build+test
         # instead of host workspace execution + host verification
-        codegen_produced = hasattr(job, "_codegen_produced") and job._codegen_produced
-        if not codegen_produced and job.intake.implementation_plan and not any(
-            hasattr(op, "_from_codegen") for op in job.intake.implementation_plan
-        ):
-            # Check if this plan came from codegen by looking at trace
-            codegen_produced = any(
-                t.label == "codegen" for t in job.execution_traces
-            )
+        codegen_produced = any(
+            t.step == "codegen" for t in job.execution_trace
+        )
 
         if codegen_produced and job.intake.implementation_plan:
             t_docker = job.trace("docker_build")
