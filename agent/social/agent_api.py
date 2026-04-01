@@ -327,15 +327,19 @@ class AgentAPI:
         # Spracuj správu cez handler (rovnaký ako Telegram)
         try:
             if self._handler:
-                # Timeout — ak CLI trvá príliš dlho, vráť partial response
+                # Timeout — scale with expected complexity
+                # Simple/chat: 90s, programming/build: 300s
                 try:
                     import asyncio as _aio
+                    from agent.core.models import classify_task
+                    task_type = classify_task(text)
+                    api_timeout = 300 if task_type == "programming" else 90
                     response = await _aio.wait_for(
                         self._handler(
                             text, 0, 0,
                             username=sender, chat_type="agent_api",
                         ),
-                        timeout=90,  # 90s max pre agent-to-agent
+                        timeout=api_timeout,
                     )
                 except TimeoutError:
                     duration = int((time.monotonic() - start) * 1000)
