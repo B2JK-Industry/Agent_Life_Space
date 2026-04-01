@@ -128,43 +128,66 @@ OPUS = ModelConfig(
 # Thresholds map total score → task type.
 
 _PROGRAMMING_KEYWORDS = frozenset([
-    # Unambiguously about code — safe to trigger programming alone
+    # Unambiguously about code — safe to trigger programming alone (SK + EN)
     "naprogramuj", "implementuj", "napíš kód", "oprav bug",
     "vytvor modul", "refaktoruj", "fix bug", "uprav kód", "pridaj príkaz",
     "napíš test", "debug", "commitni", "pushni",
-    "write code", "refactor",
+    "write code", "refactor", "fix bug", "add feature", "write test",
+    "add command", "create module", "edit code", "code review",
 ])
 
 # Technical terms — need 2+ matches OR combo with intent verb to trigger programming
 _TECHNICAL_TERMS = frozenset([
-    "api", "rest", "fastapi", "flask", "django", "endpoint",
-    "microservice", "backend", "frontend", "databáza",
-    "database", "sqlite", "postgres", "redis", "docker",
-    "pytest", "coverage", "middleware",
+    # Frameworks & protocols (language-neutral)
+    "api", "rest", "fastapi", "flask", "django", "express", "endpoint",
+    "microservice", "backend", "frontend", "databáza", "server",
+    "database", "sqlite", "postgres", "redis", "mongodb", "docker",
+    "pytest", "coverage", "middleware", "kubernetes", "nginx",
     "websocket", "graphql", "crud", "orm", "migration",
-    "rate limit", "jwt", "oauth",
+    "rate limit", "jwt", "oauth", "webhook", "cli",
+    "typescript", "python", "javascript", "rust", "golang",
 ])
 
-# General intent verbs — only boost score when combined with technical terms
+# General intent verbs — only boost score when combined with technical terms (SK + EN)
 _IMPLEMENTATION_INTENTS = frozenset([
-    "potrebujem", "postav", "vytvor", "build", "implement",
-    "deploy", "nasaď", "pridaj", "sprav", "make",
+    # SK
+    "potrebujem", "postav", "vytvor", "nasaď", "pridaj", "sprav",
+    # EN
+    "build", "implement", "deploy", "make", "create", "set up",
+    "develop", "design", "write", "scaffold", "generate",
+    "i need", "i want",
 ])
 
 _SIMPLE_KEYWORDS = frozenset([
-    "ahoj", "čau", "hello", "hi", "ďakujem", "díky", "thanks",
+    # SK
+    "ahoj", "čau", "ďakujem", "díky",
     "áno", "nie", "ok", "dobre", "jasné", "super",
+    # EN
+    "hello", "hi", "hey", "thanks", "thank you",
+    "yes", "no", "ok", "sure", "got it", "great", "cool",
 ])
 
 _ACTION_VERBS = [
+    # SK
     "registruj", "zaregistruj", "registrovať", "prihlás", "prihlásiť", "vytvor účet",
     "nájdi", "vyhľadaj", "porovnaj", "analyzuj",
     "stiahni", "nainštaluj", "nastav", "nakonfiguruj",
     "preskúmaj", "prečítaj", "zisti", "over",
     "spusti", "otestuj", "skontroluj",
+    # EN
+    "register", "sign up", "create account",
+    "find", "search", "compare", "analyze",
+    "download", "install", "configure", "set up",
+    "explore", "read", "check", "verify",
+    "run", "test", "inspect", "scan",
 ]
 
-_CAPABILITY_VERBS = ["vieš", "dokážeš", "môžeš", "zvládneš", "umíš"]
+_CAPABILITY_VERBS = [
+    # SK
+    "vieš", "dokážeš", "môžeš", "zvládneš", "umíš",
+    # EN
+    "can you", "could you", "are you able", "do you know",
+]
 
 # Score thresholds
 _THRESHOLD_PROGRAMMING = 5  # score >= 5 → programming
