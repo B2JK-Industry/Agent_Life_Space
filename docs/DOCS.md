@@ -32,6 +32,7 @@ Tento súbor je len rozcestník. Detailná dokumentácia je na wiki stránkach:
 
 ```bash
 source .venv/bin/activate
+python -m agent --setup-doctor  # Self-host config audit
 python -m agent              # Spusti agenta
 python -m agent --status     # Stav
 python -m agent --health     # Zdravie
@@ -42,8 +43,8 @@ python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capab
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_catalog_v1
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability wallet_balance_v1
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_api_call_v1 --provider-api-resource ocr-text-extraction --provider-api-method POST --provider-api-json '{"mode":"fast"}'
-python -m agent --review-quality-eval --review-quality-release-label v1.31.0
-python -m agent --release-readiness --release-readiness-release-label v1.31.0
+python -m agent --review-quality-eval --review-quality-release-label v1.34.0
+python -m agent --release-readiness --release-readiness-release-label v1.34.0
 python -m agent --export-evidence-job <job_id>
 python -m agent --export-evidence-job <job_id> --export-evidence-mode client_safe
 python -m agent --list-artifacts  # Shared artifact query surface
@@ -61,25 +62,22 @@ python -m pytest tests/ -q   # Testy
 
 ## Verzia
 
-Aktuálna: **v1.31.0** — Phase 4 closure: runtime contract hardening.
+Aktuálna: **v1.34.0** — self-host onboarding closure.
 
-Nové v `v1.31.0`:
-- dashboard auth boundary
-- public control-plane methods pre settlement a archival
-- runtime contract closure pre extraction readiness
+Nové v `v1.34.0`:
+- setup doctor a silnejší self-host runtime posture report
+- bezpečnejší default runtime data-dir mimo source tree pre fresh checkout
+- konzistentné `AGENT_DATA_DIR` správanie naprieč CLI a operator surfaces
+- dorovnané self-host docs, `.env.example`, a packaging version discipline
 
-Predchádzajúce v `v1.30.0`:
-- deployment contract hardening
-- explicit project-root / pidfile / vault posture
-- odstránenie skrytých runtime bypassov a tichých fallbackov
+Predchádzajúce v `v1.33.0`:
+- Docker-isolated build execution pre generated projekty
+- auto-fix retry loop po failing testoch
+- bohatší build reporting cez Telegram/API
 
-Predchádzajúce v `v1.29.0`:
-- settlement workflow closure
-- persistence, dashboard/API/Telegram actions
-- auto-retry originálneho API callu po topupe
-
-Predchádzajúce v `v1.28.1`:
-- Phase 4 merge closure na `main`
-- dashboard + settlement foundation + regression fixes
+Predchádzajúce v `v1.32.0`:
+- description-driven LLM build pipeline
+- codegen z prirodzeného zadania do `BuildOperation[]`
+- sandbox-first downgrade pre API/channel trust flow
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.

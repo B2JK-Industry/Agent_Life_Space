@@ -6,8 +6,8 @@ This file tracks current strategic execution progress against:
 - the actual state of `main`
 
 Assessment basis:
-- branch: `main` (`v1.31.0`, runtime-contract closure baseline)
-- interpretation date: `2026-04-01`
+- branch: `main` (`v1.34.0`, self-host onboarding closure baseline)
+- interpretation date: `2026-04-02`
 
 For the archival narrative of the 2026-04-01 merge and post-merge closure
 event, see `AS_IS_TO_BE_2026_04_01.md`.
@@ -34,6 +34,17 @@ Status legend:
 - **Builder bounded context exists** (`agent/build/`): BuildJob, BuildIntake,
   AcceptanceCriteria, AcceptanceVerdict, VerificationResult, BuildArtifact,
   BuildService, BuildStorage, verification loop.
+- Builder can now synthesize a bounded implementation plan from a natural-
+  language build description when an explicit plan is missing.
+- Generated builds can now run through Docker-isolated verification with
+  dependency install, tests, lint, and bounded auto-fix retries before the
+  final result is reported back to the operator.
+- Runtime/setup doctor now surfaces project root, runtime data dir, identity
+  profile path, pidfile path, operator surface readiness, and self-host
+  warnings before first start.
+- Fresh self-host installs now default to `.agent_runtime` instead of writing
+  runtime data into the checked-out `agent/` package tree, while legacy in-repo
+  runtime directories remain compatible.
 - Builder is workspace-first, syncs repos into managed workspaces, runs
   test/lint/conditional typecheck verification, and fails unknown acceptance
   criteria closed. Builder is now also initialized by the main orchestrator.
@@ -253,12 +264,12 @@ Status legend:
 |------|--------|-----------------|--------------------------|--------------------|
 | T1 Platform Foundation | in_progress | 96% | Shared control-plane primitives now back build and review directly, with explicit runtime coexistence rules plus shared job/artifact queries, persisted plan/trace/delivery records, first-class workspace joins, shared product-job persistence, retention-aware artifact records, explicit retention posture/prune flows, and explicit environment profiles exposed through the orchestrator and CLI. | No unified cross-domain action layer yet. |
 | T2 Reviewer Product | complete_for_phase | 96% | Reviewer bounded context, verifier, strict delivery gating, full client-safe redaction, honest execution mode, Telegram `/review`, structured API review entrypoint, shared delivery lifecycle, and reusable handoff summary artifacts now converge through the shared runtime. | LLM analysis and richer external delivery automation are v2 |
-| T3 Builder Product | complete_for_phase | 99% | Builder bounded context is tracked on `main`, capability-declared, resumable, orchestrator-wired, CLI-reachable, workspace-synced, repo-aware verification-discovering across Python/Node/Make/CI signals, source-aware execution-policy-gated, includes a bounded local implementation engine with copy/move-aware capability guardrails, implementation-backed acceptance criteria, release-readiness gating, and can hand approved build delivery bundles through the explicit external gateway boundary. | No general code generation and no semantic requirement engine yet |
-| T4 Operator Product | in_progress | 99% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, multi-step approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report service, authenticated operator REST API, HTML dashboard, archival download, a persisted settlement workflow with approve/deny/execute controls and retry feedback, release-readiness traces, and Telegram operator surface with `/report`, `/intake`, `/build`, `/jobs`, `/deliver`, `/telemetry`, and `/settlement` now exist. | No richer interactive operator app yet; recurring workflows and deeper dashboard drill-down remain future scope |
+| T3 Builder Product | complete_for_phase | 99% | Builder bounded context is tracked on `main`, capability-declared, resumable, orchestrator-wired, CLI-reachable, workspace-synced, repo-aware verification-discovering across Python/Node/Make/CI signals, source-aware execution-policy-gated, includes a bounded local implementation engine with copy/move-aware capability guardrails, description-driven LLM code generation, Docker-isolated verification with bounded auto-fix retries, implementation-backed acceptance criteria, release-readiness gating, and can hand approved build delivery bundles through the explicit external gateway boundary. | No semantic requirement engine yet, and code generation still stays inside a bounded workspace-mutation contract |
+| T4 Operator Product | in_progress | 99% | Unified intake routing, phase-aware `JobPlan` preview/submit output, persisted planner handoff records, planning traces, runtime budget blocking, managed repo acquisition/import, multi-step approval gating, shared review/build delivery lifecycle state, evidence export, richer operator report service, authenticated operator REST API, HTML dashboard, archival download, a persisted settlement workflow with approve/deny/execute controls and retry feedback, setup-doctor-driven self-host posture reporting, release-readiness traces, and Telegram operator surface with `/report`, `/intake`, `/build`, `/jobs`, `/deliver`, `/telemetry`, and `/settlement` now exist. | No richer interactive operator app yet; recurring workflows and deeper dashboard drill-down remain future scope |
 | T5 Security, Governance, And Policy | in_progress | 99% | Tool policy deny-by-default, strict delivery approval, full redaction pipeline, persistent/queryable approval storage with job/artifact/workspace/bundle linkage, deterministic review-gate/delivery/review-execution/build-execution policy profiles, capability-scoped builder guardrails, explicit gateway defaults, provider-aware gateway routing decisions, provider receipt validation, provider-outcome classification, release-readiness thresholds, no `AGENT_DEV_MODE` approval bypass, and structured denial payloads now exist across build/review/tool/web/social/finance-facing blocked flows. | Build and broader runtime execution still do not run under one fully unified enforcement engine |
 | T6 Cost, Usage, And Observability | complete_for_phase | 99% | UsageSummary on jobs, a durable per-job control-plane cost ledger, persisted duration/retry/failure telemetry for product jobs, point-in-time `TelemetrySnapshot` records with job throughput/latency/cost/delivery health/system resources, time-window aggregation with trend detection, orchestrator-visible build/review counters, durable planning/delivery/gateway/release/telemetry traces, runtime budget enforcement, budget-aware escalation controls, operator-facing reporting with telemetry summaries, review-eval smoke checks, golden review cases in CI, runtime quality telemetry with release labels, duration, and prior-baseline trend deltas, plus a CLI/CI release-readiness gate and `/telemetry` Telegram command now exist. | No richer live operator UI or broader longitudinal dashboards yet |
 | T7 External Capability Gateway | complete_for_phase | 99% | Runtime model and policy layer now expose explicit gateway defaults, separate delivery and API-call gateway contracts, a concrete `obolos.tech` provider catalog with buyer-side (catalog, wallet, API call), seller-side (publish, topup), and file-upload (marketplace_upload_v1 with multipart/form-data) capability routes, multi-provider resolution with intelligent fallback, x402 payment metadata extraction (Retry-After, x-payment-* headers, body fields), capability-to-providers map in catalog, readiness-aware env/vault config resolution, provider-aware route metadata, provider-specific request payload shaping, parsed provider receipts, persisted/ledgered external API calls with retained request/response artifacts, and a persisted settlement workflow surfaced through the orchestrator, API, dashboard, and Telegram. | Broader downstream provider workflow and additional provider integrations remain future scope |
-| T8 Enterprise Hardening | complete_for_phase | 100% | Shared control-plane layer, explicit runtime coexistence rules, review + build bounded contexts on shared primitives, persisted job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, deterministic review/build execution policy boundaries, explicit gateway runtime boundaries, provider configuration posture, explicit startup/config posture, stricter project-root handling, configurable pidfile location, explicit vault readiness, reduced post-init runtime mutation, public control-plane archival/settlement access, dashboard auth boundary, and architecture invariant plus deployment-contract tests now exist. | Phase 4 is closed for current scope; future selective extraction and stronger full-stack enforcement remain later architecture work. |
+| T8 Enterprise Hardening | complete_for_phase | 100% | Shared control-plane layer, explicit runtime coexistence rules, review + build bounded contexts on shared primitives, persisted job/plan/delivery state, retention-aware artifact records with prune flow, lower-level execution environment profiles plus higher-level local/operator/enterprise operating profiles, managed acquisition, client-safe evidence export, shared job/artifact/query/reporting surfaces, deterministic review/build execution policy boundaries, explicit gateway runtime boundaries, provider configuration posture, explicit startup/config posture, setup-doctor runtime checks, safer default runtime data directories for fresh installs, stricter project-root handling, configurable pidfile location, explicit vault readiness, reduced post-init runtime mutation, public control-plane archival/settlement access, dashboard auth boundary, and architecture invariant plus deployment-contract tests now exist. | Phase 4 is closed for current scope; future selective extraction and stronger full-stack enforcement remain later architecture work. |
 
 ## Epic Snapshot
 
@@ -283,7 +294,7 @@ Status legend:
 
 | Epic | Status | Approx Progress | Current Truth On `main` | Remaining Gap |
 |------|--------|-----------------|--------------------------|---------------|
-| T3-E1 Capability-Based Build Execution | complete_for_phase | 98% | BuildJob, BuildIntake, BuildService, BuildStorage, workspace sync, capability catalog, orchestrator runtime entrypoint, CLI build entrypoint, resumable checkpoints, deterministic patch/diff capture, a bounded local implementation engine with copy/move-aware capability guardrails, and build delivery package preview now exist on `main`. | No freeform or LLM code generation yet; bounded execution still depends on an explicit structured plan |
+| T3-E1 Capability-Based Build Execution | complete_for_phase | 98% | BuildJob, BuildIntake, BuildService, BuildStorage, workspace sync, capability catalog, orchestrator runtime entrypoint, CLI build entrypoint, resumable checkpoints, deterministic patch/diff capture, a bounded local implementation engine with copy/move-aware capability guardrails, description-driven LLM code generation when explicit plans are absent, and build delivery package preview now exist on `main`. | Execution is still bounded to file-mutation operations and does not yet act as a broader semantic planning engine |
 | T3-E2 Build Verification Loop | in_progress | 96% | Verification suite now discovers test/lint/typecheck surfaces from repo signals, package scripts, Make targets, CI workflow hints, and repo-local toolchains in the workspace, persists suite-level plus per-step verification artifacts, and exposes that evidence through the build delivery bundle. Successful jobs can invoke deterministic post-build review before completion, and acceptance failures now produce structured operator-facing denial detail. | Discovery is deeper and more honest, but it is still deterministic rather than a full language-specific execution planner, and reviewer still runs in READ_ONLY_HOST mode over the built workspace path. |
 | T3-E3 Acceptance Criteria Engine | complete_for_phase | 96% | Acceptance criteria now support typed states, required-vs-optional semantics, explicit evaluator hints, structured metadata, keyword-bound verification checks, explicit `verify:` commands, review-backed security checks, workspace text/JSON checks, change-set path/count/docs checks, delivery-usable acceptance reports with structured handoff summaries, and implementation-backed acceptance summaries over changed operations, paths, and modes. | No semantic requirement engine beyond deterministic rule-based evaluators. |
 
@@ -613,3 +624,15 @@ for release-by-release verification detail.
 - Reporting is initialized with settlement dependency at construction time,
   improving extraction readiness and removing post-init private mutation
 - Phase 4 closes on `1631 passed, 4 skipped` with no open PRs
+
+### Self-Host Onboarding Closure (v1.34.0)
+- **Status:** `complete_for_phase`
+- Setup doctor now surfaces project root, runtime data dir, pidfile, identity,
+  dashboard/API/Telegram posture, and operator-facing self-host warnings
+- Fresh installs now default to `.agent_runtime` instead of writing runtime
+  state into the checked-out Python package tree, while legacy `agent/`
+  runtime dirs remain compatible
+- CLI `--data-dir` now stays aligned with `AGENT_DATA_DIR` across status/report
+  helpers instead of silently drifting from the selected runtime path
+- Self-host docs, env templates, and packaging version markers now align with
+  the current runtime contract and release baseline

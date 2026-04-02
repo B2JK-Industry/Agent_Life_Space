@@ -1,7 +1,7 @@
 # Controlled Environments
 
 This guide documents the practical self-host deployment posture for Agent Life
-Space after the Phase 4 hardening arc closed on `v1.31.0`.
+Space on the current `v1.34.0` baseline.
 
 Use it when you want to run ALS consistently in one of the supported operating
 profiles:
@@ -72,7 +72,9 @@ Important:
 
 Recommended:
 - run ALS from the checked-out repository root
-- keep the SQLite/control-plane data under the repo-local configured data dir
+- set `AGENT_PROJECT_ROOT` explicitly for service-style deployments
+- keep SQLite/control-plane data under a dedicated runtime dir such as
+  `.agent_runtime`, not inside `./agent`
 - avoid ad-hoc alternate roots unless you also validate runtime model and
   gateway posture there
 
@@ -106,6 +108,7 @@ Resolution posture:
 Useful checks:
 
 ```bash
+python -m agent --setup-doctor
 python -m agent --gateway-catalog
 python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capability review_handoff_v1 --gateway-export-mode client_safe
 python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capability build_delivery_v1
@@ -119,7 +122,7 @@ python -m agent --call-provider-api --provider-api-provider obolos.tech --provid
 Before a release or important external handoff, run:
 
 ```bash
-python -m agent --release-readiness --release-readiness-release-label v1.31.0
+python -m agent --release-readiness --release-readiness-release-label v1.34.0
 ```
 
 What it checks today:
@@ -136,7 +139,7 @@ Fail-closed behavior:
 
 Recommended order:
 1. run local tests, lint, and typecheck
-2. inspect runtime/gateway posture
+2. run `--setup-doctor` and inspect runtime/gateway posture
 3. run `--release-readiness`
 4. only then create the release and external handoff
 
@@ -146,9 +149,10 @@ Typical command set:
 ./.venv/bin/ruff check .
 ./.venv/bin/pytest -q
 PATH="$PWD/.tools/node-v24.14.0-darwin-arm64/bin:$PATH" npm --prefix operator run typecheck
+python -m agent --setup-doctor
 python -m agent --runtime-model
 python -m agent --report
-python -m agent --release-readiness --release-readiness-release-label v1.31.0
+python -m agent --release-readiness --release-readiness-release-label v1.34.0
 ```
 
 ## Current Reality Check

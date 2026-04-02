@@ -208,13 +208,12 @@ class PaymentSettlementService:
             result = await self._gateway.call_api_via_capability(
                 provider_id=provider_id,
                 capability_id="wallet_balance_v1",
-                request_data={},
                 requester="settlement_service",
             )
             if result.get("ok"):
-                resp = result.get("response", {})
+                resp = result.get("normalized_response") or result.get("response_json", {})
                 return {
-                    "balance": float(resp.get("balance", 0.0)),
+                    "balance": float(resp.get("credits", resp.get("balance", 0.0))),
                     "currency": str(resp.get("currency", "credits")),
                     "ok": True,
                 }
@@ -343,7 +342,7 @@ class PaymentSettlementService:
             result = await self._gateway.call_api_via_capability(
                 provider_id=provider_id,
                 capability_id="wallet_topup_v1",
-                request_data={"amount": amount},
+                json_payload={"amount": amount},
                 requester="settlement_service",
             )
             if result.get("ok"):
@@ -359,7 +358,7 @@ class PaymentSettlementService:
                 return {
                     "ok": True,
                     "amount": amount,
-                    "result": result.get("response", {}),
+                    "result": result.get("normalized_response") or result.get("response_json", {}),
                     "retry": retry_result,
                 }
             else:
@@ -388,7 +387,15 @@ class PaymentSettlementService:
             result = await self._gateway.call_api_via_capability(
                 provider_id=orig.get("provider_id", provider_id),
                 capability_id=orig.get("capability_id", ""),
-                request_data=orig.get("request_data", {}),
+                resource=str(orig.get("resource", "")),
+                method=str(orig.get("method", "")),
+                query_params=dict(orig.get("query_params", {})),
+                json_payload=dict(orig.get("json_payload", {})),
+                form_data=(
+                    dict(orig["form_data"])
+                    if isinstance(orig.get("form_data"), dict)
+                    else None
+                ),
                 requester=f"settlement_retry:{request.settlement_id}",
             )
             logger.info(

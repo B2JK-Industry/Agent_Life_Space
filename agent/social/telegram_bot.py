@@ -21,6 +21,7 @@ Security:
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,7 @@ class TelegramBot:
         token: str,
         allowed_user_ids: list[int] | None = None,
         owner_name: str = "owner",
+        state_dir: str = "",
     ) -> None:
         if not token or not token.strip():
             msg = "Telegram bot token cannot be empty"
@@ -57,9 +59,19 @@ class TelegramBot:
         self._owner_name = owner_name
         self._session: aiohttp.ClientSession | None = None
         self._running = False
-        from agent.core.paths import get_project_root
-        _project_root = get_project_root()
-        self._update_id_file = Path(_project_root) / ".last_update_id"
+        configured_state_dir = state_dir.strip()
+        if configured_state_dir:
+            update_dir = Path(configured_state_dir).expanduser()
+        else:
+            runtime_data_dir = os.environ.get("AGENT_DATA_DIR", "").strip()
+            if runtime_data_dir:
+                update_dir = Path(runtime_data_dir).expanduser() / "telegram"
+            else:
+                from agent.core.paths import get_project_root
+
+                update_dir = Path(get_project_root())
+        update_dir.mkdir(parents=True, exist_ok=True)
+        self._update_id_file = update_dir / ".last_update_id"
         self._last_update_id = self._load_last_update_id()
         self._handlers: dict[str, Any] = {}
         self._message_callback: Any = None

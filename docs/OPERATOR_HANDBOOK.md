@@ -14,21 +14,31 @@ Praktický sprievodca pre vlastníka Agent Life Space.
 | Komunikovať s inými agentmi | Stable | API + replay protection |
 | Navrhovať výdavky | Stable | Human-in-the-loop |
 | Učiť sa z výsledkov | Partial | Skill tracking, model escalation |
-| Dashboard / UI | Not started | Len Telegram + CLI |
+| Dashboard / UI | Partial | API-key protected operator dashboard exists for jobs, settlements, retention, and audit |
 
 ## Denná operácia
 
 ### Štart
 ```bash
 source .venv/bin/activate
+python -m agent --setup-doctor
 python -m agent
 ```
+
+Odporúčané pre self-host:
+- nastav `AGENT_PROJECT_ROOT`
+- nastav dedikovaný `AGENT_DATA_DIR` mimo source tree, napr. `.agent_runtime`
+- nastav `AGENT_API_KEY`, ak chceš dashboard a operator API
+- skontroluj warnings zo `--setup-doctor` ešte pred prvým systemd deployom
 
 ### Kontrola stavu
 - `/status` — základný stav
 - `/health` — CPU, RAM, disk, moduly
 - `/usage` — token costs
 - `/memory [keyword]` — hľadaj v pamäti
+- `python -m agent --setup-doctor` — self-host config audit
+- `python -m agent --report` — operator inbox / settlement attention
+- dashboard: `http://127.0.0.1:8420/dashboard?key=$AGENT_API_KEY`
 
 ### Monitorovanie
 Agent loguje všetko cez `structlog`. Kľúčové log eventy:
@@ -96,6 +106,13 @@ inspector.get_conflict_report(["server"])  # Konfliktné fakty
 3. Owner schváli/zamietne cez Telegram alebo API
 4. Schválená transakcia sa dokončí
 
+### Settlement flow
+1. Gateway vráti `402 payment required`
+2. ALS vytvorí persisted settlement request
+3. Operator ho vidí v `/settlement`, dashboarde, a v operator reporte
+4. Owner môže `approve`, `deny`, alebo `execute`
+5. Úspešný top-up môže automaticky retry-nuť pôvodný API call
+
 ## Troubleshooting
 
 | Problém | Riešenie |
@@ -106,6 +123,8 @@ inspector.get_conflict_report(["server"])  # Konfliktné fakty
 | Security incident | Lockdown → logy → investigate |
 | Pamäť plná | Spusti memory decay + consolidation |
 | Workspace stuck | `cleanup_expired()` alebo manuálny cleanup |
+| Dashboard sa nepripojí | Skontroluj `AGENT_API_KEY`, otvor `/dashboard?key=...`, pozri `python -m agent --setup-doctor` |
+| Runtime píše dáta do repo | Nastav `AGENT_DATA_DIR` na dedikovaný adresár mimo `./agent` |
 
 ## Čo nerobiť
 

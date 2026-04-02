@@ -50,11 +50,16 @@ from agent.control.storage import ControlPlaneStorage
 from agent.control.workspace_queries import WorkspaceQueryService
 from agent.core.approval import ApprovalCategory, ApprovalQueue
 from agent.core.approval_storage import ApprovalStorage
-from agent.core.identity import get_identity_onboarding_warnings
+from agent.core.identity import (
+    get_agent_identity,
+    get_identity_onboarding_warnings,
+    get_identity_profile_path,
+)
 from agent.core.job_runner import JobConfig, JobRunner
 from agent.core.llm_router import LLMRouter
 from agent.core.messages import Message, MessageType, ModuleID
 from agent.core.operator import OperatorControls
+from agent.core.paths import get_project_root
 from agent.core.router import MessageRouter
 from agent.core.watchdog import Watchdog
 from agent.finance.tracker import FinanceTracker
@@ -344,6 +349,12 @@ class AgentOrchestrator:
         await self.tasks.close()
         await self.finance.close()
         await self.projects.close()
+        self.workspaces.close()
+        self.review._storage.close()
+        self.build._storage.close()
+        self.control_plane.get_storage_for_archival().close()
+        if getattr(self.approval_queue, "_storage", None) is not None:
+            self.approval_queue._storage.close()
 
         # Store shutdown memory (in a new connection since we closed)
         logger.info("agent_stopped")
@@ -1411,7 +1422,7 @@ class AgentOrchestrator:
         self,
         *,
         release_label: str = "",
-        policy_id: str = "phase2_closure",
+        policy_id: str = "phase4_closure",
     ) -> dict[str, Any]:
         """Run release-readiness checks over quality telemetry and gateway posture."""
         quality = await self.review_quality.evaluate_goldens(release_label=release_label)
@@ -1436,6 +1447,139 @@ class AgentOrchestrator:
             metadata=readiness,
         )
         return readiness
+
+    def get_setup_doctor(self) -> dict[str, Any]:
+        """Return a self-host focused runtime/setup report for operators."""
+        identity = get_agent_identity()
+        gateway_catalog = self.gateway.describe_capability_catalog()
+        gateway_summary = dict(gateway_catalog.get("summary", {}))
+        project_root = ""
+        try:
+            project_root = get_project_root()
+        except RuntimeError:
+            project_root = ""
+        data_dir_path = self._data_dir.expanduser()
+        resolved_data_dir = data_dir_path.resolve(strict=False)
+        pidfile_path = (
+            os.environ.get("AGENT_PIDFILE_PATH", "").strip()
+            or "/tmp/agent-life-space.pid"
+        )
+
+        llm_backend = (os.environ.get("LLM_BACKEND") or "cli").strip() or "cli"
+        llm_provider = (os.environ.get("LLM_PROVIDER") or "anthropic").strip() or "anthropic"
+        telegram_token_configured = bool(os.environ.get("TELEGRAM_BOT_TOKEN", "").strip())
+        telegram_user_ids = [
+            part.strip()
+            for part in os.environ.get("TELEGRAM_USER_ID", "").split(",")
+            if part.strip()
+        ]
+        api_key_configured = bool(os.environ.get("AGENT_API_KEY", "").strip())
+        vault_key_configured = bool(os.environ.get("AGENT_VAULT_KEY", "").strip())
+
+        warnings = list(get_identity_onboarding_warnings())
+
+        if not api_key_configured:
+            warnings.append(
+                "AGENT_API_KEY is not configured; authenticated API and dashboard access will be unavailable."
+            )
+        if not vault_key_configured:
+            warnings.append(
+                "AGENT_VAULT_KEY is not configured; encrypted vault-backed secrets will stay unavailable."
+            )
+        if telegram_token_configured and not telegram_user_ids:
+            warnings.append(
+                "TELEGRAM_BOT_TOKEN is configured but TELEGRAM_USER_ID is missing; the bot will not know which Telegram users are allowed."
+            )
+        if not telegram_token_configured:
+            warnings.append(
+                "TELEGRAM_BOT_TOKEN is not configured; Telegram control surface is disabled."
+            )
+
+        llm_configured = True
+        if llm_backend == "api":
+            if llm_provider == "anthropic":
+                llm_configured = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+                if not llm_configured:
+                    warnings.append(
+                        "LLM_BACKEND=api with anthropic provider but ANTHROPIC_API_KEY is missing."
+                    )
+            elif llm_provider == "openai":
+                llm_configured = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+                if not llm_configured:
+                    warnings.append(
+                        "LLM_BACKEND=api with openai provider but OPENAI_API_KEY is missing."
+                    )
+            elif llm_provider == "local":
+                llm_configured = bool(os.environ.get("OPENAI_BASE_URL", "").strip())
+                if not llm_configured:
+                    warnings.append(
+                        "LLM_BACKEND=api with local provider but OPENAI_BASE_URL is missing."
+                    )
+        else:
+            llm_configured = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip())
+            if not llm_configured:
+                warnings.append(
+                    "CLAUDE_CODE_OAUTH_TOKEN is not configured; the Claude CLI backend depends on an existing host login session."
+                )
+
+        if (
+            int(gateway_summary.get("total_routes", 0) or 0) > 0
+            and int(gateway_summary.get("configured_routes", 0) or 0) == 0
+        ):
+            warnings.append(
+                "Gateway providers are present but no routes are configured in this environment."
+            )
+        if not data_dir_path.is_absolute():
+            warnings.append(
+                "Current data_dir is relative; for systemd or multi-instance deployments prefer an absolute AGENT_DATA_DIR or --data-dir."
+            )
+        if project_root:
+            package_dir = (Path(project_root).expanduser() / "agent").resolve(strict=False)
+            if resolved_data_dir.is_relative_to(package_dir):
+                warnings.append(
+                    "Current data_dir points into the checked-out Python package directory. Use a dedicated runtime directory such as .agent_runtime or /var/lib/agent-life-space."
+                )
+
+        return {
+            "project_root": project_root,
+            "data_dir": str(self._data_dir),
+            "identity_profile_path": str(get_identity_profile_path()),
+            "pidfile_path": pidfile_path,
+            "identity": {
+                "agent_name": identity.agent_name,
+                "server_name": identity.server_name,
+                "owner_name": identity.owner_name,
+                "owner_full_name": identity.owner_full_name,
+                "default_language": identity.default_language or "follow_user_language",
+            },
+            "surfaces": {
+                "telegram": {
+                    "enabled": telegram_token_configured,
+                    "authorized_user_ids_configured": bool(telegram_user_ids),
+                    "authorized_user_id_count": len(telegram_user_ids),
+                },
+                "api": {
+                    "enabled": api_key_configured,
+                },
+                "dashboard": {
+                    "enabled": api_key_configured,
+                },
+                "vault": {
+                    "configured": vault_key_configured,
+                },
+                "llm": {
+                    "backend": llm_backend,
+                    "provider": llm_provider,
+                    "configured": llm_configured,
+                },
+                "gateway": {
+                    "total_routes": int(gateway_summary.get("total_routes", 0) or 0),
+                    "configured_routes": int(gateway_summary.get("configured_routes", 0) or 0),
+                    "total_capabilities": int(gateway_summary.get("total_capabilities", 0) or 0),
+                },
+            },
+            "warnings": warnings,
+        }
 
     def get_gateway_catalog(
         self,
@@ -1594,6 +1738,7 @@ class AgentOrchestrator:
             )[:10]
         ]
         control_stats = self.control_plane.get_stats()
+        setup_report = self.get_setup_doctor()
         return {
             "running": self._running,
             "memory": self.memory.get_stats(),
@@ -1638,9 +1783,25 @@ class AgentOrchestrator:
                 "recent_jobs": recent_worker_jobs,
                 "circuit_breaker_open": self.job_runner.circuit_breaker_open,
             },
+            "setup": setup_report,
+            "setup_warnings": list(setup_report["warnings"]),
             "watchdog": self.watchdog.get_stats(),
             "router": self.router.get_metrics(),
         }
 
     def _plan_status(self, value: str) -> PlanRecordStatus:
-        return PlanRecordStatus(value)
+        normalized = str(value).strip()
+        plan_status_map = {
+            "created": PlanRecordStatus.SUBMITTED,
+            "submitted": PlanRecordStatus.SUBMITTED,
+            "validating": PlanRecordStatus.EXECUTING,
+            "running": PlanRecordStatus.EXECUTING,
+            "verifying": PlanRecordStatus.EXECUTING,
+            "awaiting_approval": PlanRecordStatus.AWAITING_APPROVAL,
+            "blocked": PlanRecordStatus.BLOCKED,
+            "completed": PlanRecordStatus.COMPLETED,
+            "failed": PlanRecordStatus.FAILED,
+            "executing": PlanRecordStatus.EXECUTING,
+            "preview": PlanRecordStatus.PREVIEW,
+        }
+        return plan_status_map.get(normalized, PlanRecordStatus.FAILED)

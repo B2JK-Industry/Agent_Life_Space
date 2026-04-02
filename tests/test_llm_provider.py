@@ -5,6 +5,7 @@ Tests for LLM Provider abstraction layer.
 from __future__ import annotations
 
 import os
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -116,13 +117,21 @@ class TestClaudeCliProvider:
         """
         provider = ClaudeCliProvider()
         with patch.dict(os.environ, {"AGENT_SANDBOX_ONLY": "1"}):
-            req = GenerateRequest(
-                messages=[{"role": "user", "content": "write code"}],
-                allow_file_access=True,
-            )
-            resp = await provider.generate(req)
-            # Should succeed — runs without file access, not blocked
-            assert resp.success
+            with patch("agent.core.llm_provider.subprocess.run") as mock_run:
+                mock_run.return_value = subprocess.CompletedProcess(
+                    args=["claude"],
+                    returncode=0,
+                    stdout='{"result":"ok","is_error":false,"usage":{"input_tokens":10,"output_tokens":5}}',
+                    stderr="",
+                )
+                req = GenerateRequest(
+                    messages=[{"role": "user", "content": "write code"}],
+                    allow_file_access=True,
+                )
+                resp = await provider.generate(req)
+                assert resp.success
+                called_args = mock_run.call_args.args[0]
+                assert "--dangerously-skip-permissions" not in called_args
 
 
 class TestAnthropicProvider:

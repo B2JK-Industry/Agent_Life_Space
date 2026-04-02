@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -91,6 +92,16 @@ class TestPidfileConfig:
             import agent.__main__ as main_mod
             importlib.reload(main_mod)
             assert main_mod.PIDFILE == "/custom/path.pid"
+
+
+class TestVersionDiscipline:
+    """Packaging and runtime version markers should not drift."""
+
+    def test_pyproject_version_matches_runtime_package_version(self):
+        import agent
+
+        pyproject = tomllib.loads((Path(__file__).resolve().parent.parent / "pyproject.toml").read_text())
+        assert pyproject["project"]["version"] == agent.__version__
 
 
 class TestVaultReadiness:

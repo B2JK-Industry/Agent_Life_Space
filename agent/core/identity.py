@@ -89,6 +89,11 @@ def _get_identity_profile_path() -> Path:
     return Path(get_project_root()) / ".agent_runtime" / "identity" / "owner_profile.json"
 
 
+def get_identity_profile_path() -> Path:
+    """Public identity profile path for runtime status and self-host checks."""
+    return _get_identity_profile_path()
+
+
 def _load_identity_profile() -> dict[str, object]:
     path = _get_identity_profile_path()
     try:

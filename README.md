@@ -38,8 +38,11 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Control-plane queries** — shared inspection across build, review, task, job-runner, agent-loop, artifact, plan, delivery, and workspace state
 - **Runtime model** — explicit coexistence rules for product jobs, planning tasks, infrastructure jobs, and conversational queue items
 - **Release readiness gate** — deterministic CLI/CI quality and gateway posture gate before release or handoff
+- **Operator dashboard** — authenticated `/dashboard` surface for jobs, settlements, retention, audit, and operator metrics
+- **Settlement workflow** — persisted 402/top-up approval flow across API, dashboard, and Telegram with retry support
+- **Setup doctor** — `python -m agent --setup-doctor` audits self-host identity, LLM, gateway, and operator posture before first run
 - **Operator CLI surfaces** — `--report`, `--runtime-model`, `--export-evidence-job`, `--export-evidence-mode client_safe`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, `--list-persisted-jobs`, `--list-retained-artifacts`, `--prune-expired-retained-artifacts`, `--list-cost-ledger`, unified `--intake-*`, and explicit delivery handoff
-- **1632+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **1668+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -51,20 +54,36 @@ pip install -e . && pip install sentence-transformers
 ```
 
 ```bash
+export AGENT_PROJECT_ROOT="$PWD"            # recommended for self-host + systemd
+export AGENT_DATA_DIR="$PWD/.agent_runtime" # keeps runtime DBs/logs out of the source tree
+export AGENT_PIDFILE_PATH="$PWD/.agent-life-space.pid"
 export TELEGRAM_BOT_TOKEN="your_token"      # from @BotFather
 export TELEGRAM_USER_ID="your_id"           # your Telegram user ID
-export AGENT_NAME="MyAgent"                 # optional but recommended
-export AGENT_SERVER_NAME="my-server"        # optional but recommended
+export AGENT_NAME="MyAgent"                 # recommended
+export AGENT_SERVER_NAME="my-server"        # recommended
 export AGENT_VAULT_KEY="your_key"           # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 export AGENT_API_KEY="your_api_key"         # python -c "import secrets; print(f'agent_api_{secrets.token_urlsafe(24)}')"
+
+# choose one LLM backend:
+# CLI backend (Claude Code installed and logged in on the same host)
+export LLM_BACKEND="cli"
+# export CLAUDE_CODE_OAUTH_TOKEN="..."
+
+# or API backend
+# export LLM_BACKEND="api"
+# export LLM_PROVIDER="anthropic"
+# export ANTHROPIC_API_KEY="sk-ant-..."
+
 # optional: leave owner fields empty and let the first authorized Telegram message teach the owner profile
 # export AGENT_OWNER_NAME="Your name"
 # export AGENT_OWNER_FULL_NAME="Your full name"
 
+.venv/bin/python -m agent --setup-doctor
 .venv/bin/python -m agent
 ```
 
 See **[Deployment guide](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Deployment)** for full setup (Docker, systemd, Cloudflare tunnel, firewall).
+After startup, the dashboard is available at `/dashboard` on the API port and uses the same `AGENT_API_KEY`.
 
 ## Architecture
 
@@ -120,7 +139,8 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 1371+ passed, ~24s, $0.00
+.venv/bin/python -m agent --setup-doctor
+.venv/bin/python -m pytest tests/ -q   # 1668+ passed, offline, $0.00
 ```
 
 | Layer | Tests | What |
@@ -173,9 +193,9 @@ This project is honest about what works and what doesn't yet.
 | Workspace | Working | No cleanup scheduler (must call `cleanup_expired()` manually). |
 | Routing | Working | Keyword + signal heuristics. No ML-based classification. |
 | Learning | Partial | Model failure tracking resets on restart. No eval set. |
-| Finance | Foundation | Propose/approve flow exists and approvals are queryable, but no live operator UI. |
+| Finance | Partial | Approval + settlement workflows exist across Telegram, API, and dashboard, but this is still owner-operated rather than a richer multi-user finance console. |
 | Multi-channel | Foundation | Telegram only in production. Discord/email are interfaces, not implemented. |
-| Dashboard | Not started | No operator UI. Everything via Telegram or CLI. |
+| Dashboard | Partial | API-key protected operator dashboard exists, but it is still a focused owner UI, not a broader multi-user app. |
 
 See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) for security boundaries and [docs/LEARNING_MODEL.md](docs/LEARNING_MODEL.md) for learning system spec.
 

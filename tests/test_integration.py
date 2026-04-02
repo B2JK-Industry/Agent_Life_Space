@@ -81,6 +81,17 @@ class TestAgentLifecycle:
 
         assert agent._running is False
 
+    @pytest.mark.asyncio
+    async def test_stop_closes_sqlite_backed_services(self, agent: AgentOrchestrator) -> None:
+        """Shutdown closes SQLite-backed operator services and workspaces."""
+        await agent.stop()
+
+        assert agent.workspaces._db is None
+        assert agent.review._storage._db is None
+        assert agent.build._storage._db is None
+        assert agent.control_plane._storage._db is None
+        assert agent.approval_queue._storage._db is None
+
 
 class TestMessageIntegration:
     """Messages flow between modules correctly."""
@@ -283,6 +294,36 @@ class TestFullStatus:
     async def test_status_tasks_section(self, agent: AgentOrchestrator) -> None:
         status = agent.get_status()
         assert "total_tasks" in status["tasks"]
+
+    @pytest.mark.asyncio
+    async def test_setup_report_surfaces_self_host_warnings(
+        self, agent: AgentOrchestrator, monkeypatch
+    ) -> None:
+        monkeypatch.delenv("AGENT_API_KEY", raising=False)
+        monkeypatch.delenv("AGENT_VAULT_KEY", raising=False)
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+        monkeypatch.delenv("TELEGRAM_USER_ID", raising=False)
+        monkeypatch.delenv("AGENT_NAME", raising=False)
+        monkeypatch.delenv("AGENT_SERVER_NAME", raising=False)
+        monkeypatch.delenv("AGENT_OWNER_NAME", raising=False)
+        monkeypatch.delenv("AGENT_OWNER_FULL_NAME", raising=False)
+        monkeypatch.setenv("LLM_BACKEND", "api")
+        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        report = agent.get_setup_doctor()
+        status = agent.get_status()
+
+        assert report["surfaces"]["telegram"]["enabled"] is False
+        assert report["surfaces"]["api"]["enabled"] is False
+        assert report["surfaces"]["llm"]["configured"] is False
+        assert report["project_root"]
+        assert report["pidfile_path"]
+        assert any("AGENT_API_KEY" in warning for warning in report["warnings"])
+        assert any("TELEGRAM_BOT_TOKEN" in warning for warning in report["warnings"])
+        assert any("ANTHROPIC_API_KEY" in warning for warning in report["warnings"])
+        assert status["setup"]["surfaces"]["dashboard"]["enabled"] is False
+        assert status["setup_warnings"] == report["warnings"]
 
 
 # ─────────────────────────────────────────────

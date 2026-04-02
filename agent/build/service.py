@@ -453,17 +453,31 @@ class BuildService:
                 )
             except Exception as e:
                 t_codegen.fail(str(e))
-                job.status = JobStatus.FAILED
-                job.error = f"Code generation failed: {e}"
-                job.denial = make_denial(
-                    code="build_codegen_failed",
-                    summary="LLM code generation failed",
-                    detail=str(e)[:500],
-                    scope=job.intake.repo_path,
-                    suggested_action="Simplify the description or provide explicit implementation_plan.",
-                ).to_dict()
-                self._finalize(job, workspace_path)
-                return job
+                job.metadata["codegen_fallback"] = True
+                job.metadata["codegen_error"] = str(e)[:500]
+                logger.warning(
+                    "build_codegen_fallback",
+                    job_id=job.id,
+                    error=str(e)[:500],
+                    hint=(
+                        "continuing without structured operations; "
+                        "builder will stay in audit_marker_only mode"
+                    ),
+                )
+                self._record_control_trace(
+                    trace_kind=TraceRecordKind.EXECUTION,
+                    title="Code generation fallback",
+                    detail=(
+                        "LLM code generation failed; continuing without "
+                        "structured operations."
+                    ),
+                    job_id=job.id,
+                    workspace_id=job.workspace_id,
+                    metadata={
+                        "error": str(e)[:500],
+                        "fallback_mode": BuildImplementationMode.AUDIT_MARKER_ONLY.value,
+                    },
+                )
 
         # ── Step 3: Build (execute implementation) ──
         job.status = JobStatus.RUNNING

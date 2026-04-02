@@ -738,6 +738,7 @@ class BuildJob:
     # Output
     artifacts: list[BuildArtifact] = field(default_factory=list)
     execution_trace: list[ExecutionStep] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     # Cost
     usage: UsageSummary = field(default_factory=UsageSummary)
@@ -805,6 +806,7 @@ class BuildJob:
             ],
             "artifacts": [a.to_dict() for a in self.artifacts],
             "execution_trace": [t.to_dict() for t in self.execution_trace],
+            "metadata": dict(self.metadata),
             "usage": self.usage.to_dict(),
             "error": self.error,
             "denial": dict(self.denial),
@@ -866,6 +868,7 @@ class BuildJob:
             implementation_results=implementation_results,
             artifacts=artifacts,
             execution_trace=traces,
+            metadata=dict(d.get("metadata", {})),
             usage=usage,
             error=d.get("error", ""),
             denial=dict(d.get("denial", {})),
