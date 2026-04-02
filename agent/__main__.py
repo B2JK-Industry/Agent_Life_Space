@@ -16,6 +16,7 @@ import os
 import signal
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 import structlog
 
@@ -36,6 +37,34 @@ logger = structlog.get_logger(__name__)
 
 
 PIDFILE = os.environ.get("AGENT_PIDFILE_PATH", "/tmp/agent-life-space.pid")
+
+
+def _resolve_default_data_dir(root: Path | None = None) -> str:
+    """Prefer explicit runtime dirs, but preserve legacy in-repo data if present."""
+    configured = os.environ.get("AGENT_DATA_DIR", "").strip()
+    if configured:
+        return configured
+
+    base = root or Path.cwd()
+    legacy_root = base / "agent"
+    legacy_markers = (
+        legacy_root / "approval" / "approvals.db",
+        legacy_root / "build" / "builds.db",
+        legacy_root / "control" / "control.db",
+        legacy_root / "review" / "reviews.db",
+        legacy_root / "identity" / "owner_profile.json",
+    )
+    if any(marker.exists() for marker in legacy_markers):
+        return "agent"
+    return ".agent_runtime"
+
+
+DEFAULT_DATA_DIR = _resolve_default_data_dir()
+
+
+def _apply_runtime_env_defaults(data_dir: str) -> None:
+    """Keep CLI/runtime helpers aligned with the selected data directory."""
+    os.environ.update({"AGENT_DATA_DIR": data_dir})
 
 
 def _check_pidfile() -> None:
@@ -73,7 +102,7 @@ def _remove_pidfile() -> None:
 
 async def run_agent(data_dir: str = "agent") -> None:
     """Main agent loop with graceful shutdown."""
-    os.environ.setdefault("AGENT_DATA_DIR", data_dir)
+    _apply_runtime_env_defaults(data_dir)
     _check_pidfile()
 
     # Redirect logs to file BEFORE anything else if terminal mode is active
@@ -150,7 +179,12 @@ async def run_agent(data_dir: str = "agent") -> None:
             # Support comma-separated user IDs: "123,456,789"
             allowed_ids = [int(x.strip()) for x in tg_user_id.split(",") if x.strip()] if tg_user_id else []
             owner_name = os.environ.get("AGENT_OWNER_NAME", "owner")
-            bot = TelegramBot(token=tg_token, allowed_user_ids=allowed_ids, owner_name=owner_name)
+            bot = TelegramBot(
+                token=tg_token,
+                allowed_user_ids=allowed_ids,
+                owner_name=owner_name,
+                state_dir=os.path.join(data_dir, "telegram"),
+            )
             # Start agent work loop
             from agent.core.agent_loop import AgentLoop
             owner_id = int(tg_user_id.split(",")[0]) if tg_user_id else 0
@@ -315,6 +349,7 @@ async def show_status(data_dir: str = "agent") -> None:
     """Show agent status without starting the full agent."""
     import orjson
 
+    _apply_runtime_env_defaults(data_dir)
     agent = AgentOrchestrator(data_dir=data_dir)
     await agent.initialize()
     status = agent.get_status()
@@ -326,6 +361,7 @@ async def show_health(data_dir: str = "agent") -> None:
     """Show system health."""
     import orjson
 
+    _apply_runtime_env_defaults(data_dir)
     agent = AgentOrchestrator(data_dir=data_dir)
     await agent.initialize()
     health = agent.watchdog.get_system_health()
@@ -346,6 +382,7 @@ async def show_operator_report(data_dir: str = "agent") -> None:
     """Show a compact operator-facing report/inbox snapshot."""
     import orjson
 
+    _apply_runtime_env_defaults(data_dir)
     agent = AgentOrchestrator(data_dir=data_dir)
     await agent.initialize()
     report = agent.get_operator_report()
@@ -357,6 +394,7 @@ async def show_runtime_model(data_dir: str = "agent") -> None:
     """Show explicit runtime coexistence rules."""
     import orjson
 
+    _apply_runtime_env_defaults(data_dir)
     agent = AgentOrchestrator(data_dir=data_dir)
     await agent.initialize()
     print(orjson.dumps(agent.get_runtime_model(), option=orjson.OPT_INDENT_2).decode())
@@ -374,6 +412,7 @@ async def show_gateway_catalog(
     """Show configured external gateway providers, routes, and readiness."""
     import orjson
 
+    _apply_runtime_env_defaults(data_dir)
     agent = AgentOrchestrator(data_dir=data_dir)
     await agent.initialize()
     print(
@@ -420,6 +459,7 @@ async def call_provider_api_command(
     """Call one external provider API capability through the gateway."""
     import orjson
 
+    _apply_runtime_env_defaults(data_dir)
     agent = AgentOrchestrator(data_dir=data_dir)
     await agent.initialize()
     result = await agent.call_external_api(
@@ -803,6 +843,7 @@ async def evaluate_review_quality_command(
     """Run deterministic golden review cases and print quality telemetry."""
     import orjson
 
+    _apply_runtime_env_defaults(data_dir)
     agent = AgentOrchestrator(data_dir=data_dir)
     await agent.initialize()
     result = await agent.evaluate_review_quality(release_label=release_label)
@@ -814,11 +855,12 @@ async def evaluate_release_readiness_command(
     *,
     data_dir: str = "agent",
     release_label: str = "",
-    policy_id: str = "phase2_closure",
+    policy_id: str = "phase4_closure",
 ) -> None:
     """Run release-readiness checks and fail closed when the gate is not ready."""
     import orjson
 
+    _apply_runtime_env_defaults(data_dir)
     agent = AgentOrchestrator(data_dir=data_dir)
     await agent.initialize()
     try:
@@ -833,6 +875,23 @@ async def evaluate_release_readiness_command(
         raise SystemExit(1)
 
 
+async def show_setup_doctor_command(
+    *,
+    data_dir: str = "agent",
+) -> None:
+    """Show a self-host focused setup/configuration report."""
+    import orjson
+
+    _apply_runtime_env_defaults(data_dir)
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    try:
+        report = agent.get_setup_doctor()
+        print(orjson.dumps(report, option=orjson.OPT_INDENT_2).decode())
+    finally:
+        await agent.stop()
+
+
 async def show_artifact_command(
     *,
     data_dir: str = "agent",
@@ -842,6 +901,7 @@ async def show_artifact_command(
     """Show one shared build/review artifact."""
     import orjson
 
+    _apply_runtime_env_defaults(data_dir)
     agent = AgentOrchestrator(data_dir=data_dir)
     await agent.initialize()
     artifact = agent.get_product_artifact(artifact_id, kind=kind or None)
@@ -1009,8 +1069,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--data-dir",
-        default="agent",
-        help="Data directory for agent storage (default: agent)",
+        default=DEFAULT_DATA_DIR,
+        help="Data directory for agent storage (default: AGENT_DATA_DIR, legacy agent/, or .agent_runtime)",
     )
     parser.add_argument(
         "--status",
@@ -1300,8 +1360,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--gateway-policy-id",
-        default="approval_before_gateway",
-        help="Gateway policy id for gateway delivery commands",
+        default="",
+        help="Optional gateway policy override for gateway delivery and provider API commands",
     )
     parser.add_argument(
         "--gateway-provider",
@@ -1407,8 +1467,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--release-readiness-policy-id",
-        default="phase2_closure",
+        default="phase4_closure",
         help="Policy id for --release-readiness",
+    )
+    parser.add_argument(
+        "--setup-doctor",
+        action="store_true",
+        help="Show self-host setup/configuration posture and exit",
     )
     parser.add_argument(
         "--runtime-model",
@@ -1575,6 +1640,7 @@ def main() -> None:
         help="Unified operator intake: only show qualification, do not execute",
     )
     args = parser.parse_args()
+    _apply_runtime_env_defaults(args.data_dir)
 
     if args.status:
         asyncio.run(show_status(args.data_dir))
@@ -1741,6 +1807,8 @@ def main() -> None:
                 policy_id=args.release_readiness_policy_id,
             )
         )
+    elif args.setup_doctor:
+        asyncio.run(show_setup_doctor_command(data_dir=args.data_dir))
     elif args.gateway_catalog:
         asyncio.run(
             show_gateway_catalog(

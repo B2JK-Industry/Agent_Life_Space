@@ -1417,6 +1417,7 @@ class ExternalGatewayService:
         normalized_method = str(method or "").upper()
         if route.request_mode == "obolos_marketplace_catalog_v1":
             return {
+                "resource": "",
                 "method": "GET",
                 "target_url": target_url,
                 "query_params": dict(query_params),
@@ -1424,6 +1425,7 @@ class ExternalGatewayService:
             }
         if route.request_mode == "obolos_wallet_balance_v1":
             return {
+                "resource": "",
                 "method": "GET",
                 "target_url": target_url,
                 "query_params": {},
@@ -1434,6 +1436,7 @@ class ExternalGatewayService:
             if not slug:
                 raise ValueError("Provider capability requires a marketplace API slug.")
             return {
+                "resource": slug,
                 "method": normalized_method or ("POST" if json_payload else "GET"),
                 "target_url": f"{target_url.rstrip('/')}/{slug}",
                 "query_params": dict(query_params),
@@ -1441,6 +1444,7 @@ class ExternalGatewayService:
             }
         if route.request_mode == "obolos_seller_publish_v1":
             return {
+                "resource": "",
                 "method": "POST",
                 "target_url": f"{target_url.rstrip('/')}/seller/apis",
                 "query_params": {},
@@ -1448,6 +1452,7 @@ class ExternalGatewayService:
             }
         if route.request_mode == "obolos_wallet_topup_v1":
             return {
+                "resource": "",
                 "method": "POST",
                 "target_url": f"{target_url.rstrip('/')}/wallet/topup",
                 "query_params": {},
@@ -1593,7 +1598,15 @@ class ExternalGatewayService:
                         {
                             "provider_id": provider_id,
                             "capability_id": capability_id,
-                            "request_data": dict(request_spec.get("body", {})),
+                            "resource": str(request_spec.get("resource", "")),
+                            "method": request_spec["method"],
+                            "query_params": dict(request_spec.get("query_params", {})),
+                            "json_payload": dict(request_spec.get("json_payload", {})),
+                            "form_data": (
+                                dict(request_spec["form_data"])
+                                if isinstance(request_spec.get("form_data"), dict)
+                                else None
+                            ),
                         },
                     )
                 except Exception:

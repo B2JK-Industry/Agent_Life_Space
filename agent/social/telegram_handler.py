@@ -262,6 +262,7 @@ class TelegramHandler:
             "/jobs — zoznam product jobov (review, build)\n"
             "/deliver — delivery status, filter, retry a odoslanie\n"
             "/telemetry — runtime telemetry dashboard\n"
+            "/settlement — payment settlement queue a akcie\n"
             "/workflow — recurring workflow management\n"
             "/pipeline — multi-job pipeline orchestration\n"
             "/report — operator report, inbox, margin\n"
@@ -271,7 +272,7 @@ class TelegramHandler:
 
     async def _cmd_status(self, args: str) -> str:
         status = self._agent.get_status()
-        return (
+        lines = [
             f"*Agent Status*\n"
             f"Running: {status['running']}\n"
             f"Spomienky: {status['memory']['total_memories']}\n"
@@ -281,7 +282,15 @@ class TelegramHandler:
             f"Joby zlyhané: {status['jobs']['total_failed']}\n"
             f"Watchdog moduly: {status['watchdog']['modules_registered']} "
             f"({status['watchdog']['modules_healthy']} healthy)"
-        )
+        ]
+        setup_warnings = list(status.get("setup_warnings", []))
+        if setup_warnings:
+            preview = "\n".join(f"  - {warning}" for warning in setup_warnings[:3])
+            remaining = len(setup_warnings) - 3
+            lines.append(f"\n\n*Setup warnings:*\n{preview}")
+            if remaining > 0:
+                lines.append(f"\n  ... a ďalších {remaining}")
+        return "".join(lines)
 
     async def _cmd_health(self, args: str) -> str:
         health = self._agent.watchdog.get_system_health()
@@ -1815,7 +1824,7 @@ class TelegramHandler:
         return "\n".join(lines)
 
     async def _cmd_settlement(self, args: str) -> str:
-        """Settlement management: list pending, approve, deny."""
+        """Settlement management: list pending, approve, deny, execute."""
         if not hasattr(self._agent, "settlement"):
             return "*Settlement service not initialized.*"
 
@@ -1833,7 +1842,10 @@ class TelegramHandler:
                     f"  `{s.settlement_id}` — {p.provider_id} "
                     f"${p.amount_required:.4f} (balance: ${s.wallet_balance:.4f})"
                 )
-            lines.append("\n`/settlement approve <id>` | `/settlement deny <id>`")
+            lines.append(
+                "\n`/settlement approve <id>` | `/settlement deny <id>` | "
+                "`/settlement execute <id>`"
+            )
             return "\n".join(lines)
 
         if parts[0] == "approve" and len(parts) >= 2:
@@ -1848,7 +1860,24 @@ class TelegramHandler:
                 return f"*Settlement denied:* `{parts[1]}`"
             return f"*Error:* Settlement `{parts[1]}` not found or not pending."
 
-        return "*Použitie:* `/settlement` | `/settlement approve <id>` | `/settlement deny <id>`"
+        if parts[0] == "execute" and len(parts) >= 2:
+            result = await svc.execute_topup(parts[1])
+            if result.get("ok"):
+                retry = result.get("retry", {})
+                retry_note = ""
+                if retry.get("retried"):
+                    retry_note = f"\nRetry: {'OK' if retry.get('ok') else 'FAIL'}"
+                return (
+                    f"*Settlement executed:* `{parts[1]}`\n"
+                    f"Amount: ${float(result.get('amount', 0.0)):.4f}"
+                    f"{retry_note}"
+                )
+            return f"*Error:* {result.get('error', 'Settlement execution failed.')}"
+
+        return (
+            "*Použitie:* `/settlement` | `/settlement approve <id>` | "
+            "`/settlement deny <id>` | `/settlement execute <id>`"
+        )
 
     async def _cmd_telemetry(self, args: str) -> str:
         """Runtime telemetry dashboard — throughput, latency, cost, delivery health."""

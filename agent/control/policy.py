@@ -956,6 +956,19 @@ _ESCALATION_BUDGET_POLICIES: dict[str, EscalationBudgetPolicy] = {
 }
 
 _RELEASE_READINESS_POLICIES: dict[str, ReleaseReadinessPolicy] = {
+    "phase4_closure": ReleaseReadinessPolicy(
+        id="phase4_closure",
+        label="Phase 4 runtime closure readiness",
+        minimum_total_cases=3,
+        minimum_exact_match_rate=1.0,
+        minimum_verdict_accuracy=1.0,
+        minimum_count_accuracy=1.0,
+        minimum_title_accuracy=1.0,
+        max_false_positive_cases=0,
+        max_false_negative_cases=0,
+        allow_quality_regression=False,
+        warn_when_gateway_unconfigured=True,
+    ),
     "phase2_closure": ReleaseReadinessPolicy(
         id="phase2_closure",
         label="Phase 2 closure readiness",
@@ -1472,12 +1485,12 @@ def classify_provider_delivery_outcome(
 
 
 def get_release_readiness_policy(
-    policy_id: str = "phase2_closure",
+    policy_id: str = "phase4_closure",
 ) -> ReleaseReadinessPolicy:
-    """Resolve release-readiness thresholds for Phase 2 closure and beyond."""
+    """Resolve release-readiness thresholds for the current runtime baseline."""
     return _RELEASE_READINESS_POLICIES.get(
         policy_id,
-        _RELEASE_READINESS_POLICIES["phase2_closure"],
+        _RELEASE_READINESS_POLICIES["phase4_closure"],
     )
 
 
@@ -1490,7 +1503,7 @@ def evaluate_release_readiness(
     *,
     quality_summary: dict[str, Any],
     gateway_catalog: dict[str, Any] | None = None,
-    policy_id: str = "phase2_closure",
+    policy_id: str = "phase4_closure",
 ) -> dict[str, Any]:
     """Evaluate whether the current runtime posture is ready for release use."""
     policy = get_release_readiness_policy(policy_id)

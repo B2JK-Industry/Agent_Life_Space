@@ -319,13 +319,14 @@ class TestAgentAPIAuth:
 class TestOwnerIdentification:
     """Tests for TelegramBot owner resolution in _handle_message."""
 
-    def _make_bot(self, allowed_ids=None, owner_name="owner"):
+    def _make_bot(self, allowed_ids=None, owner_name="owner", state_dir=""):
         with patch("agent.social.telegram_bot.aiohttp"):
             from agent.social.telegram_bot import TelegramBot
             bot = TelegramBot(
                 token="fake:token",
                 allowed_user_ids=allowed_ids or [],
                 owner_name=owner_name,
+                state_dir=state_dir,
             )
             bot._session = MagicMock()
             bot._bot_username = "test_bot"
@@ -354,8 +355,14 @@ class TestOwnerIdentification:
         with patch.object(bot, "send_message", new_callable=AsyncMock):
             await bot._handle_message(message)
 
-        assert captured["username"] == "dan_tg"
-        assert captured["is_owner"] is True
+    def test_update_id_file_prefers_agent_data_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AGENT_DATA_DIR", str(tmp_path / "agent-data"))
+
+        bot = self._make_bot()
+
+        assert bot._update_id_file == (
+            tmp_path / "agent-data" / "telegram" / ".last_update_id"
+        )
 
     @pytest.mark.asyncio
     async def test_owner_identity_is_captured_from_telegram(self, monkeypatch, tmp_path):

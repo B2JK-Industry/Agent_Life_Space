@@ -196,8 +196,84 @@ class TestBuildCommand:
         intake_arg = mock_agent.submit_operator_intake.call_args[0][0]
         assert str(intake_arg.work_type) in ("build", "OperatorWorkType.BUILD")
 
+    async def test_build_uses_longer_intake_timeout(self, handler, mock_agent, monkeypatch):
+        captured: dict[str, float] = {}
+
+        async def fake_wait_for(coro, timeout):
+            captured["timeout"] = timeout
+            return await coro
+
+        monkeypatch.setattr("agent.social.telegram_handler.asyncio.wait_for", fake_wait_for)
+        mock_agent.submit_operator_intake.return_value = {
+            "status": "completed",
+            "job_kind": "build",
+            "job_id": "b600",
+            "qualification": {"resolved_work_type": "build", "risk_level": "low"},
+            "plan": {"budget": {"estimated_cost_usd": 2.0}},
+            "job": {"status": "completed", "metadata": {}},
+        }
+
+        result = await handler.handle('/build . --description scaffold service', user_id=1, chat_id=1)
+
+        assert "b600" in result
+        assert captured["timeout"] == 600.0
+
+
+class TestSettlementCommand:
+
+    async def test_settlement_list_usage_includes_execute(self, handler, mock_agent):
+        settlement = MagicMock()
+        settlement.get_pending_settlements.return_value = []
+        mock_agent.settlement = settlement
+
+        result = await handler.handle("/settlement", user_id=1, chat_id=1)
+
+        assert "Settlements" in result
+
+    async def test_settlement_execute_success(self, handler, mock_agent):
+        settlement = MagicMock()
+        settlement.execute_topup = AsyncMock(
+            return_value={"ok": True, "amount": 10.0, "retry": {"retried": True, "ok": True}}
+        )
+        mock_agent.settlement = settlement
+
+        result = await handler.handle("/settlement execute set123", user_id=1, chat_id=1)
+
+        assert "Settlement executed" in result
+        assert "$10.0000" in result
+        assert "Retry: OK" in result
+        settlement.execute_topup.assert_awaited_once_with("set123")
+
+    async def test_settlement_usage_mentions_execute(self, handler, mock_agent):
+        settlement = MagicMock()
+        mock_agent.settlement = settlement
+
+        result = await handler.handle("/settlement nope", user_id=1, chat_id=1)
+
+        assert "/settlement execute <id>" in result
+
 
 class TestJobsCommand:
+
+    async def test_status_includes_setup_warnings(self, handler, mock_agent):
+        mock_agent.get_status.return_value = {
+            "running": False,
+            "memory": {"total_memories": 1},
+            "tasks": {"total_tasks": 0},
+            "brain": {"total_decisions": 0},
+            "jobs": {"total_completed": 0, "total_failed": 0},
+            "watchdog": {"modules_registered": 1, "modules_healthy": 1},
+            "setup_warnings": [
+                "AGENT_NAME is not configured; the runtime is still using the generic agent name.",
+                "TELEGRAM_BOT_TOKEN is not configured; Telegram control surface is disabled.",
+            ],
+        }
+
+        result = await handler.handle("/status", user_id=1, chat_id=1)
+
+        assert "Setup warnings" in result
+        assert "AGENT_NAME" in result
+        assert "TELEGRAM_BOT_TOKEN" in result
 
     async def test_jobs_no_args_lists_jobs(self, handler, mock_agent):
         mock_agent.list_product_jobs.return_value = [

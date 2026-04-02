@@ -5,7 +5,7 @@ Self-contained HTML dashboard served by the agent API.
 No build tools, no React, no npm — vanilla HTML + JS calling /api/operator/*.
 
 Served at GET /dashboard on the same port as the API (8420).
-Requires API key auth via query parameter or session.
+Requires API key auth via query parameter or browser-local stored key.
 """
 
 from __future__ import annotations

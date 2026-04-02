@@ -10,6 +10,44 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.34.0] — 2026-04-02
+
+Self-Host Onboarding Closure — safer runtime defaults, stronger setup diagnostics, and clearer operator deployment UX.
+
+### Self-Host Runtime Defaults
+- CLI/runtime now keep `AGENT_DATA_DIR` aligned with the selected `--data-dir`
+  instead of allowing drift between command-line and env configuration
+- Fresh checkouts now prefer `.agent_runtime` as the default runtime data
+  directory, while legacy installs with existing data under `agent/` still
+  keep working
+- Telegram runtime state such as `.last_update_id` now resolves from the
+  selected runtime data directory instead of silently coupling to the repo root
+
+### Setup Doctor And Deployment Posture
+- `AgentOrchestrator.get_setup_doctor()` now reports `project_root`,
+  `data_dir`, `identity_profile_path`, `pidfile_path`, surface readiness, and
+  self-host warnings in one operator-facing report
+- Setup warnings now explicitly call out relative runtime directories, runtime
+  data inside the checked-out Python package tree, missing API/dashboard auth,
+  missing vault key, missing Telegram auth, and missing LLM credentials
+- `/status` Telegram output now surfaces setup warnings directly instead of
+  making operators inspect raw JSON or logs first
+
+### Documentation And Packaging Truthfulness
+- README, `.env.example`, operator handbook, controlled-environment guide, and
+  strategy docs now describe the actual self-host path, dedicated runtime dirs,
+  dashboard posture, and setup-doctor workflow
+- `pyproject.toml` version now matches `agent.__version__`
+- Added deployment contract coverage to prevent version-drift regressions and
+  unsafe runtime-dir regressions
+
+### Tests
+- Added regression coverage for:
+  - CLI `--data-dir` overriding stale `AGENT_DATA_DIR`
+  - safe default runtime dir selection for fresh vs legacy installs
+  - setup-doctor self-host posture reporting
+  - Telegram runtime state placement under the chosen data dir
+
 ## [1.33.0] — 2026-04-01
 
 Docker-Isolated Build Execution — end-to-end project builds in containers.

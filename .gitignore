@@ -30,6 +30,8 @@ agent/build/**/*.pyc
 .agent_runtime/
 agent-test/
 workspaces/
+agent/identity/
+agent/telegram/
 
 # Agent data (persistent, not in git)
 *.db

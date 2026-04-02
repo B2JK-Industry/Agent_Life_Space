@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -517,6 +519,164 @@ class TestBuilderCliAdapter:
         assert len(intake.implementation_plan) == 1
         assert intake.implementation_plan[0].operation_type == BuildOperationType.REPLACE_TEXT
 
+    @pytest.mark.asyncio
+    async def test_call_provider_api_command_preserves_route_policy_default(
+        self, monkeypatch
+    ):
+        from agent import __main__ as agent_main
+
+        mock_agent = MagicMock()
+        mock_agent.initialize = AsyncMock()
+        mock_agent.call_external_api = AsyncMock(return_value={"ok": True, "job_id": "api-123"})
+        mock_agent.stop = AsyncMock()
+
+        monkeypatch.setattr(agent_main, "AgentOrchestrator", lambda data_dir: mock_agent)
+
+        await agent_main.call_provider_api_command(
+            data_dir="agent",
+            provider_id="obolos.tech",
+            capability_id="marketplace_catalog_v1",
+        )
+
+        kwargs = mock_agent.call_external_api.await_args.kwargs
+        assert kwargs["gateway_policy_id"] == ""
+
+    def test_main_provider_api_does_not_force_delivery_gateway_policy(self, monkeypatch):
+        from agent import __main__ as agent_main
+
+        captured: dict[str, object] = {}
+
+        async def fake_call_provider_api_command(**kwargs):
+            captured.update(kwargs)
+
+        def fake_asyncio_run(coro):
+            try:
+                coro.send(None)
+            except StopIteration as stop:
+                return stop.value
+            msg = "fake_call_provider_api_command unexpectedly awaited"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(agent_main, "call_provider_api_command", fake_call_provider_api_command)
+        monkeypatch.setattr(agent_main.asyncio, "run", fake_asyncio_run)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "agent",
+                "--call-provider-api",
+                "--provider-api-provider",
+                "obolos.tech",
+                "--provider-api-capability",
+                "marketplace_catalog_v1",
+            ],
+        )
+
+        agent_main.main()
+
+        assert captured["gateway_policy_id"] == ""
+
+    def test_main_sets_agent_data_dir_for_cli_commands(self, monkeypatch, tmp_path):
+        from agent import __main__ as agent_main
+
+        captured: dict[str, object] = {}
+        runtime_dir = tmp_path / "runtime-data"
+
+        async def fake_show_status(data_dir):
+            captured["data_dir"] = data_dir
+            captured["agent_data_dir"] = os.environ.get("AGENT_DATA_DIR")
+
+        def fake_asyncio_run(coro):
+            try:
+                coro.send(None)
+            except StopIteration as stop:
+                return stop.value
+            msg = "fake_show_status unexpectedly awaited"
+            raise AssertionError(msg)
+
+        monkeypatch.delenv("AGENT_DATA_DIR", raising=False)
+        monkeypatch.setattr(agent_main, "show_status", fake_show_status)
+        monkeypatch.setattr(agent_main.asyncio, "run", fake_asyncio_run)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "agent",
+                "--data-dir",
+                str(runtime_dir),
+                "--status",
+            ],
+        )
+
+        agent_main.main()
+
+        assert captured["data_dir"] == str(runtime_dir)
+        assert captured["agent_data_dir"] == str(runtime_dir)
+
+    def test_main_cli_data_dir_overrides_existing_agent_data_dir_env(self, monkeypatch, tmp_path):
+        from agent import __main__ as agent_main
+
+        captured: dict[str, object] = {}
+        runtime_dir = tmp_path / "runtime-data"
+        stale_dir = tmp_path / "stale-data"
+
+        async def fake_show_status(data_dir):
+            captured["data_dir"] = data_dir
+            captured["agent_data_dir"] = os.environ.get("AGENT_DATA_DIR")
+
+        def fake_asyncio_run(coro):
+            try:
+                coro.send(None)
+            except StopIteration as stop:
+                return stop.value
+            msg = "fake_show_status unexpectedly awaited"
+            raise AssertionError(msg)
+
+        monkeypatch.setenv("AGENT_DATA_DIR", str(stale_dir))
+        monkeypatch.setattr(agent_main, "show_status", fake_show_status)
+        monkeypatch.setattr(agent_main.asyncio, "run", fake_asyncio_run)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "agent",
+                "--data-dir",
+                str(runtime_dir),
+                "--status",
+            ],
+        )
+
+        agent_main.main()
+
+        assert captured["data_dir"] == str(runtime_dir)
+        assert captured["agent_data_dir"] == str(runtime_dir)
+
+    def test_resolve_default_data_dir_prefers_explicit_env(self, monkeypatch, tmp_path):
+        from agent import __main__ as agent_main
+
+        runtime_dir = tmp_path / "runtime-data"
+        monkeypatch.setenv("AGENT_DATA_DIR", str(runtime_dir))
+
+        assert agent_main._resolve_default_data_dir(tmp_path) == str(runtime_dir)
+
+    def test_resolve_default_data_dir_uses_safe_dir_for_fresh_checkout(self, monkeypatch, tmp_path):
+        from agent import __main__ as agent_main
+
+        monkeypatch.delenv("AGENT_DATA_DIR", raising=False)
+        (tmp_path / "agent").mkdir()
+
+        assert agent_main._resolve_default_data_dir(tmp_path) == ".agent_runtime"
+
+    def test_resolve_default_data_dir_preserves_legacy_agent_runtime(self, monkeypatch, tmp_path):
+        from agent import __main__ as agent_main
+
+        monkeypatch.delenv("AGENT_DATA_DIR", raising=False)
+        legacy_control = tmp_path / "agent" / "control"
+        legacy_control.mkdir(parents=True)
+        (legacy_control / "control.db").write_text("", encoding="utf-8")
+
+        assert agent_main._resolve_default_data_dir(tmp_path) == "agent"
+
 
 class TestOrchestratorEntryPoints:
     @pytest.mark.asyncio
@@ -546,6 +706,13 @@ class TestOrchestratorEntryPoints:
             BuildIntake(
                 repo_path=str(repo_dir),
                 description="Builder entrypoint",
+                implementation_plan=[
+                    BuildOperation(
+                        operation_type=BuildOperationType.WRITE_FILE,
+                        path="entrypoint.txt",
+                        content="builder entrypoint\n",
+                    )
+                ],
                 acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
                 run_post_build_review=True,
             )
@@ -598,6 +765,13 @@ class TestOrchestratorEntryPoints:
             BuildIntake(
                 repo_path=str(repo_dir),
                 description="Builder artifact query",
+                implementation_plan=[
+                    BuildOperation(
+                        operation_type=BuildOperationType.WRITE_FILE,
+                        path="generated.txt",
+                        content="artifact query\n",
+                    )
+                ],
                 acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
             )
         )
@@ -687,6 +861,13 @@ class TestOrchestratorEntryPoints:
             BuildIntake(
                 repo_path=str(repo_dir),
                 description="Prepare delivery package",
+                implementation_plan=[
+                    BuildOperation(
+                        operation_type=BuildOperationType.WRITE_FILE,
+                        path="delivery.txt",
+                        content="ready for delivery\n",
+                    )
+                ],
                 acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
             )
         )
@@ -746,6 +927,13 @@ class TestOrchestratorEntryPoints:
             BuildIntake(
                 repo_path=str(repo_dir),
                 description="Persist control-plane build state",
+                implementation_plan=[
+                    BuildOperation(
+                        operation_type=BuildOperationType.WRITE_FILE,
+                        path="persisted.txt",
+                        content="persist me\n",
+                    )
+                ],
                 acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
             )
         )
@@ -1263,14 +1451,18 @@ class TestUnifiedOperatorIntake:
 
     @pytest.mark.asyncio
     async def test_orchestrator_submit_operator_intake_routes_to_build(
-        self, monkeypatch
+        self, tmp_path
     ):
         from agent.core.agent import AgentOrchestrator
 
-        agent = AgentOrchestrator(data_dir="agent-test", watchdog_interval=60.0)
-        agent._initialized = True
-        agent.initialize = AsyncMock()
-        agent.run_build_job = AsyncMock(return_value=BuildJob(id="build-789"))
+        agent = AgentOrchestrator(
+            data_dir=str(tmp_path / "agent"),
+            watchdog_interval=60.0,
+        )
+        await agent.initialize()
+        build_job = BuildJob(id="build-789")
+        build_job.status = JobStatus.COMPLETED
+        agent.run_build_job = AsyncMock(return_value=build_job)
         agent.get_product_job = MagicMock(
             return_value={"job_id": "build-789", "job_kind": "build"}
         )
@@ -1290,6 +1482,8 @@ class TestUnifiedOperatorIntake:
         assert result["plan"]["resolved_work_type"] == "build"
         assert result["plan"]["phases"][1]["phase"] == "build"
         assert result["plan"]["capability_assignments"]
+
+        await agent.stop()
 
     @pytest.mark.asyncio
     async def test_orchestrator_submit_operator_intake_supports_file_git_url(

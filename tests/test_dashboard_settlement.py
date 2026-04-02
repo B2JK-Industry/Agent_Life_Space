@@ -213,13 +213,18 @@ class TestPaymentSettlementService:
         gateway = MagicMock()
         gateway.call_api_via_capability = AsyncMock(return_value={
             "ok": True,
-            "response": {"balance": 42.5, "currency": "credits"},
+            "normalized_response": {"credits": 42.5, "currency": "credits"},
         })
         svc = PaymentSettlementService(gateway=gateway)
         result = await svc.check_wallet_balance()
         assert result["ok"] is True
         assert result["balance"] == 42.5
         assert result["currency"] == "credits"
+        gateway.call_api_via_capability.assert_awaited_once_with(
+            provider_id="obolos.tech",
+            capability_id="wallet_balance_v1",
+            requester="settlement_service",
+        )
 
     @pytest.mark.asyncio
     async def test_execute_topup_requires_approval(self):
@@ -239,7 +244,7 @@ class TestPaymentSettlementService:
         gateway = MagicMock()
         gateway.call_api_via_capability = AsyncMock(return_value={
             "ok": True,
-            "response": {"new_balance": 50.0},
+            "normalized_response": {"new_balance": 50.0},
         })
         svc = PaymentSettlementService(gateway=gateway)
         payment = PaymentRequired(amount_required=10.0)
@@ -249,6 +254,12 @@ class TestPaymentSettlementService:
         assert result["ok"] is True
         assert result["amount"] == 10.0
         assert sr.status == "executed"
+        gateway.call_api_via_capability.assert_awaited_once_with(
+            provider_id="obolos.tech",
+            capability_id="wallet_topup_v1",
+            json_payload={"amount": 10.0},
+            requester="settlement_service",
+        )
 
     @pytest.mark.asyncio
     async def test_execute_topup_failure(self):
@@ -317,20 +328,34 @@ class TestSettlementPersistence:
         gateway = MagicMock()
         # First call: topup succeeds. Second call: retry succeeds.
         gateway.call_api_via_capability = AsyncMock(side_effect=[
-            {"ok": True, "response": {"new_balance": 50.0}},
-            {"ok": True, "response": {"data": "catalog_result"}},
+            {"ok": True, "normalized_response": {"new_balance": 50.0}},
+            {"ok": True, "response_json": {"data": "catalog_result"}},
         ])
         svc = PaymentSettlementService(gateway=gateway)
         payment = PaymentRequired(amount_required=10.0, provider_id="obolos")
         sr = svc.create_settlement_request(
             payment,
-            original_request={"provider_id": "obolos", "capability_id": "catalog_v1", "request_data": {}},
+            original_request={
+                "provider_id": "obolos",
+                "capability_id": "catalog_v1",
+                "resource": "catalog",
+                "method": "POST",
+                "query_params": {"page": 1},
+                "json_payload": {"mode": "fast"},
+            },
         )
         svc.approve_settlement(sr.settlement_id)
         result = await svc.execute_topup(sr.settlement_id)
         assert result["ok"] is True
         assert result["retry"]["retried"] is True
         assert result["retry"]["ok"] is True
+        topup_call = gateway.call_api_via_capability.await_args_list[0].kwargs
+        retry_call = gateway.call_api_via_capability.await_args_list[1].kwargs
+        assert topup_call["json_payload"] == {"amount": 10.0}
+        assert retry_call["resource"] == "catalog"
+        assert retry_call["method"] == "POST"
+        assert retry_call["query_params"] == {"page": 1}
+        assert retry_call["json_payload"] == {"mode": "fast"}
 
     def test_dashboard_contains_settlements_section(self):
         from agent.social.dashboard import render_dashboard_html

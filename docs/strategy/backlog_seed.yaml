@@ -5,8 +5,8 @@ seed_note: >
   THEMES_EPICS_STORIES.md with status and progress at all levels.
 
 progress_snapshot:
-  assessed_state_note: "Snapshot after the merged settlement-workflow, deployment-contract, and runtime-contract closure baseline on main (v1.31.0)."
-  interpretation_date: "2026-04-01"
+  assessed_state_note: "Snapshot after the self-host onboarding closure baseline on main (v1.34.0)."
+  interpretation_date: "2026-04-02"
   theme_status:
     T1: { status: in_progress, approx_progress: 96 }
     T2: { status: complete_for_phase, approx_progress: 96 }
@@ -15,24 +15,24 @@ progress_snapshot:
     T5: { status: in_progress, approx_progress: 99 }
     T6: { status: complete_for_phase, approx_progress: 99 }
     T7: { status: complete_for_phase, approx_progress: 99 }
-    T8: { status: in_progress, approx_progress: 99 }
+    T8: { status: complete_for_phase, approx_progress: 100 }
 next_execution_backlog:
   - priority: P0
-    story_id: T8-E1-S4
-    title: "Make future service extraction obvious from module boundaries"
-    why_now: "Phase 4 is complete, so the next high-leverage step is clearer extraction seams rather than another closure-only hardening pass."
+    story_id: T8-E2-S3
+    title: "Add configuration discipline for project roots, secrets, storage, and dedicated runtime data directories"
+    why_now: "The self-host onboarding closure landed, so the next high-leverage step is stronger architecture seams rather than another deployment-UX pass."
   - priority: P0
     story_id: T8-E1-S2
     title: "Remove hidden coupling and implicit shared state"
-    why_now: "Runtime contract closure removed some hidden coupling, but the next architecture arc still depends on making the remaining implicit wiring easier to see and test."
+    why_now: "Runtime surfaces are stronger now, so remaining implicit coupling is a clearer blocker for the next architecture arc."
   - priority: P1
-    story_id: T8-E2-S3
-    title: "Add configuration discipline for project roots, secrets, and storage"
-    why_now: "Explicit runtime contracts improved self-host safety, but config and storage posture still need a cleaner architecture-grade story."
+    story_id: T8-E1-S4
+    title: "Make future service extraction obvious from module boundaries"
+    why_now: "Cleaner seams now matter mainly because they make selective extraction and stronger public contracts easier to reason about."
   - priority: P1
     story_id: T8-E3-S4
     title: "Prepare data-handling rules for future enterprise requirements"
-    why_now: "With Phase 4 closed, the next honest hardening slice is to make future extraction and enterprise data posture easier to reason about before new surfaces arrive."
+    why_now: "With onboarding closure landed, the next honest hardening slice is clearer data posture before broader operator and provider surfaces arrive."
 themes:
   - id: T1
     name: Platform Foundation
@@ -225,14 +225,14 @@ themes:
     goal: Make implementation controlled, testable, and acceptance-driven.
     status: complete_for_phase
     approx_progress: 99
-    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, source-aware build execution policy gating, richer verification and acceptance delivery evidence, a bounded local implementation engine with insert/delete-safe plus copy or move workspace mutations, capability guardrails, implementation-backed acceptance criteria, release-readiness gating, and an explicit gateway send path for approved build bundles.
-    main_gap: No general code generation and no semantic requirement engine yet, but those now sit beyond the current Phase 2 closure scope.
+    current_state: Builder bounded context with models, service, storage, repo-aware verification discovery, workspace sync, capability catalog, resumable checkpoints, orchestrator runtime entrypoint, CLI entrypoint, source-aware build execution policy gating, richer verification and acceptance delivery evidence, a bounded local implementation engine with insert/delete-safe plus copy or move workspace mutations, description-driven LLM code generation, Docker-isolated verification with bounded auto-fix retries, capability guardrails, implementation-backed acceptance criteria, release-readiness gating, and an explicit gateway send path for approved build bundles.
+    main_gap: No semantic requirement engine yet, but that now sits beyond the current Phase 2 closure scope.
     epics:
       - id: T3-E1
         name: Capability-Based Build Execution
         status: complete_for_phase
         approx_progress: 98
-        remaining_gap: Runtime entrypoints, declared capabilities, resumable checkpoints, a bounded local implementation engine, and delivery-package preview artifacts now cover the honest deterministic builder slice; general code generation remains future scope.
+        remaining_gap: Runtime entrypoints, declared capabilities, resumable checkpoints, a bounded local implementation engine, description-driven code generation, and delivery-package preview artifacts now cover the honest builder slice; broader semantic planning remains future scope.
         stories:
           - id: T3-E1-S1
             name: Define implementation capability catalog
@@ -258,7 +258,7 @@ themes:
             name: Replace placeholder build step with a bounded local implementation engine
             status: complete_for_phase
             current_state: BuildService now executes structured workspace mutations (write_file, append_text, replace_text, insert_before_text, insert_after_text, delete_text, delete_file, copy_file, move_file, json_set) through a bounded local engine, enforces deterministic operation-count plus source and target-scope guardrails, persists per-operation results, and exposes implementation mode plus execution summaries through job metadata, delivery bundles, CLI, and planning surfaces.
-            missing: Execution still depends on an explicit structured plan; there is no freeform or LLM-backed code generation yet.
+            missing: Execution is still bounded to explicit file-mutation operations and does not yet behave as a broader semantic planning engine.
       - id: T3-E2
         name: Build Verification Loop
         status: in_progress
@@ -733,7 +733,7 @@ themes:
           - id: T8-E2-S3
             name: Add configuration discipline for project roots, secrets, and storage
             status: complete_for_phase
-            current_state: Project-root inference now prefers the checked-out repo and fails explicitly instead of silently falling back, pidfile location is configurable through AGENT_PIDFILE_PATH, vault readiness is explicit through is_ready, gateway route readiness reports env/vault-backed configuration posture, and provider sends can resolve auth from either environment variables or the encrypted local vault.
+            current_state: Project-root inference now prefers the checked-out repo and fails explicitly instead of silently falling back, fresh installs now prefer .agent_runtime while legacy agent/ runtime dirs remain compatible, pidfile location is configurable through AGENT_PIDFILE_PATH, setup-doctor surfaces runtime path and operator posture, vault readiness is explicit through is_ready, gateway route readiness reports env/vault-backed configuration posture, and provider sends can resolve auth from either environment variables or the encrypted local vault.
             missing: Broader deployment/storage discipline and stricter runtime enforcement still remain open.
           - id: T8-E2-S4
             name: Add deployment documentation for controlled environments
