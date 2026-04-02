@@ -92,9 +92,15 @@ async def generate_build_operations(
         from agent.core.models import OPUS
         model = OPUS.model_id
 
+    full_prompt = f"{system_prompt}\n\n{user_prompt}"
+    logger.info("codegen_request",
+                model=model,
+                prompt_length=len(full_prompt),
+                timeout=timeout)
+
     response = await provider.generate(GenerateRequest(
         messages=[
-            {"role": "user", "content": f"{system_prompt}\n\n{user_prompt}"},
+            {"role": "user", "content": full_prompt},
         ],
         model=model,
         timeout=timeout,
@@ -102,6 +108,10 @@ async def generate_build_operations(
     ))
 
     if not response.success:
+        logger.error("codegen_llm_error",
+                     error=response.error[:300],
+                     latency_ms=response.latency_ms,
+                     raw_keys=list(response.raw.keys()) if response.raw else [])
         raise RuntimeError(f"LLM codegen failed: {response.error[:200]}")
 
     raw_text = (response.text or "").strip()
