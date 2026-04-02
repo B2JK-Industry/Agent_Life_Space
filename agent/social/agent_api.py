@@ -329,20 +329,26 @@ class AgentAPI:
         try:
             if self._handler:
                 # Timeout — scale with expected complexity
-                # Simple/chat: 90s, programming/build: 300s
+                # /build and /intake: 600s, programming: 300s, rest: 90s
                 try:
                     import asyncio as _aio
-                    from agent.core.models import classify_task
-                    task_type = classify_task(text)
-                    api_timeout = 300 if task_type == "programming" else 90
-                    # Authenticated API callers get terminal-level trust
-                    # (same as owner in private Telegram chat)
-                    channel = "terminal" if is_authenticated else "agent_api"
+                    is_build_command = text.startswith(("/build", "/intake"))
+                    if is_build_command:
+                        api_timeout = 600
+                    else:
+                        from agent.core.models import classify_task
+                        task_type = classify_task(text)
+                        api_timeout = 300 if task_type == "programming" else 90
+                    # Authenticated local callers get terminal-level trust.
+                    # Remote authenticated callers get restricted trust.
+                    is_local = ip in _LOCAL_IPS
+                    channel = "terminal" if (is_authenticated and is_local) else "agent_api"
+                    is_owner_caller = is_authenticated and is_local
                     response = await _aio.wait_for(
                         self._handler(
                             text, 0, 0,
                             username=sender, chat_type=channel,
-                            is_owner=is_authenticated,
+                            is_owner=is_owner_caller,
                         ),
                         timeout=api_timeout,
                     )

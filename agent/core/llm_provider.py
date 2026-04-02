@@ -174,8 +174,8 @@ class ClaudeCliProvider(LLMProvider):
         ]
         if request.model:
             cli_args.extend(["--model", request.model])
-        if request.max_turns > 1:
-            cli_args.extend(["--max-turns", str(request.max_turns)])
+        # Always pass --max-turns to prevent unlimited tool_use loops
+        cli_args.extend(["--max-turns", str(max(request.max_turns, 1))])
         if file_access_granted:
             cli_args.append("--dangerously-skip-permissions")
 

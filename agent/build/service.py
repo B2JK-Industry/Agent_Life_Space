@@ -431,6 +431,7 @@ class BuildService:
         can_skip_completed_steps: bool,
     ) -> BuildJob:
         # ── Step 2.5: LLM Code Generation (if no explicit plan) ──
+        codegen_produced = False
         if not job.intake.implementation_plan and job.intake.description:
             t_codegen = job.trace("codegen")
             try:
@@ -440,6 +441,7 @@ class BuildService:
                     max_operations=20,
                 )
                 job.intake.implementation_plan = generated_ops
+                codegen_produced = True
                 t_codegen.complete(
                     f"LLM generated {len(generated_ops)} file operations"
                 )
@@ -467,12 +469,8 @@ class BuildService:
         job.status = JobStatus.RUNNING
         job.phase = BuildPhase.BUILDING
 
-        # If codegen produced the plan, run Docker-isolated build+test
-        # instead of host workspace execution + host verification
-        codegen_produced = any(
-            t.step == "codegen" for t in job.execution_trace
-        )
-
+        # Codegen-produced plans run in Docker isolation.
+        # No silent fallback to host — if Docker fails, the build fails.
         if codegen_produced and job.intake.implementation_plan:
             t_docker = job.trace("docker_build")
             try:
@@ -483,18 +481,16 @@ class BuildService:
                     retry_on_failure=True,
                     max_retries=2,
                 )
-                # Write results back to workspace for artifact capture
+                # Also write files to workspace for artifact capture
                 self._execute_build(job, workspace_path)
 
+                job.metadata["docker_result"] = docker_result.to_dict()
                 if docker_result.success:
                     t_docker.complete(
                         f"Docker build+test OK: {docker_result.summary}"
                     )
                     job.status = JobStatus.COMPLETED
-                    job.metadata["docker_result"] = docker_result.to_dict()
                     job.metadata["verification_passed"] = True
-                    self._finalize(job, workspace_path)
-                    return job
                 else:
                     t_docker.fail(
                         f"Docker build failed: {docker_result.summary}\n"
@@ -502,14 +498,19 @@ class BuildService:
                     )
                     job.status = JobStatus.FAILED
                     job.error = f"Docker build failed: {docker_result.summary}"
-                    job.metadata["docker_result"] = docker_result.to_dict()
                     job.metadata["verification_passed"] = False
-                    self._finalize(job, workspace_path)
-                    return job
+                self._finalize(job, workspace_path)
+                return job
             except Exception as e:
+                # Docker unavailable = hard fail, no silent fallback
                 t_docker.fail(str(e))
-                logger.warning("docker_executor_unavailable", error=str(e))
-                # Fall through to host verification as fallback
+                logger.error("docker_executor_failed", error=str(e),
+                             job_id=job.id)
+                job.status = JobStatus.FAILED
+                job.error = f"Docker execution failed: {e}"
+                job.metadata["verification_passed"] = False
+                self._finalize(job, workspace_path)
+                return job
 
         if can_skip_completed_steps and self._can_reuse_checkpoint(
             job, BuildCheckpointPhase.BUILT
@@ -2418,6 +2419,20 @@ class BuildService:
             ".ruff_cache",
             ".venv",
             "venv",
+            # Large dirs that should never be copied into workspaces
+            ".git",
+            "node_modules",
+            ".idea",
+            ".vscode",
+            ".tools",
+            ".claude",
+            "workspaces",
+            "data",
+            ".tox",
+            "dist",
+            "build",
+            ".eggs",
+            "*.egg-info",
         }
 
         def _ignore(directory: str, names: list[str]) -> set[str]:

@@ -104,7 +104,7 @@ async def generate_build_operations(
         ],
         model=model,
         timeout=timeout,
-        max_turns=2,  # >1 so --max-turns flag is passed to CLI
+        max_turns=1,  # Single-turn text generation, no tool use needed
     ))
 
     if not response.success:

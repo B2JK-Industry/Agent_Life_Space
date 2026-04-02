@@ -117,12 +117,12 @@ async def run_project_in_docker(
             result.error = "No files to build"
             return result
 
-        # Phase 1: Install dependencies (with network)
+        # Phase 1: Install dependencies + ruff (with network, single phase)
         has_requirements = (Path(project_dir) / "requirements.txt").exists()
         if has_requirements:
             deps_result = await _docker_run_phase(
                 project_dir=project_dir,
-                script="pip install -q -r /project/requirements.txt 2>&1",
+                script="pip install -q -r /project/requirements.txt ruff 2>&1",
                 network=True,
                 timeout=120,
                 memory=memory,
@@ -144,14 +144,11 @@ async def run_project_in_docker(
         result.test_output = test_result["output"]
         result.exit_code = test_result.get("exit_code", 1)
 
-        # Phase 3: Lint (no network, best-effort)
+        # Phase 3: Lint (no network — ruff installed in deps phase)
         lint_result = await _docker_run_phase(
             project_dir=project_dir,
-            script=(
-                "pip install -q ruff 2>/dev/null; "
-                "cd /work && ruff check --select E,F,W . 2>&1 || true"
-            ),
-            network=True,  # need network for pip install ruff
+            script="cd /work && ruff check --select E,F,W . 2>&1 || true",
+            network=False,
             timeout=60,
             memory=memory,
             phase="lint",
@@ -321,6 +318,11 @@ async def _docker_run_phase(
         output = (stdout + "\n" + stderr).strip()
         exit_code = proc.returncode or 0
 
+        # Detect OOM kill (Docker exit code 137 = SIGKILL from OOM)
+        if exit_code == 137:
+            logger.error("docker_executor_oom", phase=phase, memory=memory)
+            output = f"Container killed by OOM (exit 137, limit={memory}). " + output
+
         logger.info("docker_executor_phase_done", phase=phase,
                     exit_code=exit_code, output_len=len(output))
 
@@ -350,14 +352,19 @@ async def _ask_opus_to_fix(
         from agent.core.llm_provider import GenerateRequest, get_provider
         from agent.core.models import OPUS
 
-        # Build file listing
+        # Build file listing with size cap to avoid token limit issues
+        _MAX_FILE_LISTING_CHARS = 30_000
         file_listing = ""
         for op in operations:
-            file_listing += f"\n### {op.path}\n```python\n{op.content}\n```\n"
+            entry = f"\n### {op.path}\n```python\n{op.content}\n```\n"
+            if len(file_listing) + len(entry) > _MAX_FILE_LISTING_CHARS:
+                file_listing += f"\n... ({len(operations)} files total, truncated)\n"
+                break
+            file_listing += entry
 
         prompt = (
             f"The following project was generated but tests failed.\n\n"
-            f"## Original description\n{description}\n\n"
+            f"## Original description\n{description[:500]}\n\n"
             f"## Current files\n{file_listing}\n\n"
             f"## Test output (FAILED)\n```\n{test_output[:3000]}\n```\n\n"
             f"Fix the code so tests pass. Respond with ONLY a JSON array of "
