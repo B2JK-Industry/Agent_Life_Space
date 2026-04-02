@@ -98,7 +98,7 @@ async def generate_build_operations(
         ],
         model=model,
         timeout=timeout,
-        max_turns=1,
+        max_turns=2,  # >1 so --max-turns flag is passed to CLI
     ))
 
     if not response.success:
