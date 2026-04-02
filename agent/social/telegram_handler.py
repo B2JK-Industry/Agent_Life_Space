@@ -1480,12 +1480,14 @@ class TelegramHandler:
         )
 
         try:
+            # Build jobs need more time: codegen (~40s) + Docker (~3min)
+            intake_timeout = 600.0 if work_type == "build" else 90.0
             result = await asyncio.wait_for(
                 self._agent.submit_operator_intake(intake),
-                timeout=90.0,
+                timeout=intake_timeout,
             )
         except TimeoutError:
-            return "Intake trvá príliš dlho (>90s). Skús menší scope."
+            return "Intake trvá príliš dlho. Skús menší scope."
         except Exception as e:
             logger.error("intake_error", error=str(e))
             return f"*Intake error:* {e!s}"
