@@ -39,7 +39,7 @@ Odporúčané pre self-host:
 - `python -m agent --setup-doctor` — self-host config audit
 - `python -m agent --report` — operator inbox / settlement attention
 - `python -m agent --llm-runtime-status` — aktuálny runtime LLM attach/backend/provider stav
-- dashboard: `http://127.0.0.1:8420/dashboard?key=$AGENT_API_KEY`
+- dashboard: `http://127.0.0.1:8420/dashboard` (autentifikácia cez `Authorization: Bearer $AGENT_API_KEY` — od v1.35.0 už `?key=` query string nie je podporovaný)
 
 ### Telegram + Claude CLI backend obmedzenie
 Programovacie úlohy poslané z Telegramu **nemôžu** použiť Claude CLI backend v default sandbox móde. Claude Code CLI vyžaduje interaktívne kliknutie "Allow" na permission prompt, čo z Telegramu nie je dosiahnuteľné — request by visel v typing indicator-i kým ho timeout neukončí.
@@ -81,6 +81,28 @@ Agent loguje všetko cez `structlog`. Kľúčové log eventy:
 - `agent_state_change` — stav sa zmenil
 - `learning_feedback` — agent sa niečo naučil
 - `approval_proposed` — akcia čaká na schválenie
+- `telegram_cli_programming_denied` — fail-closed guard zachytil neuskutočniteľnú kombináciu
+- `vault_migrated_to_v2_single_file_format` — automatická migrácia legacy vault na v2
+
+### Tiered logging
+Od v1.35.0 agent píše do **dvoch súbežných sinkov** s rozdielnymi retention oknami:
+
+| Tier | Default retention | Súbor | Čo obsahuje |
+|---|---|---|---|
+| **long** | 720 hodín (~30 dní) | `<AGENT_LOG_DIR>/long/agent-long.log` | lifecycle, build, finance, audit, security, vault, ERROR/CRITICAL/AUDIT events |
+| **short** | 6 hodín | `<AGENT_LOG_DIR>/short/agent-short.log` | verbose pipeline diagnostics — brain pipeline stages, semantic cache hits, telegram polling, typing indicators |
+
+Tier router je deterministický: ERROR/CRITICAL/AUDIT vždy long, ostatné podľa event-name prefixov v `agent/logs/retention.py::_LONG_TIER_EVENTS` a `_SHORT_TIER_EVENTS`. Cron loop volá `LogRetentionManager.prune_all()` každú hodinu a maže súbory staršie než tier window.
+
+**Konfigurácia (env vars):**
+```bash
+AGENT_LOG_DIR=/path/to/logs              # default: <AGENT_DATA_DIR>/logs
+AGENT_LOG_LONG_RETENTION_HOURS=720       # default: 720h = 30 dní
+AGENT_LOG_SHORT_RETENTION_HOURS=6        # default: 6h
+AGENT_LOG_TIERED=1                       # default: 1 (zapnuté)
+```
+
+> ⚠️ **Deprecated:** `AGENT_LOG_LONG_RETENTION_DAYS` ešte funguje, ale od v1.35.0 emit-uje deprecation warning a interne sa promote-uje na hodiny. Prejdi na `AGENT_LOG_LONG_RETENTION_HOURS` (napr. `30 dní × 24 = 720`).
 
 ## Bezpečnostné operácie
 

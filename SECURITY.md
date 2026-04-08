@@ -36,7 +36,7 @@ This project implements multiple security layers. See [Security wiki](https://gi
 
 ### Automated Testing
 
-127 security audit tests run on every commit, covering:
+129 security audit tests run on every commit, covering:
 - Hardcoded secrets scan
 - SQL injection detection
 - eval/exec ban
@@ -54,8 +54,16 @@ This project implements multiple security layers. See [Security wiki](https://gi
 - **Docker sandbox** — read-only, no-network, resource-limited containers
 - **Tool governance** — capability manifest with risk/side-effect classification, policy engine with audit trail
 - **Host access blocked by default** — AGENT_SANDBOX_ONLY=1 is the default, explicit opt-in required
-- **Encrypted vault** — Fernet AES-128, PBKDF2 480K iterations
-- **API authentication** — Bearer token, rate limiting
+- **Encrypted vault** — Fernet AES-128 + HMAC-SHA256, PBKDF2 480K iterations, single-file v2
+  format with embedded random salt and crash-safe atomic writes (`os.replace` + `fsync`),
+  wrong-key writes fail-fast via `VaultDecryptionError` (no silent destruction)
+- **API authentication** — Bearer token only (no `?key=` query string fallback), rate limiting
+- **SQL injection guards** — whitelist + identifier regex + escape on dynamic DDL paths
 - **Safe mode** — non-owners restricted to read-only commands
 - **PID lockfile** — prevents duplicate agent instances
-- **Finance** — human-in-the-loop approval for all expenses
+- **Finance** — human-in-the-loop approval for all expenses, per-tx asyncio.Lock against
+  concurrent approve races
+- **Telegram fail-closed guards** — programming tasks via CLI backend in sandbox-only mode
+  return deterministic operator message instead of hanging on unreachable permission prompt
+- **Tiered structured logging** — long-tier retention for audit/security/finance events
+  (default 30 days), short-tier for verbose diagnostics (default 6 hours)
