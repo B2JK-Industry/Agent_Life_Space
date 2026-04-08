@@ -61,6 +61,14 @@ jobs:
         run: pytest tests/test_review_eval_golden.py -q --tb=short
 
       - name: Release readiness gate
+        env:
+          # CI runners do not have the Claude Code CLI installed, so the
+          # live LLM probe added in v1.35.0 cannot succeed here. Skip
+          # the probe so the gate validates everything ELSE (quality
+          # telemetry, gateway posture, identity warnings) without
+          # blocking the merge. The probe still runs on operator hosts
+          # where the CLI is present.
+          AGENT_RELEASE_READINESS_SKIP_LLM_PROBE: "1"
         run: python -m agent --release-readiness --release-readiness-release-label ci
 
       - name: Architecture invariants (pytest)

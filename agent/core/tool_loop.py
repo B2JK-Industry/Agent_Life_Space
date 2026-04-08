@@ -55,7 +55,7 @@ class ToolUseLoop:
         messages: list[dict[str, Any]],
         system: str = "",
         model: str = "",
-        tools: list[dict] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.0,
         timeout: int = 180,
@@ -69,7 +69,7 @@ class ToolUseLoop:
         tools = tools or AGENT_TOOLS
         conversation = list(messages)  # Copy to avoid mutation
         turn = 0
-        tool_calls_made: list[dict] = []
+        tool_calls_made: list[dict[str, Any]] = []
         run_input_tokens = 0
         run_output_tokens = 0
         run_cost = 0.0
@@ -125,7 +125,7 @@ class ToolUseLoop:
 
             # Process tool calls
             # Add assistant message with tool_use blocks
-            assistant_content: list[dict] = []
+            assistant_content: list[dict[str, Any]] = []
             if response.text:
                 assistant_content.append({"type": "text", "text": response.text})
             for tc in response.tool_calls:
@@ -138,7 +138,7 @@ class ToolUseLoop:
             conversation.append({"role": "assistant", "content": assistant_content})
 
             # Execute each tool and build tool_result messages
-            tool_results: list[dict] = []
+            tool_results: list[dict[str, Any]] = []
             for tc in response.tool_calls:
                 logger.info("tool_call", name=tc["name"], turn=turn)
                 tool_calls_made.append(tc)
@@ -187,7 +187,7 @@ class ToolLoopResult:
         text: str = "",
         success: bool = True,
         turns: int = 0,
-        tool_calls: list[dict] | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
         total_tokens: int = 0,
         total_input_tokens: int = 0,
         total_output_tokens: int = 0,

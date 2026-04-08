@@ -542,7 +542,7 @@ Review/audit-driven fixes landed on `main`:
 
 ## Highest-Leverage Next Steps
 
-See [NEXT_BACKLOG.md](/Users/danielbabjak/Desktop/Agent_Life_Space/docs/strategy/NEXT_BACKLOG.md) for the prioritized execution queue.
+See [NEXT_BACKLOG.md](./NEXT_BACKLOG.md) for the prioritized execution queue.
 
 Now that the full Phase 4 arc landed on `main`, the next high-leverage work is
 post-Phase-4 selective extraction readiness:
@@ -557,7 +557,7 @@ post-Phase-4 selective extraction readiness:
 ## Phase 4 Enterprise Hardening (v1.25.1–v1.31.0, 2026-04-01)
 
 All items landed on `main` through runtime-contract closure at `122b152`.
-See [CHANGELOG.md](/Users/danielbabjak/Desktop/Agent_Life_Space/CHANGELOG.md)
+See [CHANGELOG.md](../../CHANGELOG.md)
 for release-by-release verification detail.
 
 ### Production Hardening (v1.25.1)

@@ -590,7 +590,19 @@ class TestBuildService:
         assert "Blocked unknown build source" in job.error
         workspace_manager.create.assert_not_called()
 
-    async def test_successful_build_with_acceptance(self, service):
+    async def test_codegen_fallback_rejects_build(self, service, monkeypatch):
+        """When codegen fails and build falls into audit_marker_only mode,
+        the build must be rejected (fail-closed) — not accepted with zero
+        changes.  This prevents the operator from seeing a 'successful' build
+        that produced no implementation."""
+        async def _failing_codegen(*args, **kwargs):
+            raise RuntimeError("Invalid authentication credentials")
+
+        monkeypatch.setattr(
+            "agent.build.codegen.generate_build_operations",
+            _failing_codegen,
+        )
+
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Add feature",
@@ -599,16 +611,10 @@ class TestBuildService:
             ],
         )
         job = await service.run_build(intake)
-        # Repo is materialized into workspace and the builder stays honest when
-        # no structured implementation plan is supplied.
-        assert job.workspace_id == "ws-test-123"
-        assert job.execution_mode == ExecutionMode.WORKSPACE_BOUND
+        assert job.status == JobStatus.FAILED
+        assert job.acceptance.accepted is False
+        assert "code generation failed" in (job.error or "").lower()
         assert job.implementation_mode == BuildImplementationMode.AUDIT_MARKER_ONLY
-        assert len(job.execution_trace) >= 4  # validate, workspace, build, verify...
-        assert len(job.artifacts) >= 2  # verification + acceptance + trace
-        assert job.acceptance.evaluated_at != ""
-        assert (Path(self._workspace_dir) / "app.py").exists()
-        assert (Path(self._workspace_dir) / ".build_job").exists()
 
     async def test_structured_implementation_plan_executes_local_changes(
         self, service, monkeypatch
@@ -1101,6 +1107,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Add feature",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="feature.py",
+                    content="# new feature\n",
+                ),
+            ],
         )
         job = await service.run_build(intake)
         artifact_kinds = [a.artifact_kind.value for a in job.artifacts]
@@ -1153,6 +1166,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Build without explicit acceptance criteria",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="feature.py",
+                    content="# new feature\n",
+                ),
+            ],
         )
 
         job = await service.run_build(intake)
@@ -1161,7 +1181,15 @@ class TestBuildService:
         assert job.acceptance.accepted is True
         assert "verification outcome used as acceptance proxy" in job.acceptance.summary
 
-    async def test_build_job_recovery(self, service):
+    async def test_build_job_recovery(self, service, monkeypatch):
+        async def _failing_codegen(*args, **kwargs):
+            raise RuntimeError("simulated codegen failure")
+
+        monkeypatch.setattr(
+            "agent.build.codegen.generate_build_operations",
+            _failing_codegen,
+        )
+
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Add feature",
@@ -1172,7 +1200,15 @@ class TestBuildService:
         assert recovered.id == job.id
         assert recovered.workspace_id == "ws-test-123"
 
-    async def test_execution_trace_has_analysis_steps(self, service):
+    async def test_execution_trace_has_analysis_steps(self, service, monkeypatch):
+        async def _failing_codegen(*args, **kwargs):
+            raise RuntimeError("simulated codegen failure")
+
+        monkeypatch.setattr(
+            "agent.build.codegen.generate_build_operations",
+            _failing_codegen,
+        )
+
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Add feature",
@@ -1182,8 +1218,8 @@ class TestBuildService:
         assert "validate" in steps
         assert "workspace" in steps
         assert "build" in steps
-        assert "verify" in steps
-        assert "acceptance" in steps
+        # codegen_fallback_guard fires before verify/acceptance when no plan
+        assert "codegen_fallback_guard" in steps
 
     async def test_unknown_acceptance_criterion_is_not_auto_met(
         self, service, monkeypatch
@@ -1208,6 +1244,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Add feature",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="feature.py",
+                    content="# new feature\n",
+                ),
+            ],
             acceptance_criteria=[
                 AcceptanceCriterion(description="Ship to production"),
             ],
@@ -1238,6 +1281,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Build with optional docs criterion",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="feature.py",
+                    content="# new feature\n",
+                ),
+            ],
             acceptance_criteria=[
                 AcceptanceCriterion(description="Tests pass"),
                 AcceptanceCriterion(
@@ -1278,6 +1328,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Add feature",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="feature.py",
+                    content="# new feature\n",
+                ),
+            ],
             acceptance_criteria=[
                 AcceptanceCriterion(
                     description=(
@@ -1319,6 +1376,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Update docs",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="README.md",
+                    content="# Updated release notes\n",
+                ),
+            ],
             acceptance_criteria=[
                 AcceptanceCriterion(description="Documentation updated"),
             ],
@@ -1370,6 +1434,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Ship secure change",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="feature.py",
+                    content="# secure feature\n",
+                ),
+            ],
             acceptance_criteria=[
                 AcceptanceCriterion(
                     description="Security review passes",
@@ -1526,6 +1597,13 @@ class TestBuildService:
             repo_path=self._repo_dir,
             build_type=BuildJobType.DEVOPS,
             description="Update workflow",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="workflow.yml",
+                    content="name: ci\n",
+                ),
+            ],
             acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
         )
 
@@ -1576,6 +1654,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Ship clean change",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="feature.py",
+                    content="# clean change\n",
+                ),
+            ],
             acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
             run_post_build_review=True,
         )
@@ -1636,6 +1721,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Ship risky change",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="feature.py",
+                    content="# risky change\n",
+                ),
+            ],
             acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
             run_post_build_review=True,
         )
@@ -1689,6 +1781,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Ship integration change",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="feature.py",
+                    content="# integration change\n",
+                ),
+            ],
             acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
             run_post_build_review=True,
             review_gate_policy_id="high_or_critical",
@@ -1741,6 +1840,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Ship advisory-only change",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="feature.py",
+                    content="# advisory change\n",
+                ),
+            ],
             acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
             run_post_build_review=True,
             review_gate_policy_id="advisory",
@@ -1779,6 +1885,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Retry after interruption",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="feature.py",
+                    content="# retry feature\n",
+                ),
+            ],
             acceptance_criteria=[AcceptanceCriterion(description="Tests pass")],
         )
 
@@ -1830,6 +1943,13 @@ class TestBuildService:
         intake = BuildIntake(
             repo_path=self._repo_dir,
             description="Prepare delivery bundle",
+            implementation_plan=[
+                BuildOperation(
+                    operation_type=BuildOperationType.WRITE_FILE,
+                    path="feature.py",
+                    content="# delivery feature\n",
+                ),
+            ],
             acceptance_criteria=[AcceptanceCriterion(description="Build completes")],
         )
 

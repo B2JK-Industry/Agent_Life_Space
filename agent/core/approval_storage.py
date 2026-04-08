@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import orjson
 import structlog
@@ -76,7 +76,7 @@ class ApprovalStorage:
         ).fetchone()
         if row is None:
             return None
-        return orjson.loads(row[0])
+        return cast("dict[str, Any]", orjson.loads(row[0]))
 
     def list_requests(
         self,

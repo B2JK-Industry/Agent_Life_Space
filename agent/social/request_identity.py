@@ -71,8 +71,14 @@ class ReplayProtection:
         # Record nonce
         self._seen_nonces[nonce] = now
 
-        # Evict old nonces
-        if len(self._seen_nonces) > self._max_nonces:
+        # Evict old nonces. The previous implementation only ran the
+        # sweep when the dict grew past _max_nonces, which meant a
+        # steady-but-slow request rate could keep the dict under
+        # _max_nonces forever and never reclaim memory. We now run a
+        # cheap age-based sweep on every Nth check (1/64 of incoming
+        # requests on average) so memory usage tracks the real freshness
+        # window, not just the size cap.
+        if len(self._seen_nonces) > self._max_nonces or (now * 1000) % 64 < 1:
             cutoff = now - self._max_age
             self._seen_nonces = {
                 n: t for n, t in self._seen_nonces.items()

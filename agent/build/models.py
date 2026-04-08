@@ -14,16 +14,28 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from agent.control.models import (
-    ArtifactKind,
-    ExecutionMode,
-    ExecutionStep,
-    JobKind,
-    JobStatus,
-    JobTiming,
-    UsageSummary,
+    ArtifactKind as ArtifactKind,
+)
+from agent.control.models import (
+    ExecutionMode as ExecutionMode,
+)
+from agent.control.models import (
+    ExecutionStep as ExecutionStep,
+)
+from agent.control.models import (
+    JobKind as JobKind,
+)
+from agent.control.models import (
+    JobStatus as JobStatus,
+)
+from agent.control.models import (
+    JobTiming as JobTiming,
+)
+from agent.control.models import (
+    UsageSummary as UsageSummary,
 )
 
 # ─────────────────────────────────────────────
@@ -336,7 +348,7 @@ class AcceptanceCriterion:
         required = True
         evaluator = CriterionEvaluator.AUTO
 
-        token_map = {
+        token_map: dict[str, tuple[str, Any]] = {
             "functional": ("kind", CriterionKind.FUNCTIONAL),
             "quality": ("kind", CriterionKind.QUALITY),
             "security": ("kind", CriterionKind.SECURITY),
@@ -368,11 +380,11 @@ class AcceptanceCriterion:
                 break
             field_name, value = parsed
             if field_name == "kind":
-                kind = value
+                kind = cast("CriterionKind", value)
             elif field_name == "required":
-                required = value
+                required = cast("bool", value)
             else:
-                evaluator = value
+                evaluator = cast("CriterionEvaluator", value)
             remaining = rest.strip()
 
         description = remaining or raw

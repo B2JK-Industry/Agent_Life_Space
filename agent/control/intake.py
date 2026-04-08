@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from agent.build.capabilities import get_capability
 from agent.build.models import (
@@ -1073,7 +1073,7 @@ class OperatorIntakeService:
                 amount += 1.0
         if intake.run_post_build_review and qualification.resolved_work_type == OperatorWorkType.BUILD:
             amount += 2.0
-        return round(amount, 2)
+        return cast("float", round(amount, 2))
 
     def _get_budget_status(self, estimated_cost: float) -> dict[str, Any]:
         if not callable(self._budget_status_provider):
@@ -1084,7 +1084,7 @@ class OperatorIntakeService:
                 "monthly_remaining": self._budget_policy.limits.monthly_hard_cap,
                 "within_budget": estimated_cost <= self._budget_policy.limits.daily_hard_cap,
             }
-        return self._budget_status_provider(estimated_cost)
+        return cast("dict[str, Any]", self._budget_status_provider(estimated_cost))
 
     def _select_capabilities(
         self,
@@ -1272,14 +1272,14 @@ class OperatorIntakeService:
             mix[key] = mix.get(key, 0) + 1
         return dict(sorted(mix.items()))
 
-    def _build_review_gate_policy(self, intake: OperatorIntake):
+    def _build_review_gate_policy(self, intake: OperatorIntake) -> Any:
         if not intake.run_post_build_review:
             return get_review_gate_policy("advisory")
         if intake.build_type in {BuildJobType.INTEGRATION, BuildJobType.DEVOPS}:
             return get_review_gate_policy("high_or_critical")
         return get_review_gate_policy("critical_findings")
 
-    def _build_delivery_policy(self, intake: OperatorIntake):
+    def _build_delivery_policy(self, intake: OperatorIntake) -> Any:
         return get_delivery_policy("approval_required")
 
     def _capability_ids_by_phase(

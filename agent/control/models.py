@@ -385,6 +385,7 @@ class JobPlanRecord:
 class TraceRecordKind(str, Enum):
     """Kind of shared planning/control-plane trace."""
 
+    CONFIGURATION = "configuration"
     QUALIFICATION = "qualification"
     BUDGET = "budget"
     CAPABILITY = "capability"
@@ -1111,6 +1112,7 @@ class JobQuerySummary:
     scope: str = ""
     outcome: str = ""
     blocked_reason: str = ""
+    error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1127,6 +1129,7 @@ class JobQuerySummary:
             "scope": self.scope,
             "outcome": self.outcome,
             "blocked_reason": self.blocked_reason,
+            "error": self.error,
         }
 
 

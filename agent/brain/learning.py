@@ -161,7 +161,9 @@ class LearningSystem:
             test_result = self.try_skill(skill_name)
             if test_result["tested"]:
                 # Re-read skill after test updated it
-                skill = self.skills.get(skill_name)
+                refreshed = self.skills.get(skill_name)
+                if refreshed is not None:
+                    skill = refreshed
 
         if skill.status == SkillStatus.MASTERED:
             return {
@@ -708,9 +710,9 @@ class LearningSystem:
 
     def _build_recommendation(
         self,
-        confident: list[dict],
-        risky: list[dict],
-        past_errors: list[dict],
+        confident: list[dict[str, Any]],
+        risky: list[dict[str, Any]],
+        past_errors: list[dict[str, Any]],
     ) -> str:
         """Postav odporúčanie na základe kontextu."""
         parts = []

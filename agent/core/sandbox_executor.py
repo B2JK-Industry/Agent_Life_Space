@@ -18,7 +18,7 @@ Použitie:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -46,7 +46,7 @@ async def create_workspace_for_task(
             ws = workspace_manager.create(name=task_name or "sandbox-task", task_id=task_id)
             workspace_manager.activate(ws.id)
             logger.info("workspace_created", id=ws.id, path=ws.path)
-            return ws.path
+            return cast("str", ws.path)
         except Exception as e:
             logger.warning("workspace_create_failed", error=str(e))
 
@@ -110,7 +110,7 @@ class SandboxExecutor:
     async def check_available(self) -> bool:
         """Check if Docker sandbox is available."""
         status = await self._sandbox.check_docker()
-        return status.get("available", False)
+        return cast("bool", status.get("available", False))
 
     async def execute_python(
         self,

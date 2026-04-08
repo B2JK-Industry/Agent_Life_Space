@@ -16,6 +16,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from typing import cast
 
 
 def get_config() -> tuple[str, str, str]:
@@ -38,7 +39,7 @@ def send_message(base_url: str, api_key: str, text: str) -> str:
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             body = json.loads(resp.read().decode())
-            return body.get("reply", body.get("response", body.get("text", str(body))))
+            return cast("str", body.get("reply", body.get("response", body.get("text", str(body)))))
     except urllib.error.HTTPError as e:
         error_body = e.read().decode() if e.fp else ""
         return f"Error {e.code}: {error_body[:200]}"
@@ -51,7 +52,7 @@ def check_status(base_url: str) -> bool:
     try:
         req = urllib.request.Request(f"{base_url}/api/status", method="GET")
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status == 200
+            return cast("bool", resp.status == 200)
     except Exception:
         return False
 

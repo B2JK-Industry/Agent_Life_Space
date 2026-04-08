@@ -38,13 +38,18 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Control-plane queries** — shared inspection across build, review, task, job-runner, agent-loop, artifact, plan, delivery, and workspace state
 - **Runtime model** — explicit coexistence rules for product jobs, planning tasks, infrastructure jobs, and conversational queue items
 - **Release readiness gate** — deterministic CLI/CI quality and gateway posture gate before release or handoff
-- **Operator dashboard** — authenticated `/dashboard` surface for jobs, settlements, retention, audit, and operator metrics
+- **Operator dashboard** — authenticated `/dashboard` surface for jobs, settlements, retention, audit, operator metrics, and one-click LLM runtime control
 - **Settlement workflow** — persisted 402/top-up approval flow across API, dashboard, and Telegram with retry support
 - **Setup doctor** — `python -m agent --setup-doctor` audits self-host identity, LLM, gateway, and operator posture before first run
-- **Operator CLI surfaces** — `--report`, `--runtime-model`, `--export-evidence-job`, `--export-evidence-mode client_safe`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, `--list-persisted-jobs`, `--list-retained-artifacts`, `--prune-expired-retained-artifacts`, `--list-cost-ledger`, unified `--intake-*`, and explicit delivery handoff
+- **Operator CLI surfaces** — `--report`, `--runtime-model`, `--llm-runtime-*`, `--export-evidence-job`, `--export-evidence-mode client_safe`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, `--list-persisted-jobs`, `--list-retained-artifacts`, `--prune-expired-retained-artifacts`, `--list-cost-ledger`, unified `--intake-*`, and explicit delivery handoff
 - **1668+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
+
+> **For first-time setup**, follow [`docs/SETUP_LOCAL.md`](docs/SETUP_LOCAL.md).
+> It walks you through generating your own credentials, where to store
+> them, and how to keep your personal data out of the repo. Nothing
+> below references any specific operator's environment.
 
 ```bash
 git clone https://github.com/B2JK-Industry/Agent_Life_Space.git
@@ -84,6 +89,23 @@ export LLM_BACKEND="cli"
 
 See **[Deployment guide](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Deployment)** for full setup (Docker, systemd, Cloudflare tunnel, firewall).
 After startup, the dashboard is available at `/dashboard` on the API port and uses the same `AGENT_API_KEY`.
+
+### Runtime LLM Control
+
+You can detach the LLM entirely, or switch between CLI and API backends without editing `.env` each time. The runtime override is persisted under `AGENT_DATA_DIR/control/llm_runtime.json`.
+
+```bash
+.venv/bin/python -m agent --llm-runtime-status
+.venv/bin/python -m agent --llm-runtime-disable --llm-runtime-note "maintenance"
+.venv/bin/python -m agent --llm-runtime-enable --llm-runtime-backend cli --llm-runtime-note "back to Claude CLI"
+.venv/bin/python -m agent --llm-runtime-enable --llm-runtime-backend api --llm-runtime-provider anthropic
+.venv/bin/python -m agent --llm-runtime-follow-env --llm-runtime-enable
+```
+
+The same control surface is available via:
+- `GET /api/operator/llm`
+- `POST /api/operator/llm`
+- `/dashboard` LLM Runtime panel
 
 ## Architecture
 

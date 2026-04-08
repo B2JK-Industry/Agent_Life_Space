@@ -22,10 +22,20 @@ def render_dashboard_html(api_key_hint: str = "") -> str:
 
     The HTML is self-contained: inline CSS + JS, no external dependencies.
     JS fetches data from /api/operator/* endpoints using the stored API key.
+
+    SECURITY: ``api_key_hint`` is intentionally ignored. Earlier revisions
+    accepted an API key via ``?key=`` query string and seeded it into the
+    rendered HTML, which leaked the key into browser history, server access
+    logs, and HTTP referrer headers. The parameter is kept only for
+    backward-compatible call signatures and is never embedded in the page.
     """
     identity = get_agent_identity()
     agent_name = identity.agent_name
-    initial_key = json.dumps(api_key_hint)
+    # Always render an empty initial key — the operator must paste it into
+    # the login form, which then stores it in localStorage and uses it as a
+    # Bearer token on subsequent requests.
+    initial_key = json.dumps("")
+    _ = api_key_hint  # explicitly ignored, see docstring
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -112,6 +122,10 @@ tr:hover td {{ background: rgba(108,138,255,0.05); }}
       <div><span class="status" id="conn-status">connected</span> <span class="refresh" id="last-refresh"></span></div>
     </header>
     <div class="grid" id="metrics"></div>
+    <div class="section" id="llm-section">
+      <div class="section-title">LLM Runtime</div>
+      <div class="card" id="llm-card"><span class="loading">Loading...</span></div>
+    </div>
     <div class="section" id="jobs-section">
       <div class="section-title">Recent Jobs</div>
       <table id="jobs-table"><thead><tr><th>ID</th><th>Kind</th><th>Status</th><th>Duration</th><th>Cost</th></tr></thead><tbody></tbody></table>
@@ -137,11 +151,21 @@ const INITIAL_KEY = {initial_key};
 let KEY = localStorage.getItem('als_api_key') || INITIAL_KEY || '';
 const BASE = window.location.origin;
 
-if (INITIAL_KEY && !localStorage.getItem('als_api_key')) {{
-  localStorage.setItem('als_api_key', INITIAL_KEY);
-  if (window.location.search.includes('key=')) {{
-    window.history.replaceState({{}}, '', '/dashboard');
-  }}
+/** Escape HTML to prevent XSS when interpolating into innerHTML. */
+function esc(v) {{
+  if (v == null) return '';
+  const s = String(v);
+  const d = document.createElement('div');
+  d.appendChild(document.createTextNode(s));
+  return d.innerHTML;
+}}
+
+// SECURITY: API key is never seeded from query string. The operator must
+// paste it into the login form, which stores it in localStorage and then
+// sends it as a Bearer token. If a key happens to be in the URL anyway
+// (e.g. from a stale bookmark), strip it without storing it.
+if (window.location.search.includes('key=')) {{
+  window.history.replaceState({{}}, '', '/dashboard');
 }}
 
 if (KEY) {{ showDashboard(); }}
@@ -185,11 +209,13 @@ async function api(path) {{
 
 async function refreshAll() {{
   try {{
-    const [report, jobs, retention, audit, telemetry, margin, settlements] = await Promise.all([
+    const [report, jobs, retention, audit, telemetry, margin, settlements, llm] = await Promise.all([
       api('report'), api('jobs?limit=20'), api('retention'),
       api('audit?limit=10'), api('telemetry'), api('margin'), api('settlements'),
+      api('llm'),
     ]);
     renderMetrics(report, telemetry, margin);
+    renderLlm(llm);
     renderJobs(jobs);
     renderSettlements(settlements);
     renderRetention(retention);
@@ -248,8 +274,8 @@ function renderJobs(data) {{
   if (!jobs.length) {{ tbody.innerHTML = '<tr><td colspan="5" class="loading">No jobs</td></tr>'; return; }}
   tbody.innerHTML = jobs.map(j => `
     <tr>
-      <td style="font-family:monospace;font-size:12px">${{j.job_id || j.id || '?'}}</td>
-      <td><span class="badge badge-blue">${{j.job_kind || '?'}}</span></td>
+      <td style="font-family:monospace;font-size:12px">${{esc(j.job_id || j.id || '?')}}</td>
+      <td><span class="badge badge-blue">${{esc(j.job_kind || '?')}}</span></td>
       <td><span class="badge ${{
         j.status === 'completed' ? 'badge-green' :
         j.status === 'failed' ? 'badge-red' :
@@ -259,6 +285,34 @@ function renderJobs(data) {{
       <td>${{j.estimated_cost_usd ? '$$' + j.estimated_cost_usd.toFixed(4) : '-'}}</td>
     </tr>
   `).join('');
+}}
+
+function renderLlm(data) {{
+  const card = document.getElementById('llm-card');
+  const surface = data.surface || {{}};
+  const warnings = data.warnings || [];
+  const statusBadge = data.enabled ? 'badge-green' : 'badge-red';
+  const configBadge = surface.configured ? 'badge-green' : 'badge-yellow';
+  const overrideMode = data.follows_env ? 'following .env' : 'runtime override active';
+  card.innerHTML = `
+    <div class="metric-row"><span>Attachment</span><span class="badge ${{statusBadge}}">${{data.enabled ? 'attached' : 'detached'}}</span></div>
+    <div class="metric-row"><span>Effective backend</span><span>${{esc(data.effective_backend) || '-'}}</span></div>
+    <div class="metric-row"><span>Effective provider</span><span>${{esc(data.effective_provider) || '-'}}</span></div>
+    <div class="metric-row"><span>Configuration</span><span class="badge ${{configBadge}}">${{surface.configured ? 'configured' : 'needs auth/key'}}</span></div>
+    <div class="metric-row"><span>Mode</span><span>${{overrideMode}}</span></div>
+    <div class="metric-row"><span>Updated by</span><span>${{esc(data.updated_by) || '-'}}</span></div>
+    <div class="metric-row"><span>Updated at</span><span>${{data.updated_at ? new Date(data.updated_at).toLocaleString() : '-'}}</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">
+      <button onclick="updateLlmRuntime({{enabled:true, backend:'cli', provider:'', note:'dashboard attach cli'}})" style="background:var(--green);color:#000;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11px">Attach CLI</button>
+      <button onclick="updateLlmRuntime({{enabled:true, backend:'api', provider:'anthropic', note:'dashboard attach api anthropic'}})" style="background:var(--accent);color:#fff;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11px">API Anthropic</button>
+      <button onclick="updateLlmRuntime({{enabled:true, backend:'api', provider:'openai', note:'dashboard attach api openai'}})" style="background:var(--accent);color:#fff;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11px">API OpenAI</button>
+      <button onclick="updateLlmRuntime({{enabled:true, backend:'api', provider:'local', note:'dashboard attach api local'}})" style="background:var(--accent);color:#fff;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11px">Local API</button>
+      <button onclick="updateLlmRuntime({{enabled:false, note:'dashboard detach llm'}})" style="background:var(--red);color:#fff;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11px">Detach</button>
+      <button onclick="updateLlmRuntime({{enabled:true, follow_env:true, note:'dashboard follow env'}})" style="background:var(--surface);color:var(--text);border:1px solid var(--border);padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11px">Follow .env</button>
+    </div>
+    ${{data.note ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted)">Note: ${{esc(data.note)}}</div>` : ''}}
+    ${{warnings.length ? `<div style="margin-top:10px;font-size:12px;color:var(--yellow)">Warnings: ${{esc(warnings.join(' | '))}}</div>` : ''}}
+  `;
 }}
 
 function renderRetention(data) {{
@@ -271,7 +325,7 @@ function renderRetention(data) {{
     <div class="metric-row"><span>Pruned</span><span class="badge badge-red">${{bs.pruned || 0}}</span></div>
     <div class="metric-row"><span>Recoverable</span><span>${{data.recoverable_records || 0}}</span></div>
     <hr style="border-color:var(--border);margin:8px 0">
-    ${{Object.entries(ts).map(([k,v]) => `<div class="metric-row"><span style="font-size:11px">${{k}}</span><span>${{v}}</span></div>`).join('')}}
+    ${{Object.entries(ts).map(([k,v]) => `<div class="metric-row"><span style="font-size:11px">${{esc(k)}}</span><span>${{esc(v)}}</span></div>`).join('')}}
   `;
 }}
 
@@ -293,7 +347,7 @@ function renderSettlements(data) {{
     return `
       <div style="padding:8px 0;border-bottom:1px solid var(--border)">
         <div class="metric-row">
-          <span style="font-family:monospace;font-size:12px">${{s.settlement_id}}</span>
+          <span style="font-family:monospace;font-size:12px">${{esc(s.settlement_id)}}</span>
           <span class="badge ${{
             s.status === 'pending' ? 'badge-yellow' :
             s.status === 'approved' ? 'badge-blue' :
@@ -302,7 +356,7 @@ function renderSettlements(data) {{
           }}">${{s.status}}</span>
         </div>
         <div style="font-size:12px;color:var(--text-muted);margin:4px 0">
-          ${{p.provider_id}} — $${{(p.amount_required || 0).toFixed(4)}} ${{p.currency || ''}}
+          ${{esc(p.provider_id)}} — $${{(p.amount_required || 0).toFixed(4)}} ${{esc(p.currency)}}
         </div>
         <div>${{actions}}</div>
       </div>
@@ -323,6 +377,24 @@ async function settlementAction(id, action) {{
   }} catch(e) {{ alert('Error: ' + e.message); }}
 }}
 
+async function updateLlmRuntime(payload) {{
+  try {{
+    const r = await fetch(BASE + '/api/operator/llm', {{
+      method: 'POST',
+      headers: {{'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json'}},
+      body: JSON.stringify(payload),
+    }});
+    const data = await r.json();
+    if (!r.ok || !data.ok) {{
+      const detail = data.detail || data.error || 'LLM update failed';
+      alert(detail);
+      return;
+    }}
+    renderLlm(data.llm || {{}});
+    refreshAll();
+  }} catch(e) {{ alert('Error: ' + e.message); }}
+}}
+
 function renderAudit(data) {{
   const card = document.getElementById('audit-card');
   const s = data.stats || {{}};
@@ -332,7 +404,7 @@ function renderAudit(data) {{
     <div class="metric-row"><span>Rate limited</span><span class="badge badge-yellow">${{s.total_rate_limited || 0}}</span></div>
     <div class="metric-row"><span>Auth failures</span><span class="badge badge-red">${{s.total_auth_failures || 0}}</span></div>
     <hr style="border-color:var(--border);margin:8px 0">
-    ${{Object.entries(s.by_sender || {{}}).map(([k,v]) => `<div class="metric-row"><span style="font-size:11px">${{k}}</span><span>${{v}}</span></div>`).join('')}}
+    ${{Object.entries(s.by_sender || {{}}).map(([k,v]) => `<div class="metric-row"><span style="font-size:11px">${{esc(k)}}</span><span>${{esc(v)}}</span></div>`).join('')}}
   `;
 }}
 </script>

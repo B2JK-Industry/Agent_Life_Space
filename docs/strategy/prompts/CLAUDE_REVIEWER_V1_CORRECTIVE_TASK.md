@@ -1,8 +1,6 @@
 # Claude Code Task: Reviewer V1 Corrective Pass
 
-Pracuješ v repozitári:
-
-`/Users/danielbabjak/Desktop/ANP/Agent_Life_Space`
+Pracuješ v repozitári `Agent_Life_Space` (cesta závisí od lokálneho clonu).
 
 Aktuálny kontext:
 - Reviewer vertical slice v1 bol implementovaný v PR `#44`

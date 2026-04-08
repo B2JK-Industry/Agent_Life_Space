@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import orjson
 import structlog
@@ -227,7 +227,7 @@ class ControlPlaneStorage:
         ).fetchone()
         if row is None:
             return None
-        return orjson.loads(row[0])
+        return cast("dict[str, Any]", orjson.loads(row[0]))
 
     def list_plan_records(
         self,
@@ -349,7 +349,7 @@ class ControlPlaneStorage:
         ).fetchone()
         if row is None:
             return None
-        return orjson.loads(row[0])
+        return cast("dict[str, Any]", orjson.loads(row[0]))
 
     def list_delivery_records(
         self,
@@ -411,7 +411,7 @@ class ControlPlaneStorage:
         ).fetchone()
         if row is None:
             return None
-        return orjson.loads(row[0])
+        return cast("dict[str, Any]", orjson.loads(row[0]))
 
     def list_product_job_records(
         self,
@@ -471,7 +471,7 @@ class ControlPlaneStorage:
         ).fetchone()
         if row is None:
             return None
-        return orjson.loads(row[0])
+        return cast("dict[str, Any]", orjson.loads(row[0]))
 
     def list_artifact_retention_records(
         self,

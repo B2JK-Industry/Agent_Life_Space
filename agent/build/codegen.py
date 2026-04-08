@@ -88,8 +88,9 @@ async def generate_build_operations(
     )
 
     if not model:
-        from agent.core.models import OPUS
-        model = OPUS.model_id
+        from agent.core.models import get_model
+
+        model = get_model("programming").model_id
 
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
     logger.info("codegen_request",
@@ -125,8 +126,29 @@ async def generate_build_operations(
         output_tokens=response.output_tokens,
         response_length=len(raw_text),
     )
+    # Verbose dump (short tier — only useful while actively debugging
+    # a parse failure). Truncated to 2KB to keep the line size sane.
+    logger.debug(
+        "codegen_raw_response_preview",
+        model=model,
+        preview=raw_text[:2048],
+    )
 
-    operations = _parse_operations(raw_text, max_operations)
+    try:
+        operations = _parse_operations(raw_text, max_operations)
+    except RuntimeError as e:
+        # Long-tier event: codegen produced output but we couldn't parse
+        # it. The build orchestrator's fallback guard will reject the
+        # job — we want this in long retention so post-mortems can find
+        # the offending response.
+        logger.error(
+            "codegen_parse_failed",
+            model=model,
+            error=str(e)[:300],
+            response_length=len(raw_text),
+            response_starts_with=raw_text[:80],
+        )
+        raise
 
     logger.info("codegen_operations_generated", count=len(operations))
     return operations

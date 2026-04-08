@@ -31,7 +31,7 @@ import subprocess
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -54,6 +54,7 @@ from agent.build.models import (
     CriterionKind,
     CriterionStatus,
     VerificationKind,
+    VerificationResult,
 )
 from agent.build.storage import BuildStorage
 from agent.build.verification import DEFAULT_COMMANDS, run_verification_suite
@@ -340,6 +341,11 @@ class BuildService:
             verification_results=list(previous.verification_results),
             acceptance=previous.acceptance,
             checkpoints=list(previous.checkpoints),
+            # Inherit the implementation mode from the previous attempt
+            # so the guard for AUDIT_MARKER_ONLY doesn't reject a resume
+            # that already executed BOUNDED_LOCAL_ENGINE.
+            implementation_mode=previous.implementation_mode,
+            implementation_results=list(previous.implementation_results),
         )
         job.trace("resume").complete(
             f"resumed_from={previous.id}; last_checkpoint="
@@ -546,6 +552,53 @@ class BuildService:
                 job.status = JobStatus.FAILED
                 self._finalize(job, workspace_path)
                 return job
+
+        # ── Guard: a build that produced zero changes must not pass ──
+        # AUDIT_MARKER_ONLY means the builder wrote a `.build_job` marker
+        # file but applied no operations. We treat this as fail-open in
+        # two specific situations:
+        #   1. Codegen failed and we fell back to marker-only mode.
+        #   2. The operator submitted a build with no implementation_plan
+        #      AND no test override of `_execute_build` (i.e. nothing
+        #      ran). In production this matches the codegen-fallback
+        #      scenario; in tests with a monkeypatched _execute_build
+        #      the implementation_plan is set, so the guard skips.
+        codegen_failed = bool(job.metadata.get("codegen_fallback"))
+        no_real_plan = not job.intake.implementation_plan
+        if (
+            job.implementation_mode == BuildImplementationMode.AUDIT_MARKER_ONLY
+            and (codegen_failed or no_real_plan)
+        ):
+            if codegen_failed:
+                reason = (
+                    "Build rejected: code generation failed and no implementation "
+                    f"was produced (codegen_error={job.metadata.get('codegen_error', 'unknown')!r}). "
+                    "Cannot accept a build with zero changes."
+                )
+            else:
+                reason = (
+                    "Build rejected: no implementation plan was supplied and "
+                    "no operations were applied. AUDIT_MARKER_ONLY mode "
+                    "cannot be delivered as a real build."
+                )
+            job.trace("codegen_fallback_guard").fail(reason)
+            job.status = JobStatus.FAILED
+            job.error = reason
+            job.acceptance.accepted = False
+            job.acceptance.summary = reason
+            self._record_control_trace(
+                trace_kind=TraceRecordKind.EXECUTION,
+                title="Codegen fallback guard — build rejected",
+                detail=reason,
+                job_id=job.id,
+                workspace_id=job.workspace_id,
+                metadata={
+                    "codegen_error": job.metadata.get("codegen_error"),
+                    "implementation_mode": job.implementation_mode.value,
+                },
+            )
+            self._finalize(job, workspace_path)
+            return job
 
         # ── Step 4: Verify ──
         job.status = JobStatus.VERIFYING
@@ -1422,10 +1475,11 @@ class BuildService:
         capability_id: str = "",
     ) -> list[VerificationKind]:
         """Backward-compatible wrapper over verification discovery."""
-        return self._discover_verification_plan(
+        plan = self._discover_verification_plan(
             workspace_path=workspace_path,
             capability_id=capability_id,
-        )["steps"]
+        )
+        return cast("list[VerificationKind]", plan["steps"])
 
     def _workspace_has_marker(self, workspace_path: Path, marker: str) -> bool:
         candidate = workspace_path / marker
@@ -2261,7 +2315,7 @@ class BuildService:
         self,
         *,
         job: BuildJob,
-        criterion,
+        criterion: AcceptanceCriterion,
         normalized: str,
         workspace_path: str,
         change_set: dict[str, Any],
@@ -2354,7 +2408,7 @@ class BuildService:
         self,
         *,
         job: BuildJob,
-        criterion,
+        criterion: AcceptanceCriterion,
         normalized: str,
     ) -> None:
         metadata = criterion.metadata or {}
@@ -2425,7 +2479,7 @@ class BuildService:
                 f"sync_repo {source} -> {workspace}",
             )
 
-    def _build_workspace_copy_ignore(self, workspace: Path):
+    def _build_workspace_copy_ignore(self, workspace: Path) -> Any:
         skip_names = {
             "__pycache__",
             ".mypy_cache",
@@ -2466,10 +2520,10 @@ class BuildService:
         self,
         job: BuildJob,
         kind: VerificationKind,
-    ):
+    ) -> VerificationResult | None:
         return next((result for result in job.verification_results if result.kind == kind), None)
 
-    def _build_execution_policy(self, job: BuildJob):
+    def _build_execution_policy(self, job: BuildJob) -> Any:
         from agent.control.policy import RuntimeActionRequest, evaluate_runtime_action
 
         decision = evaluate_runtime_action(RuntimeActionRequest(
@@ -2485,7 +2539,7 @@ class BuildService:
     def _build_environment_profile_id(self, job: BuildJob) -> str:
         return self._build_execution_policy(job).environment_profile_id or get_build_execution_policy().environment_profile_id
 
-    def _review_gate_policy(self, job: BuildJob):
+    def _review_gate_policy(self, job: BuildJob) -> Any:
         policy_id = job.intake.review_gate_policy_id or "critical_findings"
         if not job.intake.block_on_review_failure and policy_id == "critical_findings":
             policy_id = "advisory"
@@ -2596,6 +2650,8 @@ class BuildService:
                 "delivery_policy_id": job.intake.delivery_policy_id,
                 "error": job.error,
                 "last_error": job.error,
+                "codegen_fallback": bool(job.metadata.get("codegen_fallback")),
+                "codegen_error": str(job.metadata.get("codegen_error", "")),
                 "denial": dict(job.denial),
             },
         )
@@ -2653,7 +2709,7 @@ class BuildService:
         self,
         *,
         job: BuildJob,
-        criterion,
+        criterion: AcceptanceCriterion,
         normalized: str,
         workspace_path: str,
         change_set: dict[str, Any],
@@ -2810,8 +2866,8 @@ class BuildService:
 
     def _evaluate_verification_backed_criterion(
         self,
-        criterion,
-        result,
+        criterion: AcceptanceCriterion,
+        result: Any,
         label: str,
     ) -> None:
         if result is None:
@@ -2823,7 +2879,7 @@ class BuildService:
         else:
             criterion.fail(evidence)
 
-    def _evaluate_quality_backed_criterion(self, *, job: BuildJob, criterion) -> None:
+    def _evaluate_quality_backed_criterion(self, *, job: BuildJob, criterion: AcceptanceCriterion) -> None:
         if not job.verification_results:
             criterion.fail("Quality verification did not run")
             return
@@ -2838,7 +2894,7 @@ class BuildService:
         self,
         *,
         job: BuildJob,
-        criterion,
+        criterion: AcceptanceCriterion,
         normalized: str,
     ) -> None:
         summary = self._implementation_summary(job)
@@ -2947,7 +3003,7 @@ class BuildService:
         self,
         *,
         job: BuildJob,
-        criterion,
+        criterion: AcceptanceCriterion,
         normalized: str,
     ) -> None:
         if not job.intake.run_post_build_review:
@@ -3016,7 +3072,7 @@ class BuildService:
         self,
         *,
         job: BuildJob,
-        criterion,
+        criterion: AcceptanceCriterion,
         normalized: str,
         change_set: dict[str, Any],
     ) -> None:
@@ -3110,7 +3166,7 @@ class BuildService:
     def _evaluate_verify_command(
         self,
         job: BuildJob,
-        criterion,
+        criterion: AcceptanceCriterion,
         workspace_path: str,
     ) -> None:
         command_text = criterion.description.split(":", 1)[1].strip()
@@ -3154,7 +3210,7 @@ class BuildService:
     def _format_verification_evidence(
         self,
         label: str,
-        result,
+        result: Any,
     ) -> str:
         summary = (
             f"{label}: {'passed' if result.passed else 'failed'}; "
@@ -3166,7 +3222,7 @@ class BuildService:
             return f"{summary}; output={compact}"
         return summary
 
-    def _format_command_evidence(self, command_text: str, result) -> str:
+    def _format_command_evidence(self, command_text: str, result: Any) -> str:
         summary = f"verify command={command_text}; exit={result.returncode}"
         output = (result.stderr or result.stdout).strip()
         if output:
@@ -3359,7 +3415,7 @@ class BuildService:
         self,
         job: BuildJob,
         workspace_path: str,
-    ):
+    ) -> Any:
         """Run deterministic review over the built workspace."""
         if self._review_service is None:
             job.status = JobStatus.FAILED
@@ -3379,7 +3435,7 @@ class BuildService:
         )
         return await self._review_service.run_review(review_intake)
 
-    def _resolve_capability(self, intake: BuildIntake):
+    def _resolve_capability(self, intake: BuildIntake) -> Any:
         capability = get_capability(intake.build_type)
         if intake.capability_id and intake.capability_id != capability.id:
             msg = (
@@ -3878,7 +3934,7 @@ class BuildService:
         record = self._refresh_delivery_record(bundle_id)
         if record is None:
             return None
-        return record.to_dict()
+        return cast("dict[str, Any] | None", record.to_dict())
 
     def mark_delivery_handed_off(self, job_id: str, *, note: str = "") -> dict[str, Any]:
         """Record final handoff after approval."""
@@ -3925,7 +3981,7 @@ class BuildService:
         ) if self._control_plane_state is not None else record
         if record is None:
             return {"error": f"Delivery record not found for bundle '{bundle_id}'"}
-        return record.to_dict()
+        return cast("dict[str, Any]", record.to_dict())
 
     def _delivery_bundle_id(self, job_id: str) -> str:
         return f"build-delivery-{job_id}"
@@ -3980,7 +4036,7 @@ class BuildService:
             return 2
         return 1
 
-    def _refresh_delivery_record(self, bundle_id: str):
+    def _refresh_delivery_record(self, bundle_id: str) -> Any:
         if self._control_plane_state is None:
             return None
         return self._control_plane_state.refresh_delivery_status(

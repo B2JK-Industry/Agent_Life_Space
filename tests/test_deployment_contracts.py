@@ -149,20 +149,38 @@ class TestDashboardAuth:
         """_handle_dashboard must verify API key before serving HTML."""
         from agent.social.agent_api import AgentAPI
         api = AgentAPI(api_keys=["test-key"])
-        # The handler should reference _check_auth or key_param check
         import inspect
         source = inspect.getsource(api._handle_dashboard)
-        assert "_check_auth" in source or "key_param" in source, (
-            "Dashboard handler does not check authentication"
+        assert "_check_auth" in source, (
+            "Dashboard handler must call _check_auth"
         )
 
-    def test_dashboard_query_param_login_seeds_runtime_key(self):
-        """Dashboard HTML must bootstrap the query-param key into runtime JS."""
+    def test_dashboard_does_not_accept_query_string_key(self):
+        """Query-string auth (?key=) must be removed: keys leak into logs,
+        browser history, and referrer headers. The handler must not look
+        at request.query for any 'key' field."""
+        from agent.social.agent_api import AgentAPI
+        api = AgentAPI(api_keys=["test-key"])
+        import inspect
+        source = inspect.getsource(api._handle_dashboard)
+        assert "request.query" not in source, (
+            "Dashboard must not read API key from query string"
+        )
+        assert "key_param" not in source, (
+            "Dashboard must not bind a query-string key parameter"
+        )
+
+    def test_dashboard_html_never_seeds_api_key(self):
+        """The rendered dashboard HTML must NEVER embed the operator API
+        key, even if the legacy api_key_hint argument is passed."""
         from agent.social.dashboard import render_dashboard_html
-        html = render_dashboard_html(api_key_hint="test-key")
-        assert "const INITIAL_KEY = \"test-key\";" in html
-        assert "localStorage.setItem('als_api_key', INITIAL_KEY);" in html
-        assert "window.history.replaceState" in html
+        html = render_dashboard_html(api_key_hint="leaked-secret-key")
+        assert "leaked-secret-key" not in html, (
+            "render_dashboard_html leaked api_key_hint into HTML"
+        )
+        assert 'const INITIAL_KEY = "";' in html, (
+            "INITIAL_KEY must always render as empty string"
+        )
 
 
 class TestNoPrivateStorageAccess:

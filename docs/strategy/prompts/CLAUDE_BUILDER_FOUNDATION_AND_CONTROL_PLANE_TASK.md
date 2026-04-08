@@ -1,8 +1,6 @@
 # Claude Code Task: Builder Foundation And Control-Plane Convergence
 
-Pracuješ v repozitári:
-
-`/Users/danielbabjak/Desktop/ANP/Agent_Life_Space`
+Pracuješ v repozitári `Agent_Life_Space` (cesta závisí od lokálneho clonu).
 
 Najprv si načítaj:
 - `docs/strategy/MASTER_SOURCE_OF_TRUTH.md`

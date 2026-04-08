@@ -325,6 +325,90 @@ class TestFullStatus:
         assert status["setup"]["surfaces"]["dashboard"]["enabled"] is False
         assert status["setup_warnings"] == report["warnings"]
 
+    @pytest.mark.asyncio
+    async def test_setup_report_live_probe_can_confirm_cli_host_login(
+        self, agent: AgentOrchestrator, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("LLM_BACKEND", "cli")
+        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+
+        async def fake_probe_llm_health(*, timeout: int = 30) -> dict[str, object]:
+            return {
+                "attempted": True,
+                "healthy": True,
+                "backend": "cli",
+                "provider": "anthropic",
+                "configured": False,
+                "model": "claude-sonnet-4-6",
+                "latency_ms": 123,
+                "error": "",
+                "auth_failure": False,
+                "response_preview": "OK",
+            }
+
+        monkeypatch.setattr(agent, "probe_llm_health", fake_probe_llm_health)
+
+        report = await agent.evaluate_setup_doctor(probe_llm=True)
+
+        assert report["surfaces"]["llm"]["configured"] is True
+        assert report["surfaces"]["llm"]["probe"]["healthy"] is True
+        assert not any(
+            "CLAUDE_CODE_OAUTH_TOKEN is not configured" in warning
+            for warning in report["warnings"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_release_readiness_fails_closed_on_live_llm_auth_error(
+        self, agent: AgentOrchestrator, monkeypatch
+    ) -> None:
+        async def fake_evaluate_goldens(*, release_label: str = "") -> dict[str, object]:
+            return {
+                "release_label": release_label,
+                "total_cases": 3,
+                "exact_match_rate": 1.0,
+                "verdict_accuracy": 1.0,
+                "count_accuracy": 1.0,
+                "title_accuracy": 1.0,
+                "false_positive_cases": 0,
+                "false_negative_cases": 0,
+                "trend": {
+                    "has_baseline": False,
+                    "regression_detected": False,
+                    "summary": "No previous quality baseline available.",
+                },
+            }
+
+        async def fake_probe_llm_health(*, timeout: int = 30) -> dict[str, object]:
+            return {
+                "attempted": True,
+                "healthy": False,
+                "backend": "cli",
+                "provider": "anthropic",
+                "configured": True,
+                "model": "claude-sonnet-4-6",
+                "latency_ms": 321,
+                "error": "Invalid authentication credentials",
+                "auth_failure": True,
+                "response_preview": "",
+            }
+
+        monkeypatch.setattr(agent.review_quality, "evaluate_goldens", fake_evaluate_goldens)
+        monkeypatch.setattr(
+            agent.gateway,
+            "describe_capability_catalog",
+            lambda: {"summary": {"total_routes": 1, "configured_routes": 1, "total_capabilities": 1}},
+        )
+        monkeypatch.setattr(agent, "probe_llm_health", fake_probe_llm_health)
+
+        readiness = await agent.evaluate_release_readiness(release_label="v1.34.0")
+
+        assert readiness["ready"] is False
+        assert readiness["llm_probe"]["auth_failure"] is True
+        assert any(
+            "authentication/configuration" in reason
+            for reason in readiness["blocking_reasons"]
+        )
+
 
 # ─────────────────────────────────────────────
 # Cross-module integration: brain ↔ memory ↔ tasks

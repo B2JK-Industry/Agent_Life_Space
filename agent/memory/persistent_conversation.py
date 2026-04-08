@@ -16,7 +16,7 @@ Pri reštarte sa kontext rekonštruuje z DB.
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, cast
 
 import aiosqlite
 import structlog
@@ -224,7 +224,9 @@ class PersistentConversation:
             (conversation_id, self._max_raw),
         ) as cur:
             rows = await cur.fetchall()
-        return list(reversed(rows))
+        # aiosqlite Row is tuple-shaped at runtime; cast for mypy.
+        rows_typed = cast("list[tuple[str, str]]", list(rows))
+        return list(reversed(rows_typed))
 
     async def _search_past(
         self,
@@ -254,7 +256,8 @@ class PersistentConversation:
             params.append(limit)
             try:
                 async with self._db.execute(sql, params) as cur:
-                    return await cur.fetchall()
+                    fetched = await cur.fetchall()
+                return cast("list[tuple[str, str]]", list(fetched))
             except Exception:
                 pass  # Fall through to LIKE
 
@@ -270,7 +273,8 @@ class PersistentConversation:
         params.append(limit)
 
         async with self._db.execute(sql, params) as cur:
-            return await cur.fetchall()
+            fetched = await cur.fetchall()
+        return cast("list[tuple[str, str]]", list(fetched))
 
     # === Summarization ===
 
@@ -325,11 +329,14 @@ class PersistentConversation:
     async def get_stats(self) -> dict[str, Any]:
         assert self._db
         async with self._db.execute("SELECT COUNT(*) FROM messages") as cur:
-            total_msgs = (await cur.fetchone())[0]
+            row = await cur.fetchone()
+            total_msgs = row[0] if row else 0
         async with self._db.execute("SELECT COUNT(*) FROM core_memory") as cur:
-            total_facts = (await cur.fetchone())[0]
+            row = await cur.fetchone()
+            total_facts = row[0] if row else 0
         async with self._db.execute("SELECT COUNT(*) FROM conversations") as cur:
-            total_convs = (await cur.fetchone())[0]
+            row = await cur.fetchone()
+            total_convs = row[0] if row else 0
         return {
             "total_messages": total_msgs,
             "core_facts": total_facts,

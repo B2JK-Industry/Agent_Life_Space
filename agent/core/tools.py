@@ -10,11 +10,13 @@ CLI mode ich nepotrebuje (CLI má vlastné nástroje).
 
 from __future__ import annotations
 
+from typing import Any
+
 # ─────────────────────────────────────────────
 # Tool definitions (Anthropic format)
 # ─────────────────────────────────────────────
 
-AGENT_TOOLS: list[dict] = [
+AGENT_TOOLS: list[dict[str, Any]] = [
     {
         "name": "store_memory",
         "description": "Store information in agent's long-term memory. Use for facts, preferences, learned procedures.",

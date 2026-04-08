@@ -6,10 +6,43 @@ agent/vault/*.enc
 agent/vault/*.key
 agent/finance/*.key
 agent/finance/*.secret
+
+# ── Credential & key materials (NEVER commit) ────────────────────────
 *.pem
 *.key
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.jks
+id_rsa
+id_rsa.*
+id_ecdsa
+id_ecdsa.*
+id_ed25519
+id_ed25519.*
+*_id_rsa
+*_id_ed25519
+authorized_keys
+known_hosts
+
+# ── Local-only operator notes (per-user setup, never push) ───────────
+local/
+.local/
+secrets/
+.secrets/
+private/
+.private/
+operator-notes/
+SETUP_LOCAL.md
+*.local.md
+
+# ── Tool / IDE / shell caches ────────────────────────────────────────
 .claude/
 .tools/
+.codex/
+.aider*
 
 # Python
 .venv/

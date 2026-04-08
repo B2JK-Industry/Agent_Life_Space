@@ -17,6 +17,7 @@ import signal
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -71,7 +72,8 @@ def _check_pidfile() -> None:
     """Prevent duplicate agent instances. Fail-fast if already running."""
     if os.path.exists(PIDFILE):
         try:
-            old_pid = int(open(PIDFILE).read().strip())
+            with open(PIDFILE) as _pf:
+                old_pid = int(_pf.read().strip())
             # Check if process is actually alive
             os.kill(old_pid, 0)
             # Process exists — refuse to start
@@ -104,6 +106,39 @@ async def run_agent(data_dir: str = "agent") -> None:
     """Main agent loop with graceful shutdown."""
     _apply_runtime_env_defaults(data_dir)
     _check_pidfile()
+
+    # Configure tiered structured logging BEFORE anything else.
+    # Long-term sink keeps INFO+/AUDIT/build/finance/security events for
+    # ~30 days; short-term sink keeps verbose DEBUG/pipeline/poll events
+    # for ~6 hours. The cron loop runs LogRetentionManager hourly to
+    # delete files older than the configured window.
+    if os.environ.get("AGENT_LOG_TIERED", "1") == "1":
+        from agent.logs.logger import setup_tiered_logging
+        log_dir = os.environ.get(
+            "AGENT_LOG_DIR",
+            os.path.join(data_dir, "logs"),
+        )
+        # Pin the resolved path into the environment so the cron-side
+        # LogRetentionManager prunes the *same* directory the logging
+        # setup is writing to. Without this the cron fallback used
+        # get_project_root()/agent/logs while __main__ wrote into
+        # <data_dir>/logs and retention silently swept nothing.
+        os.environ.update({"AGENT_LOG_DIR": log_dir})
+        try:
+            paths = setup_tiered_logging(
+                log_dir,
+                long_retention_days=int(
+                    os.environ.get("AGENT_LOG_LONG_RETENTION_DAYS", "30"),
+                ),
+                short_retention_hours=int(
+                    os.environ.get("AGENT_LOG_SHORT_RETENTION_HOURS", "6"),
+                ),
+            )
+            logger.info("logging_tiered_enabled", **paths)
+        except Exception as e:
+            # Logging setup must never crash the agent. Fall back to
+            # the previous behaviour (terminal redirect or stderr).
+            logger.warning("logging_tiered_setup_failed", error=str(e))
 
     # Redirect logs to file BEFORE anything else if terminal mode is active
     enable_terminal = (
@@ -168,6 +203,11 @@ async def run_agent(data_dir: str = "agent") -> None:
         # Start agent in background
         agent_task = asyncio.create_task(agent.start())
 
+        # Strong references to fire-and-forget background tasks. asyncio
+        # only keeps weak references internally, so anything we don't store
+        # here can be garbage-collected mid-execution.
+        background_tasks: set[asyncio.Task[Any]] = set()
+
         # Start Telegram bot if token is available
         telegram_task = None
         tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -214,8 +254,12 @@ async def run_agent(data_dir: str = "agent") -> None:
             telegram_task = asyncio.create_task(bot.start())
             logger.info("telegram_bot_enabled")
 
-            # Preload semantic models in background
-            async def _preload_models():
+            # Preload semantic models in background.
+            # IMPORTANT: keep a strong reference to the task. asyncio only
+            # holds a weak reference internally, so an unstored task can be
+            # garbage-collected mid-flight ("Task was destroyed but it is
+            # pending!"). Tracking it also lets shutdown cancel it cleanly.
+            async def _preload_models() -> None:
                 try:
                     from agent.brain.semantic_router import _get_intent_embeddings, _load_model
                     _load_model()
@@ -228,7 +272,9 @@ async def run_agent(data_dir: str = "agent") -> None:
                     logger.info("rag_index_preloaded", documents=count)
                 except Exception as e:
                     logger.warning("preload_failed", error=str(e))
-            asyncio.create_task(_preload_models())
+            preload_task = asyncio.create_task(_preload_models())
+            background_tasks.add(preload_task)
+            preload_task.add_done_callback(background_tasks.discard)
 
             # Start Agent-to-Agent API (s autentifikáciou)
             from agent.social.agent_api import AgentAPI
@@ -286,7 +332,16 @@ async def run_agent(data_dir: str = "agent") -> None:
         # Wait for shutdown signal
         await shutdown_event.wait()
 
-        # Graceful shutdown
+        # Graceful shutdown — cancel any tracked fire-and-forget tasks
+        # (e.g. _preload_models) and await their completion to avoid
+        # "Task was destroyed but it is pending!" warnings.
+        if background_tasks:
+            for t in list(background_tasks):
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(*background_tasks, return_exceptions=True)
+            background_tasks.clear()
+
         if work_loop:
             await work_loop.stop()
             if work_loop_task:
@@ -398,6 +453,45 @@ async def show_runtime_model(data_dir: str = "agent") -> None:
     agent = AgentOrchestrator(data_dir=data_dir)
     await agent.initialize()
     print(orjson.dumps(agent.get_runtime_model(), option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def show_llm_runtime_command(data_dir: str = "agent") -> None:
+    """Show persistent runtime LLM controls and effective selection."""
+    import orjson
+
+    _apply_runtime_env_defaults(data_dir)
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    print(orjson.dumps(agent.get_llm_runtime_state(), option=orjson.OPT_INDENT_2).decode())
+    await agent.stop()
+
+
+async def update_llm_runtime_command(
+    *,
+    data_dir: str = "agent",
+    enabled: bool | None = None,
+    backend: str | None = None,
+    provider: str | None = None,
+    follow_env: bool = False,
+    note: str = "",
+    updated_by: str = "cli",
+) -> None:
+    """Persist runtime LLM controls and print the updated state."""
+    import orjson
+
+    _apply_runtime_env_defaults(data_dir)
+    agent = AgentOrchestrator(data_dir=data_dir)
+    await agent.initialize()
+    state = agent.update_llm_runtime_state(
+        enabled=enabled,
+        backend=backend,
+        provider=provider,
+        follow_env=follow_env,
+        note=note,
+        updated_by=updated_by,
+    )
+    print(orjson.dumps(state, option=orjson.OPT_INDENT_2).decode())
     await agent.stop()
 
 
@@ -878,6 +972,7 @@ async def evaluate_release_readiness_command(
 async def show_setup_doctor_command(
     *,
     data_dir: str = "agent",
+    probe_llm: bool = True,
 ) -> None:
     """Show a self-host focused setup/configuration report."""
     import orjson
@@ -886,7 +981,7 @@ async def show_setup_doctor_command(
     agent = AgentOrchestrator(data_dir=data_dir)
     await agent.initialize()
     try:
-        report = agent.get_setup_doctor()
+        report = await agent.evaluate_setup_doctor(probe_llm=probe_llm)
         print(orjson.dumps(report, option=orjson.OPT_INDENT_2).decode())
     finally:
         await agent.stop()
@@ -967,8 +1062,8 @@ async def run_build_command(
     repo_path: str,
     description: str,
     target_files: list[str] | None = None,
-    implementation_plan: list[object] | None = None,
-    acceptance_criteria: list[object] | None = None,
+    implementation_plan: list[Any] | None = None,
+    acceptance_criteria: list[Any] | None = None,
     requester: str = "cli",
     context: str = "",
     skip_review: bool = False,
@@ -1028,8 +1123,8 @@ async def run_intake_command(
     context: str = "",
     focus_areas: list[str] | None = None,
     target_files: list[str] | None = None,
-    implementation_plan: list[object] | None = None,
-    acceptance_criteria: list[object] | None = None,
+    implementation_plan: list[Any] | None = None,
+    acceptance_criteria: list[Any] | None = None,
     preview_only: bool = False,
 ) -> None:
     """Qualify and optionally execute unified operator intake."""
@@ -1476,9 +1571,56 @@ def main() -> None:
         help="Show self-host setup/configuration posture and exit",
     )
     parser.add_argument(
+        "--setup-doctor-skip-live-llm",
+        action="store_true",
+        help="Skip the live LLM probe during --setup-doctor (useful for offline diagnostics)",
+    )
+    parser.add_argument(
         "--runtime-model",
         action="store_true",
         help="Show explicit runtime coexistence rules and exit",
+    )
+    parser.add_argument(
+        "--llm-runtime-status",
+        action="store_true",
+        help="Show persistent runtime LLM controls and exit",
+    )
+    parser.add_argument(
+        "--llm-runtime-enable",
+        action="store_true",
+        help="Attach/enable LLM-backed work at runtime and exit",
+    )
+    parser.add_argument(
+        "--llm-runtime-disable",
+        action="store_true",
+        help="Detach/disable LLM-backed work at runtime and exit",
+    )
+    parser.add_argument(
+        "--llm-runtime-backend",
+        default="",
+        choices=["", "cli", "api"],
+        help="Optional runtime backend override for LLM controls",
+    )
+    parser.add_argument(
+        "--llm-runtime-provider",
+        default="",
+        choices=["", "anthropic", "openai", "local"],
+        help="Optional runtime provider override for LLM controls",
+    )
+    parser.add_argument(
+        "--llm-runtime-follow-env",
+        action="store_true",
+        help="Clear runtime backend/provider overrides and follow .env again",
+    )
+    parser.add_argument(
+        "--llm-runtime-note",
+        default="",
+        help="Optional audit note for runtime LLM control changes",
+    )
+    parser.add_argument(
+        "--llm-runtime-updated-by",
+        default="cli",
+        help="Operator label stored in runtime LLM control audit trail",
     )
     parser.add_argument(
         "--build-repo",
@@ -1808,7 +1950,12 @@ def main() -> None:
             )
         )
     elif args.setup_doctor:
-        asyncio.run(show_setup_doctor_command(data_dir=args.data_dir))
+        asyncio.run(
+            show_setup_doctor_command(
+                data_dir=args.data_dir,
+                probe_llm=not args.setup_doctor_skip_live_llm,
+            )
+        )
     elif args.gateway_catalog:
         asyncio.run(
             show_gateway_catalog(
@@ -1865,6 +2012,41 @@ def main() -> None:
                 title=args.provider_api_title,
             )
         )
+    elif (
+        args.llm_runtime_status
+        or args.llm_runtime_enable
+        or args.llm_runtime_disable
+        or args.llm_runtime_backend
+        or args.llm_runtime_provider
+        or args.llm_runtime_follow_env
+    ):
+        if args.llm_runtime_status and not (
+            args.llm_runtime_enable
+            or args.llm_runtime_disable
+            or args.llm_runtime_backend
+            or args.llm_runtime_provider
+            or args.llm_runtime_follow_env
+        ):
+            asyncio.run(show_llm_runtime_command(args.data_dir))
+        else:
+            if args.llm_runtime_enable and args.llm_runtime_disable:
+                parser.error("Use only one of --llm-runtime-enable or --llm-runtime-disable")
+            enabled: bool | None = None
+            if args.llm_runtime_enable:
+                enabled = True
+            elif args.llm_runtime_disable:
+                enabled = False
+            asyncio.run(
+                update_llm_runtime_command(
+                    data_dir=args.data_dir,
+                    enabled=enabled,
+                    backend=args.llm_runtime_backend or None,
+                    provider=args.llm_runtime_provider or None,
+                    follow_env=args.llm_runtime_follow_env,
+                    note=args.llm_runtime_note,
+                    updated_by=args.llm_runtime_updated_by,
+                )
+            )
     elif args.runtime_model:
         asyncio.run(show_runtime_model(args.data_dir))
     elif args.artifact_id:

@@ -14,6 +14,7 @@ Joby:
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -58,12 +59,19 @@ class AgentCron:
         self._tasks.append(asyncio.create_task(self._telemetry_loop()))
         self._tasks.append(asyncio.create_task(self._retention_pruning_loop()))
         self._tasks.append(asyncio.create_task(self._data_cleanup_loop()))
-        logger.info("cron_started", jobs=11)
+        self._tasks.append(asyncio.create_task(self._log_retention_loop()))
+        logger.info("cron_started", jobs=12)
 
     async def stop(self) -> None:
         self._running = False
         for t in self._tasks:
             t.cancel()
+        # Await cancellation so the loops actually exit before we drop
+        # references. Without this gather() the tasks would only have
+        # cancel() set and could log "Task was destroyed but it is
+        # pending!" during shutdown.
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
         logger.info("cron_stopped")
 
@@ -503,3 +511,48 @@ class AgentCron:
                     workflow_id=workflow.workflow_id,
                     error=str(e),
                 )
+
+    # --- Log Retention (every hour) ---
+
+    async def _log_retention_loop(self) -> None:
+        """Periodically prune log files older than the configured tier
+        retention. Long-tier files (~30d) and short-tier files (~6h)
+        are aged out independently. The retention manager itself is
+        deterministic — it just compares mtime against now."""
+        # First sweep after 5 minutes (give the agent time to settle).
+        await asyncio.sleep(300)
+        while self._running:
+            try:
+                await self._do_log_retention_sweep()
+                await asyncio.sleep(3600)  # 1 hour
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("cron_log_retention_error")
+
+    async def _do_log_retention_sweep(self) -> None:
+        from agent.logs.retention import LogRetentionManager
+
+        log_dir = os.environ.get("AGENT_LOG_DIR", "")
+        if not log_dir:
+            # Same default as setup_tiered_logging in __main__.py.
+            from agent.core.paths import get_project_root
+            log_dir = os.path.join(get_project_root(), "agent", "logs")
+
+        try:
+            mgr = LogRetentionManager(log_dir=log_dir)
+        except ValueError as e:
+            logger.warning("log_retention_misconfigured", error=str(e))
+            return
+
+        results = mgr.prune_all()
+        long_pruned = results["long"].pruned
+        short_pruned = results["short"].pruned
+        if long_pruned or short_pruned:
+            logger.info(
+                "cron_log_retention_pruned",
+                long_pruned=long_pruned,
+                long_bytes_freed=results["long"].bytes_freed,
+                short_pruned=short_pruned,
+                short_bytes_freed=results["short"].bytes_freed,
+            )

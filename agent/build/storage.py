@@ -8,9 +8,10 @@ Same pattern as agent.review.storage.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar, cast
 
 import structlog
 
@@ -27,7 +28,7 @@ class BuildStorage:
 
     def __init__(self, db_path: str = "") -> None:
         if not db_path:
-            root = get_project_root()
+            root = Path(get_project_root())
             db_path = str(root / "agent" / "build" / "builds.db")
         self._db_path = db_path
         self._db: sqlite3.Connection | None = None
@@ -37,7 +38,11 @@ class BuildStorage:
         if self._initialized:
             return
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(self._db_path)
+        # check_same_thread=False because the asyncio loop hops between
+        # threads when running blocking work in executors. WAL mode then
+        # gives us safe concurrent reads + serialised writes via SQLite's
+        # internal mutex.
+        self._db = sqlite3.connect(self._db_path, check_same_thread=False)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("""
             CREATE TABLE IF NOT EXISTS build_jobs (
@@ -64,15 +69,35 @@ class BuildStorage:
         self._initialized = True
         logger.debug("build_storage_initialized", db_path=self._db_path)
 
+    # Whitelist of identifiers that this storage layer is allowed to
+    # mutate. SQLite does not parameterise table/column names, so we
+    # validate against a fixed allow-list before f-string substitution.
+    _ALLOWED_TABLES: ClassVar[frozenset[str]] = frozenset(
+        {"build_jobs", "build_artifacts"},
+    )
+    _IDENT_RE: ClassVar[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
     def _ensure_text_column(self, table: str, column: str, default: str) -> None:
         if self._db is None:
             return
+        # Identifier validation — table must be in the allow-list and the
+        # column name must be a plain identifier. The default is a literal
+        # we control at the call site, but we still escape any single
+        # quotes for belt-and-braces safety.
+        if table not in self._ALLOWED_TABLES:
+            msg = f"_ensure_text_column: table {table!r} is not in the allow-list"
+            raise ValueError(msg)
+        if not self._IDENT_RE.match(column):
+            msg = f"_ensure_text_column: column {column!r} is not a valid identifier"
+            raise ValueError(msg)
+        safe_default = default.replace("'", "''")
+
         rows = self._db.execute(f"PRAGMA table_info({table})").fetchall()  # noqa: S608
         known = {row[1] for row in rows}
         if column in known:
             return
         self._db.execute(
-            f"ALTER TABLE {table} ADD COLUMN {column} TEXT DEFAULT '{default}'"  # noqa: S608
+            f"ALTER TABLE {table} ADD COLUMN {column} TEXT DEFAULT '{safe_default}'"  # noqa: S608
         )
 
     def save_job(self, job: BuildJob) -> None:
@@ -89,13 +114,13 @@ class BuildStorage:
 
     def load_job(self, job_id: str) -> dict[str, Any] | None:
         if not self._db:
-            return None  # type: ignore[return-value]
+            return None
         row = self._db.execute(
             "SELECT data FROM build_jobs WHERE id = ?", (job_id,)
         ).fetchone()
         if row is None:
             return None
-        return json.loads(row[0])
+        return cast("dict[str, Any]", json.loads(row[0]))
 
     def list_jobs(
         self, status: str = "", limit: int = 20
@@ -213,7 +238,7 @@ class BuildStorage:
 
     def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
         if not self._db:
-            return None  # type: ignore[return-value]
+            return None
         row = self._db.execute(
             "SELECT id, job_id, artifact_kind, content, content_json, format, created_at "
             "FROM build_artifacts WHERE id = ?",

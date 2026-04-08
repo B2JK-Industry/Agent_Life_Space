@@ -161,7 +161,7 @@ class MemoryInspector:
                     break
         # Sort by relevance (importance * confidence * decay)
         results.sort(
-            key=lambda r: r["importance"] * r["confidence"] * r["decay_factor"],
+            key=lambda r: float(r["importance"]) * float(r["confidence"]) * float(r["decay_factor"]),
             reverse=True,
         )
         return results

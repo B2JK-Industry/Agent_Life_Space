@@ -162,7 +162,7 @@ class SemanticCache:
 
         logger.info("semantic_cache_stored", query=query[:50], entries=len(self._entries))
 
-    def get_stats(self) -> dict[str, int]:
+    def get_stats(self) -> dict[str, float]:
         return {
             "entries": len(self._entries),
             "hits": self._hits,

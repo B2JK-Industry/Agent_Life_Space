@@ -14,6 +14,7 @@ Design:
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -145,6 +146,10 @@ class FinanceTracker:
         self._db: aiosqlite.Connection | None = None
         self._initialized = False
         self._approval_queue = approval_queue  # Optional ApprovalQueue integration
+        # Serialise approve/complete/reject so two concurrent operators
+        # can't double-approve the same transaction or race
+        # status transitions.
+        self._tx_lock = asyncio.Lock()
 
         # Budget policy (optional — provides hard/soft caps)
         self._budget_policy: Any = None
@@ -317,45 +322,61 @@ class FinanceTracker:
         """
         Approve a proposed transaction. ONLY callable by human.
         In the system, this is triggered by human interaction, never by agent.
+
+        Serialised under ``self._tx_lock`` so two concurrent operators
+        cannot both observe ``status == PROPOSED`` and double-approve.
         """
-        tx = self._get_tx(tx_id)
-        if tx.status != TransactionStatus.PROPOSED:
-            msg = f"Transaction '{tx_id}' is {tx.status.value}, cannot approve"
-            raise ValueError(msg)
+        async with self._tx_lock:
+            tx = self._get_tx(tx_id)
+            if tx.status != TransactionStatus.PROPOSED:
+                msg = f"Transaction '{tx_id}' is {tx.status.value}, cannot approve"
+                raise ValueError(msg)
 
-        tx.status = TransactionStatus.APPROVED
-        tx.approved_at = datetime.now(UTC).isoformat()
-        tx.approved_by = "human"  # Always human
-        await self._persist(tx)
+            tx.status = TransactionStatus.APPROVED
+            tx.approved_at = datetime.now(UTC).isoformat()
+            tx.approved_by = "human"  # Always human
+            await self._persist(tx)
 
-        logger.info("transaction_approved", id=tx_id, amount=tx.amount_usd)
-        return tx
+            logger.info("transaction_approved", id=tx_id, amount=tx.amount_usd)
+            return tx
 
     async def reject(self, tx_id: str, reason: str = "") -> Transaction:
         """Reject a proposed transaction."""
-        tx = self._get_tx(tx_id)
-        if tx.status != TransactionStatus.PROPOSED:
-            msg = f"Transaction '{tx_id}' is {tx.status.value}, cannot reject"
-            raise ValueError(msg)
+        async with self._tx_lock:
+            tx = self._get_tx(tx_id)
+            if tx.status != TransactionStatus.PROPOSED:
+                msg = f"Transaction '{tx_id}' is {tx.status.value}, cannot reject"
+                raise ValueError(msg)
 
-        tx.status = TransactionStatus.REJECTED
-        tx.metadata["rejection_reason"] = reason
-        await self._persist(tx)
+            tx.status = TransactionStatus.REJECTED
+            tx.metadata["rejection_reason"] = reason
+            await self._persist(tx)
 
-        logger.info("transaction_rejected", id=tx_id, reason=reason)
-        return tx
+            logger.info("transaction_rejected", id=tx_id, reason=reason)
+            return tx
 
     async def complete(self, tx_id: str) -> Transaction:
         """Mark an approved transaction as completed."""
-        tx = self._get_tx(tx_id)
-        if tx.status != TransactionStatus.APPROVED:
-            msg = f"Transaction '{tx_id}' must be approved before completion"
-            raise ValueError(msg)
+        async with self._tx_lock:
+            tx = self._get_tx(tx_id)
+            if tx.status != TransactionStatus.APPROVED:
+                msg = f"Transaction '{tx_id}' must be approved before completion"
+                raise ValueError(msg)
 
-        tx.status = TransactionStatus.COMPLETED
-        tx.completed_at = datetime.now(UTC).isoformat()
-        await self._persist(tx)
-        return tx
+            tx.status = TransactionStatus.COMPLETED
+            tx.completed_at = datetime.now(UTC).isoformat()
+            await self._persist(tx)
+            # Long-tier event: every actual money movement gets a permanent
+            # log entry, so the operator's audit trail survives independent
+            # of the database.
+            logger.info(
+                "finance_completed",
+                id=tx_id,
+                amount_usd=tx.amount_usd,
+                type=tx.type.value,
+                description=tx.description,
+            )
+            return tx
 
     def check_budget(self, proposed_amount: float = 0.0) -> dict[str, Any]:
         """

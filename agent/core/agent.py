@@ -41,6 +41,7 @@ from agent.control.evidence_export import EvidenceExportService
 from agent.control.gateway import ExternalGatewayService
 from agent.control.intake import OperatorIntake, OperatorIntakeService, OperatorWorkType
 from agent.control.job_queries import JobQueryService
+from agent.control.llm_runtime import LlmRuntimeControlService
 from agent.control.models import JobKind, PlanRecordStatus, TraceRecordKind
 from agent.control.policy import evaluate_release_readiness
 from agent.control.reporting import OperatorReportService
@@ -93,6 +94,8 @@ class AgentOrchestrator:
         self._data_dir = Path(data_dir)
         self._running = False
         self._initialized = False
+        # Set by __main__ after the docker probe at boot. None until probed.
+        self._docker_available: bool | None = None
 
         # Core infrastructure
         self.router = MessageRouter()  # FUTURE: inter-module messaging
@@ -131,6 +134,10 @@ class AgentOrchestrator:
             storage=ControlPlaneStorage(
                 db_path=str(self._data_dir / "control" / "control.db")
             )
+        )
+        self.llm_runtime = LlmRuntimeControlService(
+            data_dir=self._data_dir,
+            control_plane=self.control_plane,
         )
 
         # Review service
@@ -186,6 +193,8 @@ class AgentOrchestrator:
         self.gateway = ExternalGatewayService(
             control_plane_state=self.control_plane,
             approval_queue=self.approval_queue,
+            # Live env reference (Mapping[str, str]) so monkeypatch.setenv
+            # in tests and runtime env updates are observable.
             environment=os.environ,
             secret_lookup=self._lookup_secret,
             on_payment_required=self._on_gateway_payment_required,
@@ -544,19 +553,19 @@ class AgentOrchestrator:
 
     # --- Public API ---
 
-    async def run_build_job(self, intake: Any):
+    async def run_build_job(self, intake: Any) -> Any:
         """Run a build job through the shared orchestrator runtime."""
         if not self._initialized:
             await self.initialize()
         return await self.build.run_build(intake)
 
-    async def run_review_job(self, intake: Any):
+    async def run_review_job(self, intake: Any) -> Any:
         """Run a review job through the shared orchestrator runtime."""
         if not self._initialized:
             await self.initialize()
         return await self.review.run_review(intake)
 
-    async def resume_build_job(self, job_id: str):
+    async def resume_build_job(self, job_id: str) -> Any:
         """Resume a previously interrupted build job."""
         if not self._initialized:
             await self.initialize()
@@ -1432,6 +1441,43 @@ class AgentOrchestrator:
             gateway_catalog=gateway_catalog,
             policy_id=policy_id,
         )
+        # CI escape hatch: GitHub Actions runners do not have the
+        # Claude CLI installed, so the live LLM probe always fails
+        # there. Operators set AGENT_RELEASE_READINESS_SKIP_LLM_PROBE=1
+        # in CI workflows to keep the probe informational instead of
+        # blocking. The skipped probe is still recorded in the report
+        # so reviewers can see it was not actually validated.
+        skip_llm_probe = (
+            os.environ.get("AGENT_RELEASE_READINESS_SKIP_LLM_PROBE", "").strip() == "1"
+        )
+        if skip_llm_probe:
+            readiness["llm_probe"] = {
+                "attempted": False,
+                "healthy": False,
+                "skipped": True,
+                "skip_reason": "AGENT_RELEASE_READINESS_SKIP_LLM_PROBE=1",
+            }
+            readiness.setdefault("warnings", []).append(
+                "LLM live probe skipped via "
+                "AGENT_RELEASE_READINESS_SKIP_LLM_PROBE=1; release readiness "
+                "did NOT validate live LLM connectivity.",
+            )
+        else:
+            llm_probe = await self.probe_llm_health()
+            readiness["llm_probe"] = llm_probe
+            if not llm_probe.get("healthy", False):
+                error = str(llm_probe.get("error", "")).strip() or "unknown LLM failure"
+                prefix = (
+                    "LLM live probe failed due to authentication/configuration: "
+                    if llm_probe.get("auth_failure")
+                    else "LLM live probe failed: "
+                )
+                readiness["blocking_reasons"] = [
+                    *readiness.get("blocking_reasons", []),
+                    f"{prefix}{error[:200]}",
+                ]
+                readiness["ready"] = False
+                readiness["summary"] = "Release readiness checks failed."
         identity_warnings = get_identity_onboarding_warnings()
         if identity_warnings:
             readiness["warnings"] = [*readiness.get("warnings", []), *identity_warnings]
@@ -1465,8 +1511,7 @@ class AgentOrchestrator:
             or "/tmp/agent-life-space.pid"
         )
 
-        llm_backend = (os.environ.get("LLM_BACKEND") or "cli").strip() or "cli"
-        llm_provider = (os.environ.get("LLM_PROVIDER") or "anthropic").strip() or "anthropic"
+        llm_surface, llm_warnings = self._build_llm_setup_surface()
         telegram_token_configured = bool(os.environ.get("TELEGRAM_BOT_TOKEN", "").strip())
         telegram_user_ids = [
             part.strip()
@@ -1494,33 +1539,7 @@ class AgentOrchestrator:
             warnings.append(
                 "TELEGRAM_BOT_TOKEN is not configured; Telegram control surface is disabled."
             )
-
-        llm_configured = True
-        if llm_backend == "api":
-            if llm_provider == "anthropic":
-                llm_configured = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
-                if not llm_configured:
-                    warnings.append(
-                        "LLM_BACKEND=api with anthropic provider but ANTHROPIC_API_KEY is missing."
-                    )
-            elif llm_provider == "openai":
-                llm_configured = bool(os.environ.get("OPENAI_API_KEY", "").strip())
-                if not llm_configured:
-                    warnings.append(
-                        "LLM_BACKEND=api with openai provider but OPENAI_API_KEY is missing."
-                    )
-            elif llm_provider == "local":
-                llm_configured = bool(os.environ.get("OPENAI_BASE_URL", "").strip())
-                if not llm_configured:
-                    warnings.append(
-                        "LLM_BACKEND=api with local provider but OPENAI_BASE_URL is missing."
-                    )
-        else:
-            llm_configured = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip())
-            if not llm_configured:
-                warnings.append(
-                    "CLAUDE_CODE_OAUTH_TOKEN is not configured; the Claude CLI backend depends on an existing host login session."
-                )
+        warnings.extend(llm_warnings)
 
         if (
             int(gateway_summary.get("total_routes", 0) or 0) > 0
@@ -1567,17 +1586,194 @@ class AgentOrchestrator:
                 "vault": {
                     "configured": vault_key_configured,
                 },
-                "llm": {
-                    "backend": llm_backend,
-                    "provider": llm_provider,
-                    "configured": llm_configured,
-                },
+                "llm": llm_surface,
                 "gateway": {
                     "total_routes": int(gateway_summary.get("total_routes", 0) or 0),
                     "configured_routes": int(gateway_summary.get("configured_routes", 0) or 0),
                     "total_capabilities": int(gateway_summary.get("total_capabilities", 0) or 0),
                 },
             },
+            "warnings": warnings,
+        }
+
+    async def evaluate_setup_doctor(
+        self,
+        *,
+        probe_llm: bool = False,
+    ) -> dict[str, Any]:
+        """Return setup doctor output with optional live LLM probe."""
+        report = self.get_setup_doctor()
+        if not probe_llm:
+            return report
+
+        llm_probe = await self.probe_llm_health()
+        llm_surface = dict(report["surfaces"].get("llm", {}))
+        llm_surface["probe"] = llm_probe
+        if llm_probe.get("healthy", False):
+            llm_surface["configured"] = True
+            report["warnings"] = [
+                warning
+                for warning in report["warnings"]
+                if "CLAUDE_CODE_OAUTH_TOKEN is not configured" not in warning
+            ]
+        else:
+            error = str(llm_probe.get("error", "")).strip() or "unknown LLM failure"
+            warning = (
+                "LLM live probe failed due to authentication/configuration: "
+                if llm_probe.get("auth_failure")
+                else "LLM live probe failed: "
+            ) + error[:200]
+            if warning not in report["warnings"]:
+                report["warnings"].append(warning)
+        report["surfaces"]["llm"] = llm_surface
+        return report
+
+    async def probe_llm_health(self, *, timeout: int = 30) -> dict[str, Any]:
+        """Run a tiny live LLM call to catch auth/config drift."""
+        from agent.core.llm_provider import (
+            GenerateRequest,
+            clear_provider_cache,
+            get_provider,
+            is_authentication_error,
+        )
+        from agent.core.models import get_model
+
+        llm_surface, llm_warnings = self._build_llm_setup_surface()
+        model = get_model("analysis")
+        probe = {
+            "attempted": False,
+            "healthy": False,
+            "backend": llm_surface["backend"],
+            "provider": llm_surface["provider"],
+            "configured": llm_surface["configured"],
+            "enabled": llm_surface["enabled"],
+            "model": model.model_id,
+            "latency_ms": 0,
+            "error": "",
+            "auth_failure": False,
+            "response_preview": "",
+        }
+
+        if not llm_surface["enabled"]:
+            probe["error"] = "LLM runtime is detached by operator."
+            return probe
+
+        # CLI can succeed with a host login session even when the env token is absent.
+        if probe["backend"] == "api" and not probe["configured"]:
+            probe["error"] = (llm_warnings[-1] if llm_warnings else "LLM backend is not configured.")[:500]
+            probe["auth_failure"] = is_authentication_error(probe["error"])
+            return probe
+
+        clear_provider_cache()
+        response = await get_provider().generate(
+            GenerateRequest(
+                messages=[{"role": "user", "content": "Reply with exactly OK"}],
+                model=model.model_id,
+                max_tokens=16,
+                timeout=min(timeout, model.timeout),
+                max_turns=1,
+            )
+        )
+        probe["attempted"] = True
+        probe["latency_ms"] = response.latency_ms
+        probe["response_preview"] = (response.text or "")[:120]
+
+        if response.success and (response.text or "").strip():
+            probe["healthy"] = True
+            return probe
+
+        probe["error"] = str(response.error or "LLM probe returned an empty response")[:500]
+        probe["auth_failure"] = is_authentication_error(probe["error"])
+        return probe
+
+    def _build_llm_setup_surface(self) -> tuple[dict[str, Any], list[str]]:
+        """Resolve LLM surface posture without performing a live network call."""
+        runtime = self.llm_runtime.get_state()
+        llm_backend = runtime["effective_backend"]
+        llm_provider = runtime["effective_provider"]
+        warnings: list[str] = []
+
+        llm_configured = True
+        if llm_backend == "api":
+            if llm_provider == "anthropic":
+                llm_configured = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+                if not llm_configured:
+                    warnings.append(
+                        "LLM_BACKEND=api with anthropic provider but ANTHROPIC_API_KEY is missing."
+                    )
+            elif llm_provider == "openai":
+                llm_configured = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+                if not llm_configured:
+                    warnings.append(
+                        "LLM_BACKEND=api with openai provider but OPENAI_API_KEY is missing."
+                    )
+            elif llm_provider == "local":
+                llm_configured = bool(os.environ.get("OPENAI_BASE_URL", "").strip())
+                if not llm_configured:
+                    warnings.append(
+                        "LLM_BACKEND=api with local provider but OPENAI_BASE_URL is missing."
+                    )
+        else:
+            llm_configured = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip())
+            if not llm_configured:
+                warnings.append(
+                    "CLAUDE_CODE_OAUTH_TOKEN is not configured; the Claude CLI backend depends on an existing host login session."
+                )
+        if not runtime["enabled"]:
+            warnings.append(
+                "LLM runtime is detached by operator; live generation/build/review actions will fail closed until re-enabled."
+            )
+
+        return (
+            {
+                "enabled": runtime["enabled"],
+                "backend": llm_backend,
+                "provider": llm_provider,
+                "configured": llm_configured,
+                "backend_override": runtime["backend_override"],
+                "provider_override": runtime["provider_override"],
+                "follows_env": runtime["follows_env"],
+                "override_active": runtime["override_active"],
+                "updated_at": runtime["updated_at"],
+                "updated_by": runtime["updated_by"],
+                "note": runtime["note"],
+            },
+            warnings,
+        )
+
+    def get_llm_runtime_state(self) -> dict[str, Any]:
+        """Expose persisted runtime LLM controls plus current setup posture."""
+        summary = self.llm_runtime.get_state()
+        llm_surface, warnings = self._build_llm_setup_surface()
+        return {
+            **summary,
+            "surface": llm_surface,
+            "warnings": warnings,
+        }
+
+    def update_llm_runtime_state(
+        self,
+        *,
+        enabled: bool | None = None,
+        backend: str | None = None,
+        provider: str | None = None,
+        follow_env: bool = False,
+        note: str = "",
+        updated_by: str = "operator",
+    ) -> dict[str, Any]:
+        """Persist operator LLM controls and return the updated effective state."""
+        summary = self.llm_runtime.update_state(
+            enabled=enabled,
+            backend=backend,
+            provider=provider,
+            follow_env=follow_env,
+            note=note,
+            updated_by=updated_by,
+        )
+        llm_surface, warnings = self._build_llm_setup_surface()
+        return {
+            **summary,
+            "surface": llm_surface,
             "warnings": warnings,
         }
 
