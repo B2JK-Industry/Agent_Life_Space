@@ -41,6 +41,20 @@ Odporúčané pre self-host:
 - `python -m agent --llm-runtime-status` — aktuálny runtime LLM attach/backend/provider stav
 - dashboard: `http://127.0.0.1:8420/dashboard?key=$AGENT_API_KEY`
 
+### Telegram + Claude CLI backend obmedzenie
+Programovacie úlohy poslané z Telegramu **nemôžu** použiť Claude CLI backend v default sandbox móde. Claude Code CLI vyžaduje interaktívne kliknutie "Allow" na permission prompt, čo z Telegramu nie je dosiahnuteľné — request by visel v typing indicator-i kým ho timeout neukončí.
+
+Brain má fail-closed guard ktorý odmietne túto kombináciu hneď po klasifikácii tasku a vráti operator-friendly hlášku. Conversational tasky (otázky, status, memory) na CLI backend-e fungujú normálne — guard sa týka len `programming` tasku.
+
+**Možnosti odblokovania (pre programovacie tasky cez Telegram):**
+
+| Voľba | Ako | Bezpečnosť |
+|---|---|---|
+| Prepnúť na API backend | `/runtime` v Telegrame alebo `POST /api/operator/llm` | ✅ ToolUseLoop nevyžaduje interaktívny prompt |
+| Host opt-in | `AGENT_SANDBOX_ONLY=0` v `.env` na servery + reštart | ⚠️ CLI dostane host file access cez `--dangerously-skip-permissions` — rob len ak vieš čo robíš |
+
+V API móde sa vyžaduje nakonfigurovaný `ANTHROPIC_API_KEY` (alebo `OPENAI_API_KEY`/`OPENAI_BASE_URL`).
+
 ### Runtime LLM ovládanie
 Ak chceš dočasne odpojiť LLM, alebo prepnúť medzi `cli` a `api` bez editovania `.env`, použi runtime override. Stav sa ukladá do `AGENT_DATA_DIR/control/llm_runtime.json`.
 
