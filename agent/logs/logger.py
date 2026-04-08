@@ -98,11 +98,19 @@ class _TierRouter(logging.Handler):
 def setup_tiered_logging(
     log_dir: str | Path,
     *,
-    long_retention_days: int = 30,
+    long_retention_hours: int = 720,
     short_retention_hours: int = 6,
     rotate_when: str = "midnight",
 ) -> dict[str, str]:
     """Configure structlog + stdlib logging to write to two tier sinks.
+
+    Both retention windows are expressed in **hours**, matching the
+    contract used by ``agent.logs.retention``. Previously this function
+    accepted ``long_retention_days`` while the cron-side
+    ``LogRetentionManager`` read ``AGENT_LOG_LONG_RETENTION_HOURS`` —
+    operators who set only one variable saw the rotating handler
+    using one value and the prune sweep using another. Unifying on
+    hours removes that footgun.
 
     Side effects:
 
@@ -125,10 +133,13 @@ def setup_tiered_logging(
     long_path = long_dir / "agent-long.log"
     short_path = short_dir / "agent-short.log"
 
-    # Daily rotation. backupCount is intentionally generous — the
-    # LogRetentionManager (run from cron) is the real source of truth
-    # for "how long do we keep this", not the rotating handler. We
-    # only need rotation here so each day's file is separate.
+    # Long tier rotates daily; backupCount is "long_retention_hours
+    # rounded up to the nearest day, plus a safety margin". The real
+    # source of truth for "how long do we keep this" is
+    # LogRetentionManager (cron), but we still need backupCount large
+    # enough that the rotating handler does not delete files before
+    # the prune sweep gets a chance to consider them.
+    long_retention_days = max((long_retention_hours + 23) // 24, 1)
     long_handler = TimedRotatingFileHandler(
         long_path,
         when=rotate_when,
