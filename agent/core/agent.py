@@ -1441,21 +1441,43 @@ class AgentOrchestrator:
             gateway_catalog=gateway_catalog,
             policy_id=policy_id,
         )
-        llm_probe = await self.probe_llm_health()
-        readiness["llm_probe"] = llm_probe
-        if not llm_probe.get("healthy", False):
-            error = str(llm_probe.get("error", "")).strip() or "unknown LLM failure"
-            prefix = (
-                "LLM live probe failed due to authentication/configuration: "
-                if llm_probe.get("auth_failure")
-                else "LLM live probe failed: "
+        # CI escape hatch: GitHub Actions runners do not have the
+        # Claude CLI installed, so the live LLM probe always fails
+        # there. Operators set AGENT_RELEASE_READINESS_SKIP_LLM_PROBE=1
+        # in CI workflows to keep the probe informational instead of
+        # blocking. The skipped probe is still recorded in the report
+        # so reviewers can see it was not actually validated.
+        skip_llm_probe = (
+            os.environ.get("AGENT_RELEASE_READINESS_SKIP_LLM_PROBE", "").strip() == "1"
+        )
+        if skip_llm_probe:
+            readiness["llm_probe"] = {
+                "attempted": False,
+                "healthy": False,
+                "skipped": True,
+                "skip_reason": "AGENT_RELEASE_READINESS_SKIP_LLM_PROBE=1",
+            }
+            readiness.setdefault("warnings", []).append(
+                "LLM live probe skipped via "
+                "AGENT_RELEASE_READINESS_SKIP_LLM_PROBE=1; release readiness "
+                "did NOT validate live LLM connectivity.",
             )
-            readiness["blocking_reasons"] = [
-                *readiness.get("blocking_reasons", []),
-                f"{prefix}{error[:200]}",
-            ]
-            readiness["ready"] = False
-            readiness["summary"] = "Release readiness checks failed."
+        else:
+            llm_probe = await self.probe_llm_health()
+            readiness["llm_probe"] = llm_probe
+            if not llm_probe.get("healthy", False):
+                error = str(llm_probe.get("error", "")).strip() or "unknown LLM failure"
+                prefix = (
+                    "LLM live probe failed due to authentication/configuration: "
+                    if llm_probe.get("auth_failure")
+                    else "LLM live probe failed: "
+                )
+                readiness["blocking_reasons"] = [
+                    *readiness.get("blocking_reasons", []),
+                    f"{prefix}{error[:200]}",
+                ]
+                readiness["ready"] = False
+                readiness["summary"] = "Release readiness checks failed."
         identity_warnings = get_identity_onboarding_warnings()
         if identity_warnings:
             readiness["warnings"] = [*readiness.get("warnings", []), *identity_warnings]
