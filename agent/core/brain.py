@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import structlog
 
@@ -133,19 +133,17 @@ class AgentBrain:
         conv_id = self._get_conversation_id(message.chat_id)
 
         # ── Layer 1: Multi-task detection → work queue ──
-        import re
-        lines = [line.strip() for line in text.split("\n") if line.strip()]
-        numbered = [re.sub(r"^\d+[\.\)]\s*", "", line) for line in lines if re.match(r"^\d+[\.\)]", line)]
-
-        if not numbered:
-            action_prefixes = ["otestuj", "spusti", "urob", "skontroluj", "vytvor"]
-            for prefix in action_prefixes:
-                if text.lower().startswith(prefix) and "," in text:
-                    rest = text[len(prefix):].strip().lstrip(":")
-                    items = [f"{prefix} {item.strip()}" for item in rest.split(",") if item.strip()]
-                    if len(items) >= 2:
-                        numbered = items
-                        break
+        # The detector intentionally ONLY fires on explicit work-queue
+        # intent. Previously any message containing "1. ... 2. ..."
+        # numbered lines was forwarded to the work loop, which meant
+        # echoing the agent's own numbered recommendation back at it
+        # (e.g. quoting "1. git pull, 2. pip install, 3. restart")
+        # spawned 3 background jobs. We now require:
+        #   (a) an explicit intent header line ending with ":", OR
+        #   (b) a clean numbered list with no interleaved prose AND
+        #       the items do not match a recent assistant reply (so
+        #       quoted/echoed text is excluded).
+        numbered = self._detect_explicit_work_queue(text, chat_conv)
 
         if len(numbered) >= 2 and self._work_loop:
             if message.is_group and not message.is_owner:
@@ -322,9 +320,20 @@ class AgentBrain:
                 f"At the end always include a short summary. {get_response_language_instruction()}"
             )
         elif task_type in ("simple", "factual", "greeting"):
+            # Even short follow-ups like "ano", "ďakujem", "ok" need the
+            # prior conversation in scope — otherwise the model has no
+            # idea what the user is agreeing to and replies "chýba mi
+            # kontext". Inject persistent_context (preferred, longer
+            # window) or fall back to in-memory chat_conv tail.
+            history_block = ""
+            if persistent_context:
+                history_block = f"{persistent_context}\n\n"
+            elif conv_context:
+                history_block = f"Predchádzajúca konverzácia:\n{conv_context}\n\n"
             prompt = (
                 f"{get_simple_prompt()}\n"
                 f"{memory_block}"
+                f"{history_block}"
                 f"{message.sender_name}: {text}\n"
             )
         else:
@@ -685,6 +694,123 @@ class AgentBrain:
         if chat_id not in self._conversations:
             self._conversations[chat_id] = []
         return self._conversations[chat_id]
+
+    # Explicit work-queue intent headers. The detector requires either
+    # one of these on the first non-empty line, OR a clean numbered
+    # list with no interleaved prose AND no overlap with a recent
+    # assistant reply (anti-echo guard).
+    _WORK_INTENT_HEADERS: ClassVar[frozenset[str]] = frozenset({
+        # SK
+        "urob", "urobím", "vykonaj", "spusti", "spravme", "uloh", "úloh",
+        "úlohy", "uloha", "úloha", "todo", "kroky",
+        # EN
+        "do", "tasks", "task", "make", "execute", "run", "steps",
+    })
+
+    def _detect_explicit_work_queue(
+        self, text: str, chat_conv: list[dict[str, str]],
+    ) -> list[str]:
+        """Return work-queue items only when the user explicitly asked
+        for a multi-task pipeline. See the call site for the bug we
+        are guarding against (echoed numbered lists running 3 jobs).
+
+        Rules:
+            1. No quoted-block markers (``>``, ``» ``, ``« ``) — these
+               indicate the user is quoting somebody (typically the
+               agent itself).
+            2. EITHER the first non-empty line is a short intent header
+               that ends with ``:`` and contains a work-intent verb,
+               OR every non-empty line in the message is a numbered
+               item (a "clean" list with no surrounding prose).
+            3. At least 2 numbered items must result.
+            4. Anti-echo: if every numbered item also appears verbatim
+               in the most recent assistant reply, the user is most
+               likely quoting the agent — return nothing.
+            5. Comma-list shortcut: ``urob: a, b, c`` still works for
+               operators who type a single-line task list.
+        """
+        import re
+
+        # Rule 1: bail on quoted blocks.
+        if any(line.lstrip().startswith((">", "» ", "« "))
+               for line in text.splitlines()):
+            return []
+
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        if not lines:
+            return []
+
+        numbered_re = re.compile(r"^\d+[\.\)]\s*")
+        numbered_lines = [
+            numbered_re.sub("", line) for line in lines if numbered_re.match(line)
+        ]
+
+        first_line_lower = lines[0].lower()
+        first_words = first_line_lower.split()
+        first_word_raw = first_words[0] if first_words else ""
+        first_word = first_word_raw.rstrip(":,")
+
+        # Header line: short imperative ending with ":" (e.g. "urob:")
+        # OR a header without colon when followed by numbered lines
+        # (e.g. "urob\n1. ...\n2. ...").
+        header_with_colon = (
+            ":" in lines[0]
+            and first_word in self._WORK_INTENT_HEADERS
+            and len(first_words) <= 4
+        )
+        header_without_colon = (
+            len(first_words) == 1
+            and first_word in self._WORK_INTENT_HEADERS
+            and len(numbered_lines) >= 2
+        )
+        has_intent_header = header_with_colon or header_without_colon
+        clean_numbered_list = (
+            len(numbered_lines) >= 2 and len(numbered_lines) == len(lines)
+        )
+
+        items: list[str] = []
+        if has_intent_header and numbered_lines:
+            items = numbered_lines
+        elif clean_numbered_list:
+            items = numbered_lines
+        elif header_with_colon and "," in lines[0] and len(lines) == 1:
+            # Single-line "urob: a, b, c" shortcut.
+            rest = lines[0].split(":", 1)[1].strip()
+            items = [s.strip() for s in rest.split(",") if s.strip()]
+        elif (
+            first_word in self._WORK_INTENT_HEADERS
+            and "," in lines[0]
+            and len(lines) == 1
+        ):
+            # Legacy "urob a, b, c" without colon — still allowed.
+            rest = lines[0][len(first_word_raw):].strip().lstrip(":,").strip()
+            items = [s.strip() for s in rest.split(",") if s.strip()]
+
+        if len(items) < 2:
+            return []
+
+        # Rule 4: anti-echo. Check the last assistant reply (if any).
+        last_assistant = ""
+        for entry in reversed(chat_conv):
+            if entry.get("role") == "assistant":
+                last_assistant = entry.get("content", "")
+                break
+        if last_assistant:
+            normalized_assistant = last_assistant.lower()
+            overlapping = sum(
+                1 for it in items
+                if it.lower().strip(".") in normalized_assistant
+            )
+            # If most items are quoted from the agent, treat as echo.
+            if overlapping >= max(2, len(items) - 1):
+                logger.info(
+                    "work_queue_echo_suppressed",
+                    items_total=len(items),
+                    items_overlapping=overlapping,
+                )
+                return []
+
+        return items
 
     def _budget_allows_escalation(self) -> tuple[bool, str]:
         try:

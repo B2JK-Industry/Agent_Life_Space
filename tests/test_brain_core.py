@@ -138,6 +138,172 @@ class TestBrainUsageTracking:
         assert usage["total_cost_usd"] == 0
 
 
+class TestExplicitWorkQueueDetector:
+    """Regression: the multi-task detector must NOT fire on echoed
+    agent text or generic numbered text. It must ONLY fire on explicit
+    operator intent (header line, clean list without surrounding prose,
+    or single-line ``urob: a, b, c`` shortcut)."""
+
+    def _make_brain(self):
+        from agent.core.brain import AgentBrain
+        b = AgentBrain.__new__(AgentBrain)
+        b._conversations = {}
+        return b
+
+    def test_short_yes_does_not_trigger(self):
+        brain = self._make_brain()
+        assert brain._detect_explicit_work_queue("ano", []) == []
+
+    def test_echoed_agent_recommendation_does_not_trigger(self):
+        """Real-world failure: user pasted the agent's '1. git pull
+        2. pip install 3. restart' back to it; the legacy detector
+        spawned 3 work-loop jobs. The new detector must suppress."""
+        brain = self._make_brain()
+        chat = [{
+            "role": "assistant",
+            "content": (
+                "1. git pull origin main\n"
+                "2. pip install -r requirements.txt\n"
+                "3. Reštartujem sa"
+            ),
+        }]
+        echo = (
+            "1. git pull origin main\n"
+            "2. pip install -r requirements.txt\n"
+            "3. Reštartujem sa"
+        )
+        assert brain._detect_explicit_work_queue(echo, chat) == []
+
+    def test_explicit_intent_header_with_newlines_triggers(self):
+        brain = self._make_brain()
+        items = brain._detect_explicit_work_queue(
+            "urob:\n1. test A\n2. test B\n3. test C",
+            [],
+        )
+        assert items == ["test A", "test B", "test C"]
+
+    def test_clean_numbered_list_without_echo_triggers(self):
+        brain = self._make_brain()
+        items = brain._detect_explicit_work_queue(
+            "1. úloha A\n2. úloha B",
+            [],
+        )
+        assert items == ["úloha A", "úloha B"]
+
+    def test_single_line_urob_with_colon_and_commas(self):
+        brain = self._make_brain()
+        items = brain._detect_explicit_work_queue("urob: A, B, C", [])
+        assert items == ["A", "B", "C"]
+
+    def test_legacy_urob_without_colon_still_works(self):
+        brain = self._make_brain()
+        items = brain._detect_explicit_work_queue("urob A, B, C", [])
+        assert items == ["A", "B", "C"]
+
+    def test_numbered_with_surrounding_prose_does_not_trigger(self):
+        brain = self._make_brain()
+        items = brain._detect_explicit_work_queue(
+            "No tak skús toto:\n1. step\n2. step\nA potom mi povedz výsledok.",
+            [],
+        )
+        assert items == []
+
+    def test_quoted_block_does_not_trigger(self):
+        brain = self._make_brain()
+        items = brain._detect_explicit_work_queue(
+            "> 1. step A\n> 2. step B",
+            [],
+        )
+        assert items == []
+
+    def test_header_without_colon_with_numbered_lines(self):
+        brain = self._make_brain()
+        items = brain._detect_explicit_work_queue(
+            "urob\n1. step A\n2. step B",
+            [],
+        )
+        assert items == ["step A", "step B"]
+
+    def test_clean_list_matching_prior_assistant_reply_is_echo(self):
+        brain = self._make_brain()
+        chat = [{
+            "role": "assistant",
+            "content": "1. git pull origin main\n2. pip install -r requirements.txt",
+        }]
+        items = brain._detect_explicit_work_queue(
+            "1. git pull origin main\n2. pip install -r requirements.txt",
+            chat,
+        )
+        assert items == []
+
+
+class TestShortFollowupGetsHistory:
+    """Regression: previously the simple/factual/greeting prompt branch
+    rebuilt the prompt without ``conv_context``/``persistent_context``,
+    so a short reply like 'ano' arrived at the model with NO history.
+    The model then correctly answered 'chýba mi kontext'."""
+
+    @pytest.mark.asyncio
+    async def test_simple_reply_includes_prior_assistant_message(self, brain, monkeypatch):
+        from agent.core.tool_loop import ToolLoopResult
+
+        # Pre-populate the in-memory chat buffer with one prior exchange.
+        chat_id = "123"
+        chat = brain._get_chat_conversation(chat_id)
+        chat.append({"role": "user", "content": "vieš si nasadiť nový kód?", "sender": "owner"})
+        chat.append({
+            "role": "assistant",
+            "content": (
+                "Áno. Spravím:\n"
+                "1. git pull origin main\n"
+                "2. pip install -r requirements.txt\n"
+                "3. reštart"
+            ),
+        })
+
+        # Capture the prompt sent to the LLM.
+        captured: dict[str, str] = {}
+
+        async def fake_run(**kwargs):
+            messages = kwargs.get("messages", [])
+            if messages:
+                captured["prompt"] = messages[0].get("content", "")
+            return ToolLoopResult(
+                text="Dobre, idem na to.", success=True, turns=1,
+                total_tokens=10, total_input_tokens=8, total_output_tokens=2,
+                total_cost=0.0, model="claude-haiku-4-5-20251001",
+            )
+
+        fake_provider = MagicMock()
+        fake_provider.supports_tools.return_value = True
+        fake_loop = MagicMock()
+        fake_loop.run = AsyncMock(side_effect=fake_run)
+
+        brain._tool_executor = MagicMock()
+        monkeypatch.setenv("LLM_BACKEND", "api")
+        monkeypatch.setattr("agent.core.llm_provider.get_provider", lambda: fake_provider)
+
+        with patch("agent.core.tool_loop.ToolUseLoop", return_value=fake_loop):
+            msg = IncomingMessage(
+                text="ano",
+                sender_id="1",
+                sender_name="owner",
+                channel_type="telegram",
+                chat_id=chat_id,
+                is_owner=True,
+            )
+            await brain.process(msg)
+
+        prompt = captured.get("prompt", "")
+        assert prompt, "ToolUseLoop must have been called"
+        # The prompt MUST contain the prior assistant content so the
+        # model knows what 'ano' is agreeing to.
+        assert "git pull origin main" in prompt, (
+            "Short follow-up 'ano' must carry conversation history into "
+            "the simple/factual/greeting prompt branch"
+        )
+
+
 class TestBrainMultiChannel:
     """Brain works with any channel type."""
 
