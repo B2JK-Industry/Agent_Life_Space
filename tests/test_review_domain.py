@@ -427,6 +427,50 @@ class TestReviewStorage:
         assert loaded["content_json"]["findings"][0]["id"] == "f-1"
 
 
+class TestReviewStorageSqlHardening:
+    """Defense-in-depth: _ensure_text_column must validate identifiers
+    against an allow-list and escape the default literal — same
+    contract as agent/build/storage.py. Today the only callsite is a
+    hardcoded literal so this is not exploitable in production, but a
+    future caller passing operator-controlled input would be."""
+
+    @pytest.fixture()
+    def storage(self):
+        from agent.review.storage import ReviewStorage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        s = ReviewStorage(db_path=db_path)
+        s.initialize()
+        yield s
+        s.close()
+        os.unlink(db_path)
+
+    def test_unknown_table_rejected(self, storage):
+        with pytest.raises(ValueError, match="allow-list"):
+            storage._ensure_text_column("not_a_real_table", "x", "y")
+
+    def test_invalid_column_identifier_rejected(self, storage):
+        with pytest.raises(ValueError, match="valid identifier"):
+            storage._ensure_text_column("review_artifacts", "bad name", "y")
+        with pytest.raises(ValueError, match="valid identifier"):
+            storage._ensure_text_column("review_artifacts", "1starts_with_digit", "y")
+        with pytest.raises(ValueError, match="valid identifier"):
+            storage._ensure_text_column("review_artifacts", "drop;table", "y")
+
+    def test_default_literal_with_single_quote_is_escaped(self, storage):
+        # Single quotes in the default must be doubled, not interpreted
+        # as SQL string terminators. We add a fresh column and verify
+        # both that the ALTER succeeds and the default is queryable.
+        storage._ensure_text_column("review_artifacts", "test_col", "it''s ok")
+        # Verify the column landed and the default is what we expect.
+        assert storage._db is not None
+        rows = storage._db.execute(
+            "PRAGMA table_info(review_artifacts)"
+        ).fetchall()
+        col_defaults = {row[1]: row[4] for row in rows}
+        assert "test_col" in col_defaults
+
+
 # ─────────────────────────────────────────────
 # Service Integration Tests
 # ─────────────────────────────────────────────

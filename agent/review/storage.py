@@ -7,10 +7,11 @@ SQLite-backed, recoverable, auditable.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import UTC
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import orjson
 import structlog
@@ -62,15 +63,36 @@ class ReviewStorage:
         self._initialized = True
         logger.info("review_storage_initialized", db=self._db_path)
 
+    # Whitelist of identifiers this storage layer is allowed to mutate.
+    # SQLite does not parameterise table/column names, so we validate
+    # against a fixed allow-list before f-string substitution. Same
+    # pattern as agent/build/storage.py — keeping the two consistent.
+    _ALLOWED_TABLES: ClassVar[frozenset[str]] = frozenset(
+        {"review_jobs", "review_artifacts"},
+    )
+    _IDENT_RE: ClassVar[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
     def _ensure_text_column(self, table: str, column: str, default: str) -> None:
         if self._db is None:
             return
+        # Identifier validation — table must be in the allow-list and
+        # column must be a plain identifier. The default is a literal
+        # we control at the call site, but we still escape any single
+        # quotes for belt-and-braces safety.
+        if table not in self._ALLOWED_TABLES:
+            msg = f"_ensure_text_column: table {table!r} is not in the allow-list"
+            raise ValueError(msg)
+        if not self._IDENT_RE.match(column):
+            msg = f"_ensure_text_column: column {column!r} is not a valid identifier"
+            raise ValueError(msg)
+        safe_default = default.replace("'", "''")
+
         rows = self._db.execute(f"PRAGMA table_info({table})").fetchall()  # noqa: S608
         known = {row[1] for row in rows}
         if column in known:
             return
         self._db.execute(
-            f"ALTER TABLE {table} ADD COLUMN {column} TEXT DEFAULT '{default}'"  # noqa: S608
+            f"ALTER TABLE {table} ADD COLUMN {column} TEXT DEFAULT '{safe_default}'"  # noqa: S608
         )
 
     def save_job(self, job: ReviewJob) -> None:

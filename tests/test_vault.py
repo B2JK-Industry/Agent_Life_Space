@@ -294,6 +294,66 @@ class TestLegacyVaultSaltMigration:
         assert mgr2.get_secret("K4") == "v4"
 
 
+class TestVaultWrongKeyWriteFailFast:
+    """Codex finding (HIGH): a write attempt with the wrong master key
+    must NOT silently overwrite the existing secrets.enc. Previously
+    _load() returned {} on InvalidToken, set_secret() then re-encrypted
+    the empty dict with the wrong key and destroyed the legacy blob.
+    The fix raises VaultDecryptionError on any decrypt failure inside
+    a write path."""
+
+    def test_wrong_key_set_secret_raises_and_preserves_legacy(self, tmp_path):
+        from agent.vault.secrets import VaultDecryptionError
+
+        # Bootstrap with the correct key.
+        mgr = SecretsManager(vault_dir=str(tmp_path), master_key="correct-key")
+        mgr.set_secret("KEEP", "important-value")
+        original_blob = (tmp_path / "secrets.enc").read_bytes()
+
+        # Open with wrong key and try to write.
+        mgr_bad = SecretsManager(vault_dir=str(tmp_path), master_key="wrong-key")
+        with pytest.raises(VaultDecryptionError):
+            mgr_bad.set_secret("NEW", "wrong-value")
+
+        # The encrypted blob on disk MUST be untouched.
+        assert (tmp_path / "secrets.enc").read_bytes() == original_blob
+
+        # And the legacy secret MUST still be readable with the correct key.
+        mgr_good = SecretsManager(vault_dir=str(tmp_path), master_key="correct-key")
+        assert mgr_good.get_secret("KEEP") == "important-value"
+
+    def test_wrong_key_delete_secret_also_raises(self, tmp_path):
+        from agent.vault.secrets import VaultDecryptionError
+
+        mgr = SecretsManager(vault_dir=str(tmp_path), master_key="correct-key")
+        mgr.set_secret("KEEP", "important-value")
+        original_blob = (tmp_path / "secrets.enc").read_bytes()
+
+        mgr_bad = SecretsManager(vault_dir=str(tmp_path), master_key="wrong-key")
+        with pytest.raises(VaultDecryptionError):
+            mgr_bad.delete_secret("KEEP")
+
+        # delete_secret is also a write — same fail-fast contract.
+        assert (tmp_path / "secrets.enc").read_bytes() == original_blob
+
+        mgr_good = SecretsManager(vault_dir=str(tmp_path), master_key="correct-key")
+        assert mgr_good.get_secret("KEEP") == "important-value"
+
+    def test_wrong_key_read_path_returns_none_no_crash(self, tmp_path):
+        """Read callers (get_secret, list_secrets, has_secret) must
+        tolerate decryption failures so the agent can boot with a
+        wrong key, log the warning, and let the operator fix .env
+        without crashing."""
+        mgr = SecretsManager(vault_dir=str(tmp_path), master_key="correct-key")
+        mgr.set_secret("KEEP", "important-value")
+
+        mgr_bad = SecretsManager(vault_dir=str(tmp_path), master_key="wrong-key")
+        # All read calls must succeed (no exception) and observe an empty vault.
+        assert mgr_bad.get_secret("KEEP") is None
+        assert mgr_bad.list_secrets() == []
+        assert mgr_bad.has_secret("KEEP") is False
+
+
 class TestFinanceTrackerLock:
     """Concurrent approve calls on the same transaction must serialise."""
 

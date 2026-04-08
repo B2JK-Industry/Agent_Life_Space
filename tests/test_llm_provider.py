@@ -122,12 +122,19 @@ class TestClaudeCliProvider:
 
     @pytest.mark.asyncio
     async def test_sandbox_only_downgrades_file_access(self):
-        """When SANDBOX_ONLY=1, file access is downgraded (not hard-blocked).
+        """When SANDBOX_ONLY=1 AND we're in interactive mode (i.e. an
+        operator can answer permission prompts), file access is
+        downgraded and --dangerously-skip-permissions is NOT added.
 
-        Opus runs in conversational mode without --dangerously-skip-permissions.
+        Opus runs in conversational mode in this scenario.
         """
         provider = ClaudeCliProvider()
-        with patch.dict(os.environ, {"AGENT_SANDBOX_ONLY": "1"}):
+        with patch.dict(os.environ, {
+            "AGENT_SANDBOX_ONLY": "1",
+            # Force interactive opt-out so we test the legacy
+            # "downgrade and let the operator answer prompts" path.
+            "AGENT_CLI_AUTO_APPROVE": "0",
+        }):
             with patch("agent.core.llm_provider.subprocess.run") as mock_run:
                 mock_run.return_value = subprocess.CompletedProcess(
                     args=["claude"],
@@ -143,6 +150,68 @@ class TestClaudeCliProvider:
                 assert resp.success
                 called_args = mock_run.call_args.args[0]
                 assert "--dangerously-skip-permissions" not in called_args
+
+    @pytest.mark.asyncio
+    async def test_headless_mode_auto_approves_with_sandbox_lockdown(self):
+        """Regression: when the agent runs as a daemon (no TTY) the
+        CLI must add --dangerously-skip-permissions automatically,
+        otherwise every tool-use call from the LLM blocks forever
+        waiting for an operator who cannot click "allow". Sandbox
+        mode is preserved by passing --disallowed-tools so the LLM
+        can read but never mutate the host filesystem."""
+        provider = ClaudeCliProvider()
+        with patch.dict(os.environ, {
+            "AGENT_SANDBOX_ONLY": "1",
+            "AGENT_CLI_AUTO_APPROVE": "1",  # explicit headless opt-in
+        }):
+            with patch("agent.core.llm_provider.subprocess.run") as mock_run:
+                mock_run.return_value = subprocess.CompletedProcess(
+                    args=["claude"],
+                    returncode=0,
+                    stdout='{"result":"ok","is_error":false,"usage":{"input_tokens":10,"output_tokens":5}}',
+                    stderr="",
+                )
+                req = GenerateRequest(
+                    messages=[{"role": "user", "content": "kto si?"}],
+                    allow_file_access=False,  # default sandbox conversation
+                )
+                resp = await provider.generate(req)
+                assert resp.success
+                called_args = mock_run.call_args.args[0]
+                # Auto-approve must be enabled.
+                assert "--dangerously-skip-permissions" in called_args
+                # Sandbox lockdown — destructive tools must be blocked.
+                assert "--disallowed-tools" in called_args
+                idx = called_args.index("--disallowed-tools")
+                blocked = called_args[idx + 1]
+                assert "Bash" in blocked
+                assert "Edit" in blocked
+                assert "Write" in blocked
+
+    @pytest.mark.asyncio
+    async def test_explicit_opt_out_disables_auto_approve(self):
+        """Operators can hard-disable headless auto-approve via
+        AGENT_CLI_AUTO_APPROVE=0 even when stdin is not a TTY."""
+        provider = ClaudeCliProvider()
+        with patch.dict(os.environ, {
+            "AGENT_SANDBOX_ONLY": "1",
+            "AGENT_CLI_AUTO_APPROVE": "0",
+        }):
+            with patch("agent.core.llm_provider.subprocess.run") as mock_run:
+                mock_run.return_value = subprocess.CompletedProcess(
+                    args=["claude"],
+                    returncode=0,
+                    stdout='{"result":"ok","is_error":false,"usage":{"input_tokens":10,"output_tokens":5}}',
+                    stderr="",
+                )
+                req = GenerateRequest(
+                    messages=[{"role": "user", "content": "hi"}],
+                    allow_file_access=False,
+                )
+                await provider.generate(req)
+                called_args = mock_run.call_args.args[0]
+                assert "--dangerously-skip-permissions" not in called_args
+                assert "--disallowed-tools" not in called_args
 
 
 class TestAnthropicProvider:

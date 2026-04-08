@@ -29,6 +29,14 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 logger = structlog.get_logger(__name__)
 
+
+class VaultDecryptionError(RuntimeError):
+    """Raised when an existing secrets.enc cannot be decrypted with the
+    current master key. The vault MUST refuse to write in this state —
+    a write would silently overwrite the legacy blob and destroy any
+    secrets the operator could still recover with the correct key."""
+
+
 class SecretsManager:
     """
     Encrypted secrets storage.
@@ -281,25 +289,62 @@ class SecretsManager:
         key = base64.urlsafe_b64encode(kdf.derive(master_key.encode()))
         return Fernet(key)
 
-    def _load(self) -> dict[str, str]:
-        """Load and decrypt secrets from file."""
+    def _load(self, *, allow_missing: bool = True) -> dict[str, str]:
+        """Load and decrypt secrets from file.
+
+        ``allow_missing`` controls behaviour when there is no
+        secrets.enc file at all: callers that read (get/list) tolerate
+        a missing vault and get an empty dict; callers that write
+        (set/delete) also tolerate it because the first write will
+        create the file.
+
+        On *decryption* failure (wrong master key, corrupt blob) we
+        raise ``VaultDecryptionError`` regardless of caller. Returning
+        ``{}`` here was the bug Codex flagged: a subsequent ``_save``
+        would re-encrypt the empty dict with the wrong key and
+        permanently destroy the legacy data the operator could
+        otherwise recover.
+        """
         if not self._secrets_file.exists():
-            return {}
+            if allow_missing:
+                return {}
+            msg = (
+                "Vault file does not exist. This is unexpected for a "
+                "non-empty vault — refuse to proceed."
+            )
+            raise VaultDecryptionError(msg)
 
         if self._fernet is None:
-            logger.error("vault_cannot_decrypt", reason="No master key")
-            return {}
+            msg = "Cannot decrypt vault: no master key configured."
+            raise VaultDecryptionError(msg)
 
         try:
             encrypted = self._secrets_file.read_bytes()
             import orjson
             decrypted = self._fernet.decrypt(encrypted)
             return cast("dict[str, str]", orjson.loads(decrypted))
-        except InvalidToken:
+        except InvalidToken as e:
             logger.error("vault_decryption_failed", reason="Wrong master key")
-            return {}
+            msg = (
+                "Vault decryption failed (wrong master key or corrupted "
+                "secrets.enc). Refusing to proceed — a write in this "
+                "state would silently overwrite the existing blob and "
+                "destroy any secrets recoverable with the correct key."
+            )
+            raise VaultDecryptionError(msg) from e
         except Exception as e:
             logger.error("vault_load_error", error=str(e))
+            msg = f"Vault load failed: {e}"
+            raise VaultDecryptionError(msg) from e
+
+    def _safe_load_for_read(self) -> dict[str, str]:
+        """Read-side helper that swallows decryption errors so get/list
+        callers do not crash when the master key is wrong. They simply
+        observe an empty vault. WRITE callers must use ``_load()``
+        directly so they fail-fast."""
+        try:
+            return self._load()
+        except VaultDecryptionError:
             return {}
 
     def _save(self, secrets: dict[str, str]) -> None:
@@ -324,6 +369,9 @@ class SecretsManager:
         if not value:
             msg = "Secret value cannot be empty"
             raise ValueError(msg)
+        # CRITICAL: this MUST be _load() (not _safe_load_for_read), so
+        # that wrong-key writes fail-fast with VaultDecryptionError
+        # instead of silently overwriting the existing legacy blob.
         secrets = self._load()
         secrets[name] = value
         self._save(secrets)
@@ -334,7 +382,13 @@ class SecretsManager:
         logger.info("vault_secret_set", name=name)
 
     def get_secret(self, name: str) -> str | None:
-        """Retrieve a secret. Returns None if not found."""
+        """Retrieve a secret. Returns None if not found.
+
+        Read path uses ``_safe_load_for_read`` so that an operator who
+        boots the agent with a wrong key gets ``None`` from get_secret
+        instead of a hard crash. Subsequent writes still fail-fast
+        because they go through ``_load()`` directly.
+        """
         # Check cache first
         if name in self._cache:
             self._audit("get_cached", name)
@@ -342,7 +396,7 @@ class SecretsManager:
             logger.debug("vault_secret_get_cached", name=name)
             return self._cache[name]
 
-        secrets = self._load()
+        secrets = self._safe_load_for_read()
         value = secrets.get(name)
         if value is not None:
             self._cache[name] = value
@@ -358,7 +412,10 @@ class SecretsManager:
         return value
 
     def delete_secret(self, name: str) -> bool:
-        """Delete a secret."""
+        """Delete a secret. Like ``set_secret``, this is a write
+        operation and MUST fail-fast on a wrong master key — otherwise
+        a delete in this state would re-encrypt the legacy blob with
+        the wrong key and destroy recoverable data."""
         secrets = self._load()
         if name in secrets:
             del secrets[name]
@@ -370,14 +427,14 @@ class SecretsManager:
         return False
 
     def list_secrets(self) -> list[str]:
-        """List secret names (NOT values)."""
-        secrets = self._load()
+        """List secret names (NOT values). Read path."""
+        secrets = self._safe_load_for_read()
         self._audit("list", "all")
         return list(secrets.keys())
 
     def has_secret(self, name: str) -> bool:
-        """Check if a secret exists without loading its value."""
-        secrets = self._load()
+        """Check if a secret exists without loading its value. Read path."""
+        secrets = self._safe_load_for_read()
         return name in secrets
 
     def _audit(self, action: str, name: str) -> None:

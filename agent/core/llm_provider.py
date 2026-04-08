@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import sys
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -205,6 +206,37 @@ class ClaudeCliProvider(LLMProvider):
                                hint="CLI running on host FS with --dangerously-skip-permissions. "
                                     "This bypasses sandbox isolation.")
 
+        # ── HEADLESS MODE: skip interactive permission prompts ──
+        # The agent runs as a daemon (systemd / docker / nohup) on the
+        # operator's server. There is no interactive stdin to answer
+        # claude CLI's permission prompts. Without this branch every
+        # tool-use call from the LLM blocks forever waiting for an
+        # operator who will never click "allow".
+        #
+        # Detection priority:
+        #   1. AGENT_CLI_AUTO_APPROVE=0  → opt-out, never bypass
+        #   2. AGENT_CLI_AUTO_APPROVE=1  → opt-in, always bypass
+        #   3. stdin is not a TTY        → daemon mode, bypass
+        #   4. otherwise                 → interactive (legacy behaviour)
+        #
+        # Safe because the real security boundary is the agent's own
+        # sandbox/finance/approval guardrails, NOT claude CLI's
+        # permission prompt — which only exists for interactive humans.
+        # We additionally forward --disallowed-tools when sandbox mode
+        # is active so even bypassed permissions cannot mutate the host.
+        auto_approve_env = os.environ.get("AGENT_CLI_AUTO_APPROVE", "").strip()
+        if auto_approve_env == "0":
+            headless_auto_approve = False
+        elif auto_approve_env == "1":
+            headless_auto_approve = True
+        else:
+            try:
+                headless_auto_approve = not sys.stdin.isatty()
+            except (AttributeError, ValueError):
+                headless_auto_approve = True
+        sandbox_only = os.environ.get("AGENT_SANDBOX_ONLY", "1")
+        sandbox_only_active = sandbox_only != "0"
+
         # Build prompt from messages
         prompt = self._build_prompt(request)
 
@@ -218,8 +250,25 @@ class ClaudeCliProvider(LLMProvider):
             cli_args.extend(["--model", request.model])
         # Always pass --max-turns to prevent unlimited tool_use loops
         cli_args.extend(["--max-turns", str(max(request.max_turns, 1))])
-        if file_access_granted:
+        if file_access_granted or headless_auto_approve:
             cli_args.append("--dangerously-skip-permissions")
+            if not file_access_granted and sandbox_only_active:
+                # Sandbox is on but we still bypass permissions because
+                # we are headless. Lock down the destructive tools so
+                # the LLM can read/search but never mutate the host.
+                cli_args.extend([
+                    "--disallowed-tools",
+                    "Bash,Edit,Write,NotebookEdit",
+                ])
+                logger.info(
+                    "cli_headless_sandbox_locked",
+                    hint=(
+                        "Headless auto-approve enabled with sandbox "
+                        "lockdown — Bash/Edit/Write are blocked. Set "
+                        "AGENT_SANDBOX_ONLY=0 to give the CLI host FS "
+                        "access (NOT recommended)."
+                    ),
+                )
 
         # Environment
         env = os.environ.copy()
