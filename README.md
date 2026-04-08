@@ -15,7 +15,7 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Structured review API** — `POST /api/review` runs deterministic review jobs through the shared runtime
 - **Learning system** — skill outcome tracking, model escalation, prompt augmentation
 - **Multi-provider LLM** — Claude CLI, Anthropic API, OpenAI, Ollama (any backend)
-- **Automated security** — 127-test security audit + invariant suite
+- **Automated security** — 129-test security audit + invariant suite
 - **Tool governance** — capability manifest, policy engine, 4-step action pipeline with audit trail
 - **Workspace persistence** — SQLite-backed workspaces with audit trail, limits, TTL, recovery
 - **Approval queue** — structured propose → approve/deny → execute workflow with persistent storage and linkage
@@ -42,7 +42,9 @@ Self-hosted autonomous AI agent that lives on your server. Thinks with Claude, a
 - **Settlement workflow** — persisted 402/top-up approval flow across API, dashboard, and Telegram with retry support
 - **Setup doctor** — `python -m agent --setup-doctor` audits self-host identity, LLM, gateway, and operator posture before first run
 - **Operator CLI surfaces** — `--report`, `--runtime-model`, `--llm-runtime-*`, `--export-evidence-job`, `--export-evidence-mode client_safe`, `--list-plans`, `--list-traces`, `--list-workspaces`, `--list-deliveries`, `--list-persisted-jobs`, `--list-retained-artifacts`, `--prune-expired-retained-artifacts`, `--list-cost-ledger`, unified `--intake-*`, and explicit delivery handoff
-- **1668+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
+- **Tiered structured logging** — long-tier (~30 days) for lifecycle/build/finance/audit events, short-tier (~6 hours) for verbose pipeline diagnostics, hourly cron prune sweep
+- **Crash-safe vault format** — single-file v2 (`ALSv2` magic + embedded random salt + Fernet token), atomic `os.replace` writes, automatic migration from v1
+- **1762+ tests** — unit + integration + e2e + security + routing evals + adversarial, $0.00 token cost
 
 ## Quick Start
 
@@ -107,6 +109,21 @@ The same control surface is available via:
 - `POST /api/operator/llm`
 - `/dashboard` LLM Runtime panel
 
+> **Telegram + CLI backend caveat:** programming tasks sent from Telegram on the
+> Claude CLI backend in default sandbox-only mode (`AGENT_SANDBOX_ONLY=1`) cannot
+> complete because the Claude Code permission prompt is unreachable from Telegram.
+> The brain returns a deterministic operator message instead of hanging. Two
+> unblock paths: switch the runtime to API backend via `/api/operator/llm`, or set
+> `AGENT_SANDBOX_ONLY=0` on the server (explicit host opt-in). See
+> [`docs/OPERATOR_HANDBOOK.md`](docs/OPERATOR_HANDBOOK.md) for details.
+
+> **Headless server deployments**: when running the agent as a daemon (systemd /
+> Docker / nohup), set `AGENT_CLI_AUTO_APPROVE=1` in `.env` so the CLI gets
+> `--dangerously-skip-permissions` automatically. Sandbox isolation is preserved
+> by passing `--disallowed-tools "Bash,Edit,Write,NotebookEdit"` so the LLM can
+> read/search but cannot mutate the host filesystem. If left empty, the agent
+> auto-detects TTY (also works for daemon mode).
+
 ## Architecture
 
 ```
@@ -154,7 +171,9 @@ Response -> Telegram + memory + learning
 - API authentication (Bearer token) + rate limiting
 - Log redaction (secrets never in logs)
 - PID lockfile (prevents duplicate instances)
-- 127 automated security + invariant tests
+- Single-file vault v2 format with crash-safe atomic writes (no temp/sidecar files left mid-write)
+- Wrong-key vault writes fail-fast with `VaultDecryptionError` (no silent destruction)
+- 129 automated security + invariant tests
 
 Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wiki/Security)**
 
@@ -162,7 +181,7 @@ Details: **[Security wiki](https://github.com/B2JK-Industry/Agent_Life_Space/wik
 
 ```bash
 .venv/bin/python -m agent --setup-doctor
-.venv/bin/python -m pytest tests/ -q   # 1668+ passed, offline, $0.00
+.venv/bin/python -m pytest tests/ -q   # 1762+ passed, offline, $0.00
 ```
 
 | Layer | Tests | What |

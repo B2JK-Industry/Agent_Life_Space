@@ -10,6 +10,166 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.35.0] — 2026-04-08
+
+Tiered Logging, Vault Crash-Safety, Runtime LLM Control, and Security Hardening — deterministic
+log retention, single-file atomic vault format, operator-controlled backend selection, and a deep
+sweep of defense-in-depth fixes across dashboard, CLI, SQL, telegram, and brain.
+
+### Highlights
+- **Vault single-file v2 format** with embedded random salt and crash-safe atomic migration —
+  zero corrupt-state window between salt and blob writes
+- **Tiered structured logging** with deterministic per-tier retention (long ~30d, short ~6h),
+  hourly cron prune sweep, and unified `*_HOURS` env contract
+- **Runtime LLM operator control** — flip `cli` ↔ `api` backend per session via dashboard or
+  `POST /api/operator/llm` without restart; brain reads the effective backend instead of raw env
+- **Telegram + CLI fail-closed guard** — programming tasks on the CLI backend in sandbox-only
+  mode return a deterministic operator-friendly message instead of hanging on an unreachable
+  Claude Code permission prompt
+- **mypy 147 errors → 0** across 112 source files
+
+### Added
+- `agent/logs/retention.py` — `LogRetentionManager` with deterministic `(level, event) → tier`
+  resolver, age-based prune sweep, and configurable per-tier retention windows in hours
+- `agent/logs/logger.py::setup_tiered_logging` — `_TierRouter` stdlib handler routing each
+  structlog event to `agent-long.log` or `agent-short.log`; daily/hourly rotation; correctly
+  switches `structlog.logger_factory` to stdlib so events actually reach the file sinks
+- `agent/control/llm_runtime.py` — persistent operator override (`enabled`, `backend_override`,
+  `provider_override`) with `LlmRuntimeControlService`; loaded by `get_provider()` so dashboard
+  flips take effect without restart
+- `agent/core/brain.py::_detect_explicit_work_queue` — anti-echo guard for the multi-task queue
+  detector; requires explicit intent header (`urob:`, `úlohy:`, `todo:`) or clean numbered list
+  with no surrounding prose, and rejects messages whose every numbered item appears verbatim in
+  a recent assistant reply (was spawning duplicate jobs when operators echoed agent suggestions)
+- Telegram + Claude CLI deny guard in `agent/core/brain.py` — `(channel=telegram, task=programming,
+  backend=cli, sandbox=1)` returns a deterministic operator message naming both unblock paths
+  (switch backend to api, or set `AGENT_SANDBOX_ONLY=0`)
+- Headless CLI auto-approve mode in `agent/core/llm_provider.py` — new `AGENT_CLI_AUTO_APPROVE`
+  env var (`0`/`1`/empty for TTY auto-detect); when headless+sandbox combo is active, the CLI is
+  invoked with `--dangerously-skip-permissions` AND `--disallowed-tools "Bash,Edit,Write,NotebookEdit"`
+  so the LLM can read but never mutate the host filesystem
+- Build pipeline `AUDIT_MARKER_ONLY` fail-closed guard (`agent/build/service.py`) — refuses to
+  pass verify if codegen failed or returned no real plan
+- Per-transaction `asyncio.Lock` in `agent/finance/tracker.py` so concurrent `approve()` calls on
+  the same `tx_id` cannot both succeed
+- Telegram in-flight task tracking (`agent/social/telegram_bot.py`) — strong references on
+  per-message handler tasks so asyncio's weak-reference set cannot GC them mid-execution
+- Nonce cache age-based eviction in `agent/social/request_identity.py` so the replay-protection
+  set cannot grow unbounded
+- CI release-readiness skip env (`AGENT_RELEASE_READINESS_SKIP_LLM_PROBE=1`) so GitHub Actions
+  runners (no Claude CLI installed) can pass the gate while still recording the skipped probe
+  in the readiness payload
+- `docs/SETUP_LOCAL.md` — operator setup guide for fresh local installs
+- `docs/SECURITY_INCIDENT_2026-04-07.md` — post-mortem of credential leak via local conversation
+  logs (fingerprints only, no values)
+- `tests/test_log_retention.py`, `tests/test_llm_runtime.py` — new test files
+- 27+ new regression tests across vault, finance race, telegram cleanup, log retention,
+  brain conversation, and runtime LLM resolver
+
+### Changed
+- **Vault on-disk format is now v2 single-file** (`agent/vault/secrets.py`) — `secrets.enc`
+  begins with `b"ALSv2\n"` magic, then 16 bytes of random salt, then the Fernet token. There is
+  no `salt.bin` sidecar. Every write is one atomic `_atomic_write` (temp file → fsync fd →
+  fsync parent dir → `os.replace`), so a crash mid-write leaves either the previous good blob
+  or the new good blob — never a partial / mismatched state. Existing v1 vaults are detected on
+  open and migrated atomically; the legacy `salt.bin` is removed afterwards (best effort).
+- Vault wrong-key writes now **fail-fast** with `VaultDecryptionError` instead of silently
+  re-encrypting `{}` and destroying the legacy blob. Read paths (`get_secret`, `list_secrets`,
+  `has_secret`) still tolerate decrypt failures so the agent can boot with a wrong key, log a
+  warning, and let the operator fix `.env` without crashing
+- `AgentBrain` now reads the effective LLM backend through `resolve_llm_runtime_state()`
+  instead of `os.environ["LLM_BACKEND"]` directly, so dashboard / `/api/operator/llm` flips
+  actually flip the execution path (tool-loop vs cli generate)
+- Short follow-ups (`simple` / `factual` / `greeting` task types) now inject `persistent_context`
+  or `conv_context` into the prompt — a one-word reply like "ano" no longer arrives at the model
+  with no history
+- LLM provider cache key now includes `kwargs` so different `base_url` / `api_key` configs get
+  separate provider instances instead of silently reusing the first one created
+- `AgentCron.stop()` and the typing-indicator `finally` clause both await cancelled tasks for
+  clean shutdown — no more `Task was destroyed but it is pending!` warnings
+- `agent/build/storage.py::_ensure_text_column` and `agent/review/storage.py::_ensure_text_column`
+  both validate `table` against an allow-list and `column` against an identifier regex before
+  any f-string substitution, and escape single quotes in the default literal
+- Dashboard XSS escapes for `note`, `updated_by`, `warnings`, `settlement_id` via `esc()` helper
+- Dashboard `?key=` query string auth fallback removed — Bearer token only
+- Invalid JSON on operator HTTP endpoints returns 400 instead of silently treating body as `{}`
+- Auth-failure events now log SHA256 hash of the offered token (not a prefix)
+- `setup_tiered_logging` now takes `long_retention_hours` (was `long_retention_days`); both halves
+  of the system read from the unified `AGENT_LOG_LONG_RETENTION_HOURS` env contract
+- `_check_pidfile()` PID file handle leak fixed (`with open(...) as _pf:` instead of an unclosed
+  read), prevents fd leak on graceful shutdown
+- Storage layers (`agent/build/storage.py`, `agent/review/storage.py`, `agent/control/storage.py`,
+  `agent/core/approval_storage.py`) now `cast("dict[str, Any]", orjson.loads(row[0]))` to
+  satisfy mypy without changing runtime behaviour
+- Test fixtures + prompt templates generalised: hardcoded `b2jk-*` hostnames replaced with
+  neutral `acme-host-*`, hardcoded user paths replaced with placeholders so a fresh clone has no
+  personal identifiers
+- `pyproject.toml` adds `disable_error_code = ["import-untyped"]` and per-module overrides for
+  `psutil`, `jsonschema`, `openai`, `sentence_transformers`, `numpy`
+
+### Fixed
+- Headless CLI permission prompt hang — agent running as a daemon (systemd / Docker / nohup) no
+  longer blocks on permission prompts; the `--dangerously-skip-permissions` flag is added when
+  there is no operator who can click "Allow"
+- Wrong-key vault writes silently destroying the legacy encrypted blob (Codex finding, HIGH)
+- v1→v2 vault migration crash window between `salt.bin` write and `os.replace` of the blob
+  (Codex finding, MED) — eliminated by collapsing salt and blob into a single file
+- Tiered logging factory routing — `setup_tiered_logging()` was leaving structlog on
+  `PrintLoggerFactory` from `__main__.py`, so events went to stdout and never reached the file
+  sinks even though the `_TierRouter` was wired up
+- `AgentBrain` was reading raw `os.environ["LLM_BACKEND"]` for the tool-loop branch decision, so
+  operator overrides via `/api/operator/llm` were not honored at runtime
+- Cron prune sweep was scanning `get_project_root()/agent/logs` while `__main__` wrote into
+  `<data_dir>/logs`; now both halves agree via the pinned `AGENT_LOG_DIR` env var
+- Short follow-ups like "ano" lost conversation history because the simple/factual/greeting
+  prompt branch did not inject `persistent_context`/`conv_context`
+- Multi-task work-queue detector was treating echoed agent suggestions as new work items and
+  spawning duplicate jobs
+
+### Security
+- All SQL DDL paths in build + review layers now use whitelist + identifier validation + escape
+- Dashboard authentication is Bearer-token only (no query-string fallback)
+- Operator HTTP endpoints reject invalid JSON with 400 (no silent `{}` fallback)
+- Vault writes with wrong master key fail-fast (no silent destruction)
+- Vault writes are atomic and crash-safe (single-file v2 format)
+- Telegram in-flight task tracking prevents mid-execution GC
+- Finance transaction approval race protected by per-tx `asyncio.Lock`
+- Request nonce cache has bounded lifetime (age-based eviction)
+
+### Deprecations
+- `AGENT_LOG_LONG_RETENTION_DAYS` is deprecated in favor of `AGENT_LOG_LONG_RETENTION_HOURS`.
+  Both still work; setting only the legacy DAYS variable emits a deprecation warning and
+  internally promotes to hours so the cron prune sweep agrees. Operators should update `.env`
+  to use the HOURS variable.
+
+### Migration Notes
+- **Vault migration is automatic.** When the agent boots on v1.35.0 with an existing vault, it
+  detects the v1 format on first read, decrypts it (using `salt.bin` if post-1.34, or the static
+  legacy salt if pre-1.34), re-encrypts with a fresh random salt in the new v2 format, and
+  removes `salt.bin`. No operator action required.
+- **For headless deployments** (systemd / Docker / nohup), add to `.env`:
+  ```
+  AGENT_CLI_AUTO_APPROVE=1
+  ```
+  If you omit it, the agent auto-detects TTY (also works for daemon mode).
+- **For Telegram + CLI backend + sandbox mode**: programming tasks now return a deterministic
+  operator message instead of hanging. Two unblock paths: `POST /api/operator/llm` to switch
+  to the API backend, or set `AGENT_SANDBOX_ONLY=0` for explicit host opt-in.
+- **Log retention env**: if you have `AGENT_LOG_LONG_RETENTION_DAYS=30`, switch to
+  `AGENT_LOG_LONG_RETENTION_HOURS=720` (30 × 24). The old name keeps working but emits a
+  deprecation warning.
+
+### Tests
+- 1766 tests collected, 1762 passing, 4 skipped (legacy semantic-router tests that need the
+  optional `sentence_transformers` model)
+- 0 failures, 0 errors
+- 129 security audit tests (test_security_audit.py + test_security.py + test_security_invariants.py)
+
+### Code Quality
+- mypy: 147 errors → 0 across 112 source files
+- ruff: 0 errors
+- All operator-facing changes have regression test coverage
+
 ## [1.34.0] — 2026-04-02
 
 Self-Host Onboarding Closure — safer runtime defaults, stronger setup diagnostics, and clearer operator deployment UX.

@@ -48,8 +48,8 @@ python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capab
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_catalog_v1
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability wallet_balance_v1
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_api_call_v1 --provider-api-resource ocr-text-extraction --provider-api-method POST --provider-api-json '{"mode":"fast"}'
-python -m agent --review-quality-eval --review-quality-release-label v1.34.0
-python -m agent --release-readiness --release-readiness-release-label v1.34.0
+python -m agent --review-quality-eval --review-quality-release-label v1.35.0
+python -m agent --release-readiness --release-readiness-release-label v1.35.0
 python -m agent --export-evidence-job <job_id>
 python -m agent --export-evidence-job <job_id> --export-evidence-mode client_safe
 python -m agent --list-artifacts  # Shared artifact query surface
@@ -62,27 +62,32 @@ python -m agent --build-repo . --build-description "Apply bounded builder plan" 
 python -m agent --intake-repo . --intake-work-type build --intake-description "Plan release slice" --intake-plan-file plan.json --intake-acceptance-file acceptance.json --intake-preview
 python -m agent --list-plans
 python -m agent --list-deliveries
-python -m pytest tests/ -q   # Testy
+python -m pytest tests/ -q   # 1762+ testov, offline, $0.00
 ```
 
 ## Verzia
 
-Aktuálna: **v1.34.0** — self-host onboarding closure.
+Aktuálna: **v1.35.0** — tiered logging, vault crash-safety, runtime LLM control, security hardening.
 
-Nové v `v1.34.0`:
+Nové v `v1.35.0`:
+- Vault single-file v2 format (`ALSv2` magic + embedded random salt + Fernet token), atomic
+  `os.replace` writes, automatická migrácia z v1
+- Tiered structured logging — long tier (~30 dní) pre lifecycle/build/finance/audit, short tier
+  (~6 hodín) pre verbose pipeline diagnostics, hourly cron prune sweep
+- Runtime LLM operator control — flip `cli` ↔ `api` backend per-session bez restartu cez
+  dashboard alebo `POST /api/operator/llm`
+- Telegram + Claude CLI fail-closed guard pre programming tasky v sandbox-only mode
+- Headless CLI auto-approve (`AGENT_CLI_AUTO_APPROVE` env var, default detect TTY)
+- mypy 147 → 0 errors naprieč 112 source files
+
+Predchádzajúce v `v1.34.0`:
 - setup doctor a silnejší self-host runtime posture report
 - bezpečnejší default runtime data-dir mimo source tree pre fresh checkout
 - konzistentné `AGENT_DATA_DIR` správanie naprieč CLI a operator surfaces
-- dorovnané self-host docs, `.env.example`, a packaging version discipline
 
 Predchádzajúce v `v1.33.0`:
 - Docker-isolated build execution pre generated projekty
 - auto-fix retry loop po failing testoch
 - bohatší build reporting cez Telegram/API
-
-Predchádzajúce v `v1.32.0`:
-- description-driven LLM build pipeline
-- codegen z prirodzeného zadania do `BuildOperation[]`
-- sandbox-first downgrade pre API/channel trust flow
 
 Pozri [CHANGELOG.md](../CHANGELOG.md) pre kompletný zoznam zmien.
