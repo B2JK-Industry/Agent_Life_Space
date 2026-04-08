@@ -294,7 +294,7 @@ class ControlPlaneStateService:
         if not request:
             return record
 
-        mapped_status = record.status
+        mapped_status: DeliveryLifecycleStatus = record.status
         approval_status = str(request.get("status", ""))
         if approval_status == "executed":
             mapped_status = DeliveryLifecycleStatus.HANDED_OFF

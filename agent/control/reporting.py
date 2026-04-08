@@ -6,7 +6,7 @@ Builds a compact operator-facing report over shared job queries and approvals.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 
 class OperatorReportService:
@@ -469,8 +469,8 @@ class OperatorReportService:
                 "awaiting additional approval"
             )
         if status == "denied":
-            return approval.get("denial_reason", "") or approval.get("reason", "")
-        return approval.get("reason", "")
+            return cast("str", approval.get("denial_reason", "") or approval.get("reason", ""))
+        return cast("str", approval.get("reason", ""))
 
     def _approval_backlog(self, approvals: list[dict[str, Any]]) -> dict[str, Any]:
         by_status: dict[str, int] = {}
@@ -497,11 +497,12 @@ class OperatorReportService:
             detail = denial.get("detail", "")
             if detail:
                 return f"{denial['summary']}: {detail}"
-            return denial["summary"]
-        return (
+            return cast("str", denial["summary"])
+        return cast(
+            "str",
             job.get("metadata", {}).get("last_error", "")
             or job.get("blocked_reason", "")
-            or job.get("outcome", "")
+            or job.get("outcome", ""),
         )
 
     def _provider_delivery_view(self, delivery: dict[str, Any]) -> dict[str, Any] | None:

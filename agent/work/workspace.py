@@ -391,10 +391,11 @@ class WorkspaceManager:
         by_status: dict[str, int] = {}
         for ws in self._workspaces.values():
             by_status[ws.status.value] = by_status.get(ws.status.value, 0) + 1
+        active_ws = self.get_active()
         return {
             "total": len(self._workspaces),
             "by_status": by_status,
-            "active": self.get_active().name if self.get_active() else None,
+            "active": active_ws.name if active_ws is not None else None,
             "root": str(self._root),
         }
 

@@ -1112,9 +1112,9 @@ class TestRedactionPolicy:
 
     @classmethod
     def setup_class(cls):
-        """Register test hostname pattern for b2jk-* redaction tests."""
+        """Register a neutral hostname pattern for redaction tests."""
         from agent.review.redaction import add_hostname_pattern
-        add_hostname_pattern(r"b2jk-\w+")
+        add_hostname_pattern(r"acme-host-\w+")
 
     def test_redact_paths(self):
         from agent.review.redaction import redact_paths
@@ -1124,7 +1124,7 @@ class TestRedactionPolicy:
 
     def test_redact_hostnames(self):
         from agent.review.redaction import redact_hostnames
-        assert "[HOST_REDACTED]" in redact_hostnames("running on b2jk-agentlifespace")
+        assert "[HOST_REDACTED]" in redact_hostnames("running on acme-host-prod")
         assert "google.com" in redact_hostnames("connect to google.com")
 
     def test_redact_secrets(self):
@@ -1155,7 +1155,7 @@ class TestRedactionPolicy:
         """Finding description must go through full redaction, not just path scrub."""
         from agent.review.redaction import redact_finding
         finding = {
-            "description": "Found at /Users/daniel/code on b2jk-server",
+            "description": "Found at /Users/daniel/code on acme-host-server",
             "impact": 'Leaks api_key = "mysecret12345678" to logs',
             "recommendation": "Fix config at /home/user/.env on agent-life-space host",
             "evidence": "",
@@ -1163,7 +1163,7 @@ class TestRedactionPolicy:
         }
         result = redact_finding(finding)
         assert "/Users/" not in result["description"]
-        assert "b2jk" not in result["description"]
+        assert "acme-host" not in result["description"]
         assert "mysecret" not in result["impact"]
         assert "/home/" not in result["recommendation"]
         assert "agent-life-space" not in result["recommendation"]
@@ -1172,14 +1172,14 @@ class TestRedactionPolicy:
         """Error field must be redacted in client-safe export."""
         from agent.review.redaction import redact_bundle
         bundle = {
-            "error": "Failed at /Users/daniel/project: connection to b2jk-prod refused",
+            "error": "Failed at /Users/daniel/project: connection to acme-host-cluster refused",
             "markdown_report": "",
             "findings_only": [],
             "json_report": {},
         }
         result = redact_bundle(bundle)
         assert "/Users/" not in result["error"]
-        assert "b2jk" not in result["error"]
+        assert "acme-host" not in result["error"]
 
     def test_git_stderr_leak_in_description(self):
         """Git stderr-style content in description must be redacted."""
@@ -1194,11 +1194,11 @@ class TestRedactionPolicy:
 
     def test_apply_client_redaction_combined(self):
         from agent.review.redaction import apply_client_redaction
-        text = 'Found api_key = "supersecret12345" at /Users/dev/app.py on b2jk-server'
+        text = 'Found api_key = "supersecret12345" at /Users/dev/app.py on acme-host-server'
         redacted = apply_client_redaction(text)
         assert "supersecret" not in redacted
         assert "/Users/" not in redacted
-        assert "b2jk" not in redacted
+        assert "acme-host" not in redacted
 
 
 # ─────────────────────────────────────────────

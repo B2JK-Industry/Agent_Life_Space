@@ -83,7 +83,7 @@ class TestPatternExtraction:
     async def test_system_fact_becomes_semantic(self, store, consolidator):
         """System facts (server, CPU, RAM) become semantic memories."""
         await store.store(MemoryEntry(
-            content="Server b2jk-agentlifespace beží na Ubuntu 24.04, CPU i7-5500U, 8GB RAM",
+            content="Server acme-host-prod beží na Ubuntu 24.04, CPU i7-5500U, 8GB RAM",
             memory_type=MemoryType.EPISODIC,
             tags=["system", "health"],
             source="watchdog",

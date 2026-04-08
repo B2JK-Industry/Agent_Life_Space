@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import orjson
 import structlog
@@ -89,7 +89,7 @@ class ReviewStorage:
         cursor = self._db.execute("SELECT data FROM review_jobs WHERE id = ?", (job_id,))
         row = cursor.fetchone()
         if row:
-            return orjson.loads(row[0])
+            return cast("dict[str, Any]", orjson.loads(row[0]))
         return None
 
     def list_jobs(self, status: str = "", limit: int = 20) -> list[dict[str, Any]]:

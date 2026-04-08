@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -71,6 +71,9 @@ class AgentBrain:
         self._rag_index: Any = None
         self._learner: Any = None
         self._persistent_conv: Any = None
+        # Wired in by __main__ after construction so the brain can run
+        # tool-use loops over the configured ToolExecutor.
+        self._tool_executor: Any = None
 
         # Status model (optional)
         self._status: Any = None
@@ -208,12 +211,9 @@ class AgentBrain:
         if learner:
             adaptation = learner.adapt_model(task_type, text)
             if adaptation.get("model_override"):
-                from agent.core.models import OPUS, SONNET
-                override_map = {
-                    "claude-sonnet-4-6": SONNET,
-                    "claude-opus-4-6": OPUS,
-                }
-                override = override_map.get(adaptation["model_override"])
+                from agent.core.models import resolve_runtime_model_alias
+
+                override = resolve_runtime_model_alias(adaptation["model_override"])
                 if override:
                     allowed, blocked_reason = self._budget_allows_escalation()
                     if allowed:
@@ -278,7 +278,7 @@ class AgentBrain:
             _TRUSTED_KINDS = {MemoryKind.FACT, MemoryKind.PROCEDURE}
 
             keywords = [w for w in text.split() if len(w) > 3][:3]
-            memory_results = []
+            memory_results: list[Any] = []
             for kw in keywords:
                 results = await self._agent.memory.query(
                     keyword=kw, memory_type=MemoryType.SEMANTIC, limit=5,
@@ -350,6 +350,7 @@ class AgentBrain:
             prompt += f"\n\nCurrent runtime state (verified, do not contradict):\n{runtime_facts}"
 
         # ── Layer 6: LLM call via provider ──
+        from agent.control.llm_runtime import resolve_llm_runtime_state
         from agent.core.llm_provider import GenerateRequest, get_provider
 
         if self._status:
@@ -362,7 +363,14 @@ class AgentBrain:
         )
 
         provider = get_provider()
-        backend = os.environ.get("LLM_BACKEND", "cli")
+        # IMPORTANT: read the *effective* backend from the same resolver
+        # the provider factory uses, not from raw os.environ. Otherwise
+        # operator overrides set via /api/operator/llm or the dashboard
+        # never reach the tool-loop branch and the agent silently keeps
+        # using the env-default backend even though the provider has
+        # already switched.
+        runtime = resolve_llm_runtime_state(environ=os.environ)
+        backend = str(runtime["effective_backend"]) or "cli"
         usage_cost = 0.0
         usage_input_tokens = 0
         usage_output_tokens = 0
@@ -445,25 +453,27 @@ class AgentBrain:
                                 from_model=model.model_id,
                                 score=quality.score,
                                 reason=quality.reason)
-                    from agent.core.models import SONNET
+                    from agent.core.models import ModelTier, get_model_for_tier
+
+                    escalated_model = get_model_for_tier(ModelTier.BALANCED)
                     esc_response = await provider.generate(GenerateRequest(
                         messages=[{"role": "user", "content": prompt}],
-                        model=SONNET.model_id,
-                        timeout=SONNET.timeout,
-                        max_turns=SONNET.max_turns,
+                        model=escalated_model.model_id,
+                        timeout=escalated_model.timeout,
+                        max_turns=escalated_model.max_turns,
                         allow_file_access=cli_allow_file_access,
                         cwd=project_root,
                     ))
                     if esc_response.success and esc_response.text:
                         reply = esc_response.text
-                        model = SONNET
+                        model = escalated_model
                         usage_cost += esc_response.cost_usd
                         usage_input_tokens += esc_response.input_tokens
                         usage_output_tokens += esc_response.output_tokens
                         self._total_cost_usd += esc_response.cost_usd
                         self._total_input_tokens += esc_response.input_tokens
                         self._total_output_tokens += esc_response.output_tokens
-                        logger.info("post_routing_escalation_success", model=SONNET.model_id)
+                        logger.info("post_routing_escalation_success", model=escalated_model.model_id)
         except Exception as e:
             logger.error("quality_escalation_error", error=str(e))
 
@@ -586,7 +596,7 @@ class AgentBrain:
             if self._semantic_cache is None:
                 from agent.memory.semantic_cache import SemanticCache
                 self._semantic_cache = SemanticCache()
-            return self._semantic_cache.lookup(text)
+            return cast("str | None", self._semantic_cache.lookup(text))
         except Exception:
             return None
 
@@ -600,7 +610,7 @@ class AgentBrain:
                     self._rag_index.build_index()
             result = self._rag_index.retrieve_for_llm(text)
             if result.get("action") in ("direct", "augment"):
-                return result
+                return cast("dict[str, Any] | None", result)
         except Exception as e:
             logger.error("rag_retrieval_error", error=str(e))
         return None
@@ -697,7 +707,7 @@ class AgentBrain:
                     db_path=str(self._agent._data_dir / "memory" / "conversations.db")
                 )
                 await self._persistent_conv.initialize()
-            return await self._persistent_conv.build_context(conv_id, query=query)
+            return cast("str", await self._persistent_conv.build_context(conv_id, query=query))
         except Exception as e:
             logger.error("persistent_conv_error", error=str(e))
             return ""

@@ -68,6 +68,28 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+# Third-party libs without type stubs (psutil, jsonschema, openai,
+# numpy, sentence_transformers). We don't want every importing module
+# to carry a per-line ignore. We disable both error codes globally
+# for these — `ignore_missing_imports` only covers `import-not-found`,
+# we need `import-untyped` separately for libs that ARE installed but
+# ship no `py.typed` marker.
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = [
+    "psutil",
+    "psutil.*",
+    "jsonschema",
+    "jsonschema.*",
+    "openai",
+    "openai.*",
+    "sentence_transformers",
+    "sentence_transformers.*",
+    "numpy",
+    "numpy.*",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

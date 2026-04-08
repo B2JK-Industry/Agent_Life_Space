@@ -36,6 +36,8 @@ from typing import Any
 import orjson
 import structlog
 
+from agent.control.llm_runtime import resolve_llm_runtime_state
+
 logger = structlog.get_logger(__name__)
 
 
@@ -103,6 +105,30 @@ def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     )
 
 
+def is_authentication_error(error: str) -> bool:
+    """Best-effort detection for provider auth/config failures."""
+    normalized = (error or "").casefold()
+    if not normalized:
+        return False
+    indicators = (
+        "authentication_error",
+        "invalid authentication credentials",
+        "failed to authenticate",
+        "unauthorized",
+        "401",
+        "forbidden",
+        "not logged in",
+        "login required",
+        "claude_code_oauth_token",
+        "anthropic_api_key",
+        "openai_api_key",
+        "api key",
+        "permission denied",
+        "credentials",
+    )
+    return any(token in normalized for token in indicators)
+
+
 # ─────────────────────────────────────────────
 # Abstract base
 # ─────────────────────────────────────────────
@@ -125,6 +151,22 @@ class LLMProvider(ABC):
     def supports_streaming(self) -> bool:
         """Does this provider support streaming?"""
         return False
+
+
+class DetachedLLMProvider(LLMProvider):
+    """Synthetic provider returned when the operator detaches LLM access."""
+
+    def __init__(self, reason: str = "") -> None:
+        self._reason = reason or (
+            "LLM runtime is detached by operator. Re-enable it via CLI or /api/operator/llm."
+        )
+
+    async def generate(self, request: GenerateRequest) -> GenerateResponse:
+        return GenerateResponse(
+            error=self._reason,
+            success=False,
+            model=request.model,
+        )
 
 
 # ─────────────────────────────────────────────
@@ -528,15 +570,28 @@ def get_provider(
         LLM_BACKEND=cli|api     (default: cli)
         LLM_PROVIDER=anthropic|openai|local  (default: anthropic)
     """
-    backend = backend or os.environ.get("LLM_BACKEND", "cli")
-    provider_name = provider or os.environ.get("LLM_PROVIDER", "anthropic")
+    runtime = resolve_llm_runtime_state(environ=os.environ)
+    backend = backend or str(runtime["effective_backend"])
+    provider_name = provider or str(runtime["effective_provider"])
 
-    cache_key = f"{backend}:{provider_name}"
+    # Include kwargs in cache key so that different base_url / api_key
+    # configurations get separate provider instances instead of silently
+    # reusing the first one created.
+    kwargs_sig = ",".join(f"{k}={v}" for k, v in sorted(kwargs.items())) if kwargs else ""
+    cache_key = f"{int(bool(runtime['enabled']))}:{backend}:{provider_name}:{kwargs_sig}"
     if cache_key in _provider_cache:
         return _provider_cache[cache_key]
 
-    if backend == "cli":
-        instance: LLMProvider = ClaudeCliProvider(**kwargs)
+    instance: LLMProvider
+    if not runtime["enabled"]:
+        instance = DetachedLLMProvider(
+            reason=(
+                "LLM runtime is detached by operator. Re-enable it via CLI or "
+                "/api/operator/llm before running LLM-backed tasks."
+            )
+        )
+    elif backend == "cli":
+        instance = ClaudeCliProvider(**kwargs)
     elif backend == "api":
         if provider_name == "anthropic":
             instance = AnthropicProvider(**kwargs)

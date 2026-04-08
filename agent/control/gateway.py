@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
 
@@ -39,7 +40,7 @@ class ExternalGatewayService:
         approval_queue: Any = None,
         request_executor: Any = None,
         monotonic: Any = None,
-        environment: dict[str, str] | None = None,
+        environment: Mapping[str, str] | None = None,
         secret_lookup: Any = None,
         on_payment_required: Any = None,
     ) -> None:

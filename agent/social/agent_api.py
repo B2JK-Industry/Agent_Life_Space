@@ -168,11 +168,30 @@ class AgentAPI:
 
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
+            # Long-tier security signal: someone hit an authenticated
+            # endpoint without a Bearer token. Could be a misconfigured
+            # client, could be a probe.
+            logger.warning(
+                "auth_failure",
+                reason="missing_bearer",
+                path=str(request.rel_url) if hasattr(request, "rel_url") else "",
+                remote=getattr(request, "remote", "?"),
+            )
             return "Missing Authorization: Bearer <api_key>"
 
         key = auth[7:].strip()
         if key not in self._api_keys:
-            logger.warning("agent_api_unauthorized", key_prefix=key[:8])
+            # Hash, never log the value or even a prefix that an
+            # operator could match against their password manager.
+            import hashlib
+            key_hash = hashlib.sha256(key.encode()).hexdigest()[:12]
+            logger.warning(
+                "auth_failure",
+                reason="invalid_key",
+                key_hash=key_hash,
+                path=str(request.rel_url) if hasattr(request, "rel_url") else "",
+                remote=getattr(request, "remote", "?"),
+            )
             return "Invalid API key"
 
         return None
@@ -643,21 +662,19 @@ class AgentAPI:
     async def _handle_dashboard(self, request: web.Request) -> web.Response:
         """GET /dashboard — self-contained operator dashboard.
 
-        Requires API key via Authorization header or ?key= query param.
-        Without auth, returns a minimal login page.
+        Requires API key via Authorization header. Query-string auth
+        (?key=...) is intentionally NOT supported because query strings
+        end up in browser history, server access logs, and HTTP referrer
+        headers. Without auth, returns a minimal login page that prompts
+        the operator to paste the key (which the JS then stores and uses
+        as a Bearer token).
         """
-        key_param = request.query.get("key", "")
-        if key_param and key_param in self._api_keys:
-            from agent.social.dashboard import render_dashboard_html
-            html = render_dashboard_html(api_key_hint=key_param)
-            return web.Response(text=html, content_type="text/html")
-        else:
-            auth_error = self._check_auth(request)
-            if auth_error:
-                return web.Response(
-                    text=self._dashboard_auth_page(),
-                    content_type="text/html",
-                )
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return web.Response(
+                text=self._dashboard_auth_page(),
+                content_type="text/html",
+            )
         from agent.social.dashboard import render_dashboard_html
         html = render_dashboard_html()
         return web.Response(text=html, content_type="text/html")
@@ -912,7 +929,9 @@ class AgentAPI:
         else:
             return web.json_response({"archives": archival.list_archives()})
 
-    async def _handle_operator_archive_download(self, request: web.Request) -> web.Response:
+    async def _handle_operator_archive_download(
+        self, request: web.Request,
+    ) -> web.StreamResponse:
         """GET /api/operator/archive/download/{filename} — download a CSV archive."""
         auth_error = self._check_auth(request)
         if auth_error:
@@ -1040,6 +1059,118 @@ class AgentAPI:
             "recent": self._audit.get_recent(limit=min(limit, 200)),
         })
 
+    async def _handle_operator_llm(self, request: web.Request) -> web.Response:
+        """GET/POST /api/operator/llm — inspect or update runtime LLM controls."""
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return self._json_error_response(
+                status=401,
+                code="auth_failed",
+                summary="Auth failed",
+                detail=auth_error,
+                scope="api.operator.llm",
+            )
+        if not self._agent or not hasattr(self._agent, "llm_runtime"):
+            return self._json_error_response(
+                status=503,
+                code="llm_runtime_unavailable",
+                summary="LLM runtime unavailable",
+                detail="Agent runtime LLM controls are not initialized",
+                scope="api.operator.llm",
+            )
+
+        if request.method == "GET":
+            return web.json_response(self._agent.get_llm_runtime_state())
+
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_error_response(
+                status=400,
+                code="invalid_json_body",
+                summary="Invalid JSON body",
+                detail="Request body is not valid JSON.",
+                scope="api.operator.llm",
+            )
+        if not isinstance(body, dict):
+            return self._json_error_response(
+                status=400,
+                code="invalid_json_body",
+                summary="Invalid JSON body",
+                detail="Expected a JSON object payload.",
+                scope="api.operator.llm",
+            )
+
+        enabled = body.get("enabled")
+        follow_env = body.get("follow_env", False)
+        if enabled is not None and not isinstance(enabled, bool):
+            return self._json_error_response(
+                status=400,
+                code="invalid_json_body",
+                summary="Invalid JSON body",
+                detail="'enabled' must be a boolean when provided.",
+                scope="api.operator.llm",
+            )
+
+        backend = body.get("backend")
+        provider = body.get("provider")
+        if backend is not None and not isinstance(backend, str):
+            return self._json_error_response(
+                status=400,
+                code="invalid_json_body",
+                summary="Invalid JSON body",
+                detail="'backend' must be a string when provided.",
+                scope="api.operator.llm",
+            )
+        if provider is not None and not isinstance(provider, str):
+            return self._json_error_response(
+                status=400,
+                code="invalid_json_body",
+                summary="Invalid JSON body",
+                detail="'provider' must be a string when provided.",
+                scope="api.operator.llm",
+            )
+        if not isinstance(follow_env, bool):
+            return self._json_error_response(
+                status=400,
+                code="invalid_json_body",
+                summary="Invalid JSON body",
+                detail="'follow_env' must be a boolean when provided.",
+                scope="api.operator.llm",
+            )
+
+        # Sanitise free-text fields: strip HTML tags and cap length to
+        # prevent stored-XSS via the operator dashboard.
+        import re as _re
+
+        def _sanitise_text(val: object, max_len: int = 200) -> str:
+            s = str(val) if val else ""
+            s = _re.sub(r"<[^>]*>", "", s)  # strip HTML tags
+            return s[:max_len]
+
+        note = _sanitise_text(body.get("note", ""), 500)
+        updated_by = _sanitise_text(body.get("updated_by", "api.operator"), 100)
+
+        try:
+            state = self._agent.update_llm_runtime_state(
+                enabled=enabled,
+                backend=backend,
+                provider=provider,
+                follow_env=follow_env,
+                note=note,
+                updated_by=updated_by,
+            )
+        except ValueError as e:
+            return self._json_error_response(
+                status=400,
+                code="invalid_llm_runtime_state",
+                summary="Invalid LLM runtime state",
+                detail=str(e),
+                scope="api.operator.llm",
+            )
+
+        return web.json_response({"ok": True, "llm": state})
+
     async def start(self) -> None:
         """Spusti HTTP server."""
         self._app = web.Application()
@@ -1064,6 +1195,8 @@ class AgentAPI:
         self._app.router.add_get("/api/operator/settlements", self._handle_operator_settlements)
         self._app.router.add_post("/api/operator/settlements/{settlement_id}/{action}", self._handle_operator_settlement_action)
         self._app.router.add_get("/api/operator/audit", self._handle_operator_audit)
+        self._app.router.add_get("/api/operator/llm", self._handle_operator_llm)
+        self._app.router.add_post("/api/operator/llm", self._handle_operator_llm)
 
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()

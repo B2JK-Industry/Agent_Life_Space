@@ -19,14 +19,178 @@ Security:
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Any
 
 import orjson
 import structlog
 
+from agent.logs.retention import resolve_tier
+
 logger = structlog.get_logger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Tiered file logging setup (structlog → stdlib logging → file sinks)
+# ─────────────────────────────────────────────────────────────────────
+
+
+class _TierRouter(logging.Handler):
+    """Stdlib handler that fans a record out to one of two file handlers
+    based on the structured event name + level. The decision is made
+    by ``agent.logs.retention.resolve_tier`` so it stays consistent
+    with the cron-side cleanup logic.
+
+    structlog records carry the structured fields on
+    ``record.msg`` (after our ``JSONRenderer``) — we look at the raw
+    event name there. If we cannot find one we fall back to the
+    record's level alone.
+    """
+
+    def __init__(
+        self,
+        long_handler: logging.Handler,
+        short_handler: logging.Handler,
+    ) -> None:
+        super().__init__()
+        self._long = long_handler
+        self._short = short_handler
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            payload = record.getMessage()
+            event = ""
+            if payload.startswith("{"):
+                try:
+                    parsed = orjson.loads(payload)
+                    event = str(parsed.get("event", ""))
+                except (orjson.JSONDecodeError, ValueError):
+                    pass
+            tier = resolve_tier(record.levelname, event)
+            target = self._long if tier == "long" else self._short
+            target.handle(record)
+        except Exception:  # pragma: no cover - last-resort safety
+            self.handleError(record)
+
+    def close(self) -> None:
+        """Close the wrapped tier handlers as well as ourselves.
+
+        ``logging.Handler.close`` only releases this handler's own
+        resources; without overriding it, the inner long/short
+        ``TimedRotatingFileHandler`` instances would keep their
+        underlying file objects open until GC, which then fires
+        ResourceWarning under pytest's unraisable-exception capture.
+        """
+        try:
+            self._long.close()
+        except Exception:  # pragma: no cover
+            pass
+        try:
+            self._short.close()
+        except Exception:  # pragma: no cover
+            pass
+        super().close()
+
+
+def setup_tiered_logging(
+    log_dir: str | Path,
+    *,
+    long_retention_days: int = 30,
+    short_retention_hours: int = 6,
+    rotate_when: str = "midnight",
+) -> dict[str, str]:
+    """Configure structlog + stdlib logging to write to two tier sinks.
+
+    Side effects:
+
+    * Creates ``<log_dir>/long`` and ``<log_dir>/short`` directories.
+    * Removes any existing root StreamHandlers (so logs don't double-emit).
+    * Adds a single ``_TierRouter`` to the root logger; that router
+      forwards each record to ``agent-long.log`` or ``agent-short.log``.
+    * Both file handlers are ``TimedRotatingFileHandler`` so daily
+      rotation happens for free; the dated suffix files are then aged
+      out by ``LogRetentionManager`` (cron loop).
+
+    Returns the resolved file paths so the caller can log them.
+    """
+    base = Path(log_dir)
+    long_dir = base / "long"
+    short_dir = base / "short"
+    long_dir.mkdir(parents=True, exist_ok=True)
+    short_dir.mkdir(parents=True, exist_ok=True)
+
+    long_path = long_dir / "agent-long.log"
+    short_path = short_dir / "agent-short.log"
+
+    # Daily rotation. backupCount is intentionally generous — the
+    # LogRetentionManager (run from cron) is the real source of truth
+    # for "how long do we keep this", not the rotating handler. We
+    # only need rotation here so each day's file is separate.
+    long_handler = TimedRotatingFileHandler(
+        long_path,
+        when=rotate_when,
+        interval=1,
+        backupCount=long_retention_days + 1,
+        encoding="utf-8",
+        utc=True,
+        delay=True,
+    )
+    long_handler.setLevel(logging.INFO)
+    long_handler.setFormatter(logging.Formatter("%(message)s"))
+
+    # Short tier accepts DEBUG so we get all the noisy diagnostics.
+    short_handler = TimedRotatingFileHandler(
+        short_path,
+        when="H",  # hourly rotation; retention manager kills > N hours
+        interval=1,
+        backupCount=max(short_retention_hours + 1, 2),
+        encoding="utf-8",
+        utc=True,
+        delay=True,
+    )
+    short_handler.setLevel(logging.DEBUG)
+    short_handler.setFormatter(logging.Formatter("%(message)s"))
+
+    router = _TierRouter(long_handler=long_handler, short_handler=short_handler)
+    router.setLevel(logging.DEBUG)
+
+    root = logging.getLogger()
+    # Drop pre-existing stream handlers — we want JSON to file, not
+    # interleaved with anything else. We deliberately keep custom
+    # FileHandlers in case the operator wired their own. Also drop any
+    # _TierRouter from a previous setup_tiered_logging() call so we do
+    # not double-emit when this function is invoked twice (e.g. tests).
+    for h in list(root.handlers):
+        if isinstance(h, _TierRouter):
+            root.removeHandler(h)
+        elif isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            root.removeHandler(h)
+    root.addHandler(router)
+    root.setLevel(logging.DEBUG)
+
+    # CRITICAL: route structlog through stdlib so the _TierRouter on
+    # the root logger actually receives the records. Without this the
+    # process keeps the PrintLoggerFactory configured at startup and
+    # every event goes to stdout, never to disk. We also use the stdlib
+    # BoundLogger wrapper so .info()/.warning()/.error() map onto the
+    # matching stdlib level (the tier router needs the levelname).
+    structlog.configure(
+        processors=[
+            structlog.stdlib.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=False,
+    )
+
+    return {"long_log": str(long_path), "short_log": str(short_path)}
 
 # Patterns that should be redacted in logs
 SECRET_PATTERNS = {
@@ -40,7 +204,7 @@ def redact_secrets(data: dict[str, Any]) -> dict[str, Any]:
     Recursively redact any values whose keys match secret patterns.
     DETERMINISTIC — no randomness.
     """
-    redacted = {}
+    redacted: dict[str, Any] = {}
     for key, value in data.items():
         key_lower = key.lower()
         if any(pattern in key_lower for pattern in SECRET_PATTERNS):

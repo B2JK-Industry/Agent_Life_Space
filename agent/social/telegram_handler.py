@@ -19,7 +19,7 @@ import asyncio
 import os
 from dataclasses import dataclass
 from datetime import UTC
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -66,9 +66,11 @@ class TelegramHandler:
         self._total_input_tokens: int = 0
         self._total_output_tokens: int = 0
         self._total_requests: int = 0
-        # Semantic cache and RAG (lazy init)
-        self._semantic_cache = None
-        self._rag_index = None
+        # Semantic cache and RAG (lazy init).
+        # Typed as Any so the lazy assignments inside _handle_text don't
+        # trip the strict-mode optional narrowing.
+        self._semantic_cache: Any = None
+        self._rag_index: Any = None
         # Per-chat conversation buffers (key = chat_id)
         self._conversations: dict[int, list[dict[str, str]]] = {}
         self._max_conversation = 10
@@ -149,13 +151,26 @@ class TelegramHandler:
             self._mirror_to_terminal(ctx.chat_type, ctx.sender, text, response)
             return response
 
-        # Keep sending typing indicator while the agent thinks
-        typing_task = None
+        # Keep sending typing indicator while the agent thinks.
+        # IMPORTANT:
+        #   1. The inner loop must catch CancelledError so cancellation
+        #      actually stops it (otherwise the task is "orphaned" — cancel
+        #      sets the flag but the loop never observes it cleanly and we
+        #      get a noisy "Task was destroyed but it is pending!" log).
+        #   2. The finally block must AWAIT the cancelled task, otherwise
+        #      we drop the reference before asyncio finishes the cleanup.
+        typing_task: asyncio.Task[None] | None = None
         if self._bot:
-            async def keep_typing():
-                while True:
-                    await self._bot._api_call("sendChatAction", chat_id=chat_id, action="typing")
-                    await asyncio.sleep(4)  # Telegram typing expires after 5s
+            async def keep_typing() -> None:
+                try:
+                    while True:
+                        await self._bot._api_call(
+                            "sendChatAction", chat_id=chat_id, action="typing",
+                        )
+                        await asyncio.sleep(4)  # Telegram typing expires after 5s
+                except asyncio.CancelledError:
+                    # Expected on handle() exit — swallow quietly.
+                    return
 
             typing_task = asyncio.create_task(keep_typing())
 
@@ -174,15 +189,21 @@ class TelegramHandler:
                 )
                 response = await self._brain.process(incoming)
                 self._mirror_to_terminal(ctx.chat_type, ctx.sender, text, response)
-                return response
+                return cast("str", response)
 
             # Fallback to legacy _handle_text (backward compat)
             response = await self._handle_text(text, ctx)
             self._mirror_to_terminal(ctx.chat_type, ctx.sender, text, response)
             return response
         finally:
-            if typing_task:
+            if typing_task is not None and not typing_task.done():
                 typing_task.cancel()
+                try:
+                    await typing_task
+                except (asyncio.CancelledError, Exception):
+                    # Cancellation is expected; any other exception was
+                    # already logged inside the task body.
+                    pass
 
     async def _handle_command(self, text: str) -> str:
         parts = text.split(maxsplit=1)
@@ -928,12 +949,9 @@ class TelegramHandler:
             # BEHAVIORAL CHANGE #1: Model escalation
             adaptation = learner.adapt_model(task_type, text)
             if adaptation["model_override"]:
-                from agent.core.models import OPUS, SONNET
-                override_map = {
-                    "claude-sonnet-4-6": SONNET,
-                    "claude-opus-4-6": OPUS,
-                }
-                override = override_map.get(adaptation["model_override"])
+                from agent.core.models import resolve_runtime_model_alias
+
+                override = resolve_runtime_model_alias(adaptation["model_override"])
                 if override:
                     logger.info(
                         "learning_override_model",
@@ -1174,13 +1192,14 @@ class TelegramHandler:
                         logger.info(
                             "post_routing_escalation",
                             from_model=model.model_id,
-                            to_model="claude-sonnet-4-6",
+                            to_model="balanced-tier",
                             score=quality.score,
                             reason=quality.reason,
                         )
                         # Re-run s Sonnet via provider
-                        from agent.core.models import SONNET
-                        escalated_model = SONNET
+                        from agent.core.models import ModelTier, get_model_for_tier
+
+                        escalated_model = get_model_for_tier(ModelTier.BALANCED)
                         esc_response = await provider.generate(GenerateRequest(
                             messages=[{"role": "user", "content": prompt}],
                             model=escalated_model.model_id,
@@ -1480,10 +1499,12 @@ class TelegramHandler:
             else:
                 return f"Cesta `{repo_path}` neexistuje."
 
+        from agent.control.intake import OperatorWorkType
+
         intake = OperatorIntake(
             repo_path=repo_path,
             git_url=git_url,
-            work_type=work_type,
+            work_type=OperatorWorkType(work_type),
             description=description,
             requester=self._current_sender or "telegram",
         )
@@ -1534,6 +1555,9 @@ class TelegramHandler:
                 else:
                     verification = meta.get("verification_passed", "?")
                     lines.append(f"Verifikácia: {'OK' if verification else 'FAILED'}")
+                codegen_error = meta.get("codegen_error", "")
+                if codegen_error:
+                    lines.append(f"Codegen error: {str(codegen_error)[:200]}")
                 error_msg = meta.get("error", "")
                 if error_msg:
                     lines.append(f"Error: {str(error_msg)[:200]}")
@@ -1628,6 +1652,8 @@ class TelegramHandler:
                     lines.append(f"Findings: {counts}")
             if metadata.get("acceptance_met") is not None:
                 lines.append(f"Acceptance: {metadata['acceptance_met']}/{metadata.get('acceptance_total', '?')}")
+            if metadata.get("codegen_error"):
+                lines.append(f"Codegen error: {metadata['codegen_error'][:200]}")
             if job.get("error"):
                 lines.append(f"Error: {job['error'][:200]}")
             return "\n".join(lines)
@@ -1861,18 +1887,22 @@ class TelegramHandler:
             return f"*Error:* Settlement `{parts[1]}` not found or not pending."
 
         if parts[0] == "execute" and len(parts) >= 2:
-            result = await svc.execute_topup(parts[1])
-            if result.get("ok"):
-                retry = result.get("retry", {})
+            # Use a fresh variable name — `result` higher up is typed as
+            # SettlementRequest | None (from approve/deny), but
+            # execute_topup returns a dict[str, Any]. Reusing the same
+            # name confuses mypy and hides real null derefs.
+            topup_result: dict[str, Any] = await svc.execute_topup(parts[1])
+            if topup_result.get("ok"):
+                retry = topup_result.get("retry", {}) or {}
                 retry_note = ""
                 if retry.get("retried"):
                     retry_note = f"\nRetry: {'OK' if retry.get('ok') else 'FAIL'}"
                 return (
                     f"*Settlement executed:* `{parts[1]}`\n"
-                    f"Amount: ${float(result.get('amount', 0.0)):.4f}"
+                    f"Amount: ${float(topup_result.get('amount', 0.0)):.4f}"
                     f"{retry_note}"
                 )
-            return f"*Error:* {result.get('error', 'Settlement execution failed.')}"
+            return f"*Error:* {topup_result.get('error', 'Settlement execution failed.')}"
 
         return (
             "*Použitie:* `/settlement` | `/settlement approve <id>` | "
@@ -2165,7 +2195,7 @@ class TelegramHandler:
         lines.append("\n`/deliver <job_id>` pre detail")
         return "\n".join(lines)
 
-    async def _build_context_json(self, text: str) -> dict:
+    async def _build_context_json(self, text: str) -> dict[str, Any]:
         """Build LEAN JSON context — only what's needed for this message."""
         from agent.memory.store import MemoryType
 
@@ -2196,7 +2226,7 @@ class TelegramHandler:
         # Alerts only (no full health dump)
         health = self._agent.watchdog.get_system_health()
 
-        context: dict = {
+        context: dict[str, Any] = {
             "memory": {
                 "working": [m.content for m in working][:1],
                 "semantic": [m.content[:100] for m in semantic],

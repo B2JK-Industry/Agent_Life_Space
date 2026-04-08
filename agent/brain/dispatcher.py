@@ -83,9 +83,9 @@ class InternalDispatcher:
                         "budget": self._handle_budget,
                         "identity": self._handle_identity,
                     }
-                    handler = intent_handler_map.get(intent)
-                    if handler:
-                        result = await handler()
+                    handler_opt = intent_handler_map.get(intent)
+                    if handler_opt is not None:
+                        result = await handler_opt()
                         if result:
                             logger.info("dispatch_semantic", intent=intent, confidence=confidence)
                             return result

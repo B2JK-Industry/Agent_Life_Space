@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import aiohttp
 import structlog
@@ -77,6 +77,10 @@ class TelegramBot:
         self._message_callback: Any = None
         self._bot_username: str = ""
         self._bot_id: int = 0
+        # Strong references to in-flight per-message tasks. Without this
+        # asyncio's weak-reference set lets long-running handler tasks
+        # be garbage-collected mid-execution.
+        self._inflight: set[asyncio.Task[None]] = set()
 
     def _load_last_update_id(self) -> int:
         """Load last processed update ID from disk."""
@@ -170,7 +174,7 @@ class TelegramBot:
                 chat_id=chat_id,
                 text=text,
             )
-        return result
+        return cast("dict[str, Any] | None", result)
 
     async def _poll_updates(self) -> None:
         """Long-poll for new messages."""
@@ -188,8 +192,12 @@ class TelegramBot:
             self._save_last_update_id()
             message = update.get("message")
             if message:
-                # Process in background — don't block polling
-                asyncio.create_task(self._handle_message(message))
+                # Process in background — don't block polling. Track the
+                # task so it can't be GC'd before completion (asyncio
+                # only holds weak references internally).
+                task = asyncio.create_task(self._handle_message(message))
+                self._inflight.add(task)
+                task.add_done_callback(self._inflight.discard)
 
     async def _handle_message(self, message: dict[str, Any]) -> None:
         """Process an incoming message (private or group)."""

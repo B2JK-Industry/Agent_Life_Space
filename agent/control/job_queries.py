@@ -114,6 +114,7 @@ class JobQueryService:
             scope=", ".join(job.intake.target_files[:3]),
             outcome=outcome,
             blocked_reason=blocked_reason,
+            error=job.error,
         )
 
     def _build_detail(self, job: BuildJob) -> JobQueryDetail:
@@ -132,6 +133,9 @@ class JobQueryService:
                 "verification_passed": job.verification_passed,
                 "verification_results": [v.to_dict() for v in job.verification_results],
                 "acceptance": job.acceptance.to_dict(),
+                "error": job.error,
+                "codegen_fallback": bool(job.metadata.get("codegen_fallback")),
+                "codegen_error": str(job.metadata.get("codegen_error", "")),
                 "post_build_review": {
                     "requested": job.intake.run_post_build_review,
                     "job_id": job.post_build_review_job_id,
@@ -156,6 +160,7 @@ class JobQueryService:
             scope=job.intake.diff_spec or job.intake.repo_path,
             outcome=job.report.verdict,
             blocked_reason=job.error,
+            error=job.error,
         )
 
     def _review_detail(self, job: ReviewJob) -> JobQueryDetail:
@@ -173,6 +178,7 @@ class JobQueryService:
                 "focus_areas": job.intake.focus_areas,
                 "include_patterns": job.intake.include_patterns,
                 "exclude_patterns": job.intake.exclude_patterns,
+                "error": job.error,
             },
         )
 

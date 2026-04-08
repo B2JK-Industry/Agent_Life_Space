@@ -112,6 +112,7 @@ class TestJobQueryService:
         )
         build_job.status = JobStatus.BLOCKED
         build_job.error = "Post-build review blocked completion"
+        build_job.metadata["codegen_error"] = "Invalid authentication credentials"
         build_job.post_build_review_job_id = "review-123"
         build_job.post_build_review_verdict = "fail"
         build_job.post_build_review_findings = {"critical": 1}
@@ -123,6 +124,9 @@ class TestJobQueryService:
         assert detail is not None
         assert detail.job_kind == JobKind.BUILD
         assert detail.status == "blocked"
+        assert detail.error == "Post-build review blocked completion"
+        assert detail.metadata["error"] == "Post-build review blocked completion"
+        assert detail.metadata["codegen_error"] == "Invalid authentication credentials"
         assert detail.metadata["post_build_review"]["verdict"] == "fail"
         assert detail.blocked_reason == "Post-build review blocked completion"
 
@@ -1027,6 +1031,20 @@ class TestOrchestratorEntryPoints:
             "https://obolos.example.test/review",
         )
         monkeypatch.setenv("AGENT_OBOLOS_AUTH_TOKEN", "secret-token")
+        async def fake_probe_llm_health(*, timeout: int = 30) -> dict[str, object]:
+            return {
+                "attempted": True,
+                "healthy": True,
+                "backend": "cli",
+                "provider": "anthropic",
+                "configured": True,
+                "model": "claude-sonnet-4-6",
+                "latency_ms": 42,
+                "error": "",
+                "auth_failure": False,
+                "response_preview": "OK",
+            }
+        monkeypatch.setattr(agent, "probe_llm_health", fake_probe_llm_health)
 
         send_result = await agent.send_review_delivery_via_gateway(
             review_job.id,
@@ -1109,6 +1127,20 @@ class TestOrchestratorEntryPoints:
             "https://obolos.example.test/review",
         )
         monkeypatch.setenv("AGENT_OBOLOS_AUTH_TOKEN", "secret-token")
+        async def fake_probe_llm_health(*, timeout: int = 30) -> dict[str, object]:
+            return {
+                "attempted": True,
+                "healthy": True,
+                "backend": "cli",
+                "provider": "anthropic",
+                "configured": True,
+                "model": "claude-sonnet-4-6",
+                "latency_ms": 42,
+                "error": "",
+                "auth_failure": False,
+                "response_preview": "OK",
+            }
+        monkeypatch.setattr(agent, "probe_llm_health", fake_probe_llm_health)
 
         send_result = await agent.send_review_delivery_via_gateway(
             review_job.id,
@@ -1761,7 +1793,7 @@ class TestEvidenceExport:
     @classmethod
     def setup_class(cls):
         from agent.review.redaction import add_hostname_pattern
-        add_hostname_pattern(r"b2jk-\w+")
+        add_hostname_pattern(r"acme-host-\w+")
 
     def test_export_job_links_artifacts_to_retention_approvals_and_workspaces(self):
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -1901,7 +1933,7 @@ class TestEvidenceExport:
                             "category": "external",
                             "status": "pending",
                             "description": "Deliver /Users/daniel/report",
-                            "reason": "Share with b2jk-client",
+                            "reason": "Share with acme-host-client",
                             "required_approvals": 1,
                             "approvals_received": [],
                         }
@@ -1919,4 +1951,4 @@ class TestEvidenceExport:
         assert package["export_mode"] == "client_safe"
         assert package["client_safe_bundle"]["export_mode"] == "client_safe"
         assert "/Users/" not in package["approvals"][0]["description"]
-        assert "b2jk" not in package["approvals"][0]["reason"]
+        assert "acme-host" not in package["approvals"][0]["reason"]

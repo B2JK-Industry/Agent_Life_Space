@@ -22,7 +22,7 @@ This service does NOT:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -353,7 +353,7 @@ class ReviewService:
         intake = job.intake
         analysis_path = self._get_analysis_path(job)
         report = ReviewReport()
-        all_findings: list = []
+        all_findings: list[Any] = []
 
         # Structure analysis
         t_structure = job.trace("analyze:structure")
@@ -405,7 +405,7 @@ class ReviewService:
         intake = job.intake
         analysis_path = self._get_analysis_path(job)
         report = ReviewReport()
-        all_findings: list = []
+        all_findings: list[Any] = []
 
         # Diff analysis
         t_diff = job.trace("analyze:diff")
@@ -844,7 +844,7 @@ class ReviewService:
         record = self._refresh_delivery_record(bundle_id)
         if record is None:
             return None
-        return record.to_dict()
+        return cast("dict[str, Any] | None", record.to_dict())
 
     def mark_delivery_handed_off(self, job_id: str, *, note: str = "") -> dict[str, Any]:
         """Record final review handoff after approval."""
@@ -888,7 +888,7 @@ class ReviewService:
         ) if self._control_plane_state is not None else record
         if record is None:
             return {"error": f"Delivery record not found for bundle '{bundle_id}'"}
-        return record.to_dict()
+        return cast("dict[str, Any]", record.to_dict())
 
     def list_jobs(self, status: str = "", limit: int = 20) -> list[dict[str, Any]]:
         """List review jobs."""
@@ -1172,7 +1172,7 @@ class ReviewService:
             metadata=metadata or {},
         )
 
-    def _refresh_delivery_record(self, bundle_id: str):
+    def _refresh_delivery_record(self, bundle_id: str) -> Any:
         if self._control_plane_state is None:
             return None
         return self._control_plane_state.refresh_delivery_status(

@@ -22,6 +22,8 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 
+from agent.control.llm_runtime import resolve_llm_runtime_state
+
 
 class ModelTier(str, Enum):
     """Provider-agnostic model quality tier."""
@@ -68,15 +70,18 @@ class ModelConfig:
 
 def _resolve_model_id(tier: ModelTier) -> str:
     """Resolve tier to model ID based on current provider config."""
-    backend = os.environ.get("LLM_BACKEND", "cli")
-    provider = os.environ.get("LLM_PROVIDER", "anthropic")
-
-    # CLI backend always uses Anthropic models
-    if backend == "cli":
-        provider = "anthropic"
+    runtime = resolve_llm_runtime_state(environ=os.environ)
+    provider = runtime["effective_provider"]
 
     models = PROVIDER_MODELS.get(provider, PROVIDER_MODELS["anthropic"])
     return models[tier]
+
+
+_MODEL_ALIAS_TO_TIER: dict[str, ModelTier] = {
+    model_id: tier
+    for provider_models in PROVIDER_MODELS.values()
+    for tier, model_id in provider_models.items()
+}
 
 
 # --- Task -> Tier mapping ---
@@ -302,9 +307,22 @@ def classify_task(text: str) -> str:
 def get_model(task_type: str) -> ModelConfig:
     """Get model config for task type. Resolves through provider-agnostic tier."""
     tier = _TASK_TIER.get(task_type, ModelTier.BALANCED)
+    return get_model_for_tier(tier)
+
+
+def get_model_for_tier(tier: ModelTier) -> ModelConfig:
+    """Resolve a provider-agnostic tier into the current runtime model."""
     model_id = _resolve_model_id(tier)
     max_turns, timeout = _TIER_DEFAULTS[tier]
     return ModelConfig(model_id=model_id, max_turns=max_turns, timeout=timeout, tier=tier)
+
+
+def resolve_runtime_model_alias(model_id: str) -> ModelConfig | None:
+    """Map a canonical model id onto the equivalent tier for the current provider."""
+    tier = _MODEL_ALIAS_TO_TIER.get(str(model_id or "").strip())
+    if tier is None:
+        return None
+    return get_model_for_tier(tier)
 
 
 def list_models() -> dict[str, str]:

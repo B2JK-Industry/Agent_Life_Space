@@ -303,6 +303,33 @@ class TestJobsCommand:
         assert "pass" in result
         assert "1H" in result
 
+    async def test_jobs_detail_shows_error(self, handler, mock_agent):
+        mock_agent.get_product_job.return_value = {
+            "id": "job456",
+            "kind": "build",
+            "status": "failed",
+            "created_at": "2026-03-30T10:00:00",
+            "error": "Docker build failed: pytest exited with status 1",
+            "metadata": {},
+        }
+        result = await handler.handle("/jobs job456", user_id=1, chat_id=1)
+        assert "Job job456" in result
+        assert "Docker build failed" in result
+
+    async def test_jobs_detail_shows_codegen_error(self, handler, mock_agent):
+        mock_agent.get_product_job.return_value = {
+            "id": "job789",
+            "kind": "build",
+            "status": "failed",
+            "created_at": "2026-03-30T10:00:00",
+            "error": "Required acceptance criteria unmet",
+            "metadata": {"codegen_error": "Invalid authentication credentials"},
+        }
+        result = await handler.handle("/jobs job789", user_id=1, chat_id=1)
+        assert "Job job789" in result
+        assert "Codegen error" in result
+        assert "Invalid authentication credentials" in result
+
     async def test_jobs_not_found(self, handler, mock_agent):
         mock_agent.get_product_job.return_value = None
         result = await handler.handle("/jobs nonexistent", user_id=1, chat_id=1)
@@ -357,3 +384,85 @@ class TestHelpIncludes:
         assert "/report" in result
         assert "/jobs" in result
         assert "/deliver" in result
+
+
+class TestTypingIndicatorCleanup:
+    """The typing indicator task spawned per message must not leak.
+
+    Regression: cancel() alone wasn't enough — the loop needed an explicit
+    CancelledError handler and the finally block needed to await the task,
+    otherwise long-running chats accumulated dangling tasks and noisy
+    "Task was destroyed but it is pending!" warnings.
+    """
+
+    async def test_typing_task_does_not_leak_after_handle(self, mock_agent):
+        import asyncio
+
+        bot = MagicMock()
+        bot._api_call = AsyncMock(return_value={"ok": True})
+        # Use a brain that returns instantly so handle() exits fast.
+        brain = MagicMock()
+        brain.process = AsyncMock(return_value="hello back")
+
+        handler = TelegramHandler(agent=mock_agent, bot=bot, brain=brain)
+
+        before = {t for t in asyncio.all_tasks() if not t.done()}
+        result = await handler.handle("hello agent", user_id=1, chat_id=42)
+        # Give the loop one tick so cancellation propagates.
+        await asyncio.sleep(0)
+        after = {t for t in asyncio.all_tasks() if not t.done()}
+
+        leaked = after - before
+        assert not leaked, f"handle() leaked {len(leaked)} task(s): {leaked}"
+        assert result == "hello back"
+
+    async def test_typing_task_cleaned_up_when_brain_raises(self, mock_agent):
+        import asyncio
+
+        bot = MagicMock()
+        bot._api_call = AsyncMock(return_value={"ok": True})
+        brain = MagicMock()
+        brain.process = AsyncMock(side_effect=RuntimeError("boom"))
+
+        handler = TelegramHandler(agent=mock_agent, bot=bot, brain=brain)
+
+        before = {t for t in asyncio.all_tasks() if not t.done()}
+        with pytest.raises(RuntimeError):
+            await handler.handle("hello agent", user_id=1, chat_id=42)
+        await asyncio.sleep(0)
+        after = {t for t in asyncio.all_tasks() if not t.done()}
+
+        leaked = after - before
+        assert not leaked, (
+            f"handle() leaked {len(leaked)} task(s) after exception: {leaked}"
+        )
+
+
+class TestAgentCronStop:
+    """AgentCron.stop() must await cancelled tasks, not just call cancel()."""
+
+    async def test_stop_awaits_cancelled_tasks(self):
+        from agent.core.cron import AgentCron
+
+        agent = MagicMock()
+        agent.watchdog = MagicMock()
+        agent.memory = MagicMock()
+        agent.tasks = MagicMock()
+
+        cron = AgentCron(agent, telegram_bot=None, owner_chat_id=0)
+        # Start the cron — it spawns ~11 background loops, all of which
+        # spend their time inside asyncio.sleep().
+        await cron.start()
+        assert cron._tasks, "cron.start() should spawn background tasks"
+        captured = list(cron._tasks)
+
+        await cron.stop()
+
+        # After stop() returns, every task must be done (either cancelled
+        # or completed). The previous implementation would only set the
+        # cancel flag and return immediately, leaving tasks pending.
+        for t in captured:
+            assert t.done(), f"cron task {t!r} still pending after stop()"
+        assert cron._tasks == [], "cron should clear its task list on stop()"
+        # And the running flag should be back to False.
+        assert cron._running is False

@@ -38,7 +38,27 @@ Odporúčané pre self-host:
 - `/memory [keyword]` — hľadaj v pamäti
 - `python -m agent --setup-doctor` — self-host config audit
 - `python -m agent --report` — operator inbox / settlement attention
+- `python -m agent --llm-runtime-status` — aktuálny runtime LLM attach/backend/provider stav
 - dashboard: `http://127.0.0.1:8420/dashboard?key=$AGENT_API_KEY`
+
+### Runtime LLM ovládanie
+Ak chceš dočasne odpojiť LLM, alebo prepnúť medzi `cli` a `api` bez editovania `.env`, použi runtime override. Stav sa ukladá do `AGENT_DATA_DIR/control/llm_runtime.json`.
+
+CLI:
+```bash
+python -m agent --llm-runtime-disable --llm-runtime-note "maintenance"
+python -m agent --llm-runtime-enable --llm-runtime-backend cli --llm-runtime-note "back to Claude CLI"
+python -m agent --llm-runtime-enable --llm-runtime-backend api --llm-runtime-provider anthropic
+python -m agent --llm-runtime-enable --llm-runtime-backend api --llm-runtime-provider openai
+python -m agent --llm-runtime-follow-env --llm-runtime-enable
+```
+
+API:
+- `GET /api/operator/llm`
+- `POST /api/operator/llm`
+
+Dashboard:
+- panel `LLM Runtime` na `/dashboard`
 
 ### Monitorovanie
 Agent loguje všetko cez `structlog`. Kľúčové log eventy:

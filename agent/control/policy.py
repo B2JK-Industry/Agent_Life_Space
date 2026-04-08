@@ -1766,22 +1766,25 @@ def evaluate_runtime_action(action: RuntimeActionRequest) -> RuntimePolicyDecisi
         policy_id = action.policy_overrides.get(
             "build_execution_policy_id", "workspace_local_mutation",
         )
-        policy = select_build_execution_policy(
+        # Distinct name from `policy` above (which is typed as
+        # ReviewExecutionPolicy in the previous branch) so mypy can
+        # narrow correctly.
+        build_policy = select_build_execution_policy(
             build_type=build_type,
             source=action.source or "manual",
             policy_id=policy_id,
         )
-        applied.append(f"build_execution:{policy.id}")
-        if not policy.allow_workspace_mutation:
-            blocking.append(f"build_execution:{policy.id}")
-        resolved = policy
+        applied.append(f"build_execution:{build_policy.id}")
+        if not build_policy.allow_workspace_mutation:
+            blocking.append(f"build_execution:{build_policy.id}")
+        resolved = build_policy
         metadata = {
-            "policy_id": policy.id,
-            "policy_label": policy.label,
-            "policy_description": policy.description,
-            "allow_workspace_mutation": policy.allow_workspace_mutation,
-            "workspace_required": policy.workspace_required,
-            "environment_profile_id": policy.environment_profile_id,
+            "policy_id": build_policy.id,
+            "policy_label": build_policy.label,
+            "policy_description": build_policy.description,
+            "allow_workspace_mutation": build_policy.allow_workspace_mutation,
+            "workspace_required": build_policy.workspace_required,
+            "environment_profile_id": build_policy.environment_profile_id,
         }
 
     elif action.action_type == "gateway_send":

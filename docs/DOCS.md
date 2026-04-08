@@ -38,6 +38,11 @@ python -m agent --status     # Stav
 python -m agent --health     # Zdravie
 python -m agent --report     # Operator report / inbox
 python -m agent --runtime-model   # Explicitný runtime model
+python -m agent --llm-runtime-status
+python -m agent --llm-runtime-disable --llm-runtime-note "maintenance"
+python -m agent --llm-runtime-enable --llm-runtime-backend cli
+python -m agent --llm-runtime-enable --llm-runtime-backend api --llm-runtime-provider anthropic
+python -m agent --llm-runtime-follow-env --llm-runtime-enable
 python -m agent --gateway-catalog
 python -m agent --gateway-catalog --gateway-provider obolos.tech --gateway-capability review_handoff_v1 --gateway-export-mode client_safe
 python -m agent --call-provider-api --provider-api-provider obolos.tech --provider-api-capability marketplace_catalog_v1

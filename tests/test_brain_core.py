@@ -146,7 +146,7 @@ class TestBrainMultiChannel:
         """Agent API messages get agent prompt (not user prompt)."""
         # This would need LLM call — just verify the message passes through
         msg = IncomingMessage(
-            text="kto si?", sender_id="bot1", sender_name="b2jk_bot",
+            text="kto si?", sender_id="bot1", sender_name="example_bot",
             channel_type="agent_api", chat_id="api_1",
         )
         result = await brain.process(msg)

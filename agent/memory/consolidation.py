@@ -62,7 +62,9 @@ def _get_pattern_extractors() -> dict[str, dict[str, Any]]:
         "uptime", "healthy", "module", "process", "pid", "service",
     ]
     if server_name and server_name not in ("server", "self-hosted server"):
-        # Add server name and its tokens (e.g., "b2jk-agentlifespace" → "b2jk", "agentlifespace")
+        # Split the configured server name into tokens so that any of its
+        # parts can also fire the system-trigger group, e.g. a hostname
+        # like "<org>-<role>" yields "<org>" and "<role>".
         system_triggers.append(server_name)
         for token in server_name.replace("-", " ").replace("_", " ").split():
             if len(token) > 2 and token not in system_triggers:
@@ -173,7 +175,7 @@ class MemoryConsolidation:
                         consolidated += 1
 
         # 2. Frequency analysis — čo sa opakuje?
-        tag_counts = Counter()
+        tag_counts: Counter[str] = Counter()
         for entry in episodic:
             for tag in entry.tags:
                 tag_counts[tag] += 1
@@ -327,17 +329,17 @@ class MemoryConsolidation:
             logger.info("memory_stale_detected", count=stale_count)
         return stale_count
 
-    async def extract_user_patterns(self) -> list[dict[str, str]]:
+    async def extract_user_patterns(self) -> list[dict[str, Any]]:
         """
-        Extrahuj vzory z interakcií s Danielom.
-        Čo sa opakovane pýta? Čo kritizuje? Čo chváli?
+        Extract patterns from owner interactions: recurring questions,
+        criticisms, praise.
         """
         user_msgs = await self._store.query(
             tags=["user_input"],
             limit=100,
         )
 
-        patterns = []
+        patterns: list[dict[str, Any]] = []
         criticism_keywords = ["nefunguje", "prečo", "zle", "chyba", "neodpovedá", "timeout"]
         praise_keywords = ["super", "výborne", "funguje", "dobre", "presne"]
 

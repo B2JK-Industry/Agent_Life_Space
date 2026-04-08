@@ -116,7 +116,7 @@ class Programmer:
 
     def _find_relevant_files(self, keywords: list[str]) -> list[str]:
         """Nájdi Python súbory relevantné pre dané kľúčové slová."""
-        results = []
+        results: list[str] = []
         agent_dir = self._root / "agent"
         if not agent_dir.exists():
             return results

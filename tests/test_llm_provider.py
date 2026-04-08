@@ -19,6 +19,7 @@ from agent.core.llm_provider import (
     clear_provider_cache,
     estimate_cost,
     get_provider,
+    is_authentication_error,
 )
 
 
@@ -67,6 +68,16 @@ class TestEstimateCost:
     def test_unknown_model_uses_default(self):
         cost = estimate_cost("unknown-model", 1000, 500)
         assert cost > 0
+
+
+class TestAuthenticationErrorDetection:
+    def test_detects_provider_auth_failures(self):
+        assert is_authentication_error("Invalid authentication credentials")
+        assert is_authentication_error("ANTHROPIC_API_KEY not set")
+        assert is_authentication_error("Failed to authenticate. API Error: 401")
+
+    def test_ignores_non_auth_errors(self):
+        assert not is_authentication_error("CLI timeout after 30s")
 
 
 class TestClaudeCliProvider:
@@ -200,4 +211,43 @@ class TestGetProvider:
         clear_provider_cache()
         p1 = get_provider(backend="api", provider="anthropic")
         p2 = get_provider(backend="api", provider="anthropic")
+        assert p1 is p2
+
+    def test_cache_distinguishes_different_base_url(self):
+        """Two get_provider() calls with different base_url kwargs MUST
+        return different instances. Otherwise switching between two
+        OpenAI-compatible endpoints (e.g. local vs remote) silently
+        keeps the first one."""
+        clear_provider_cache()
+        p_one = get_provider(
+            backend="api", provider="local", base_url="http://one.test"
+        )
+        p_two = get_provider(
+            backend="api", provider="local", base_url="http://two.test"
+        )
+        assert p_one is not p_two, (
+            "Provider cache returned the same instance for two different "
+            "base_url values — kwargs must be part of the cache key"
+        )
+
+    def test_cache_distinguishes_different_api_key(self):
+        """Different api_key kwargs must also produce different instances."""
+        clear_provider_cache()
+        p_one = get_provider(
+            backend="api", provider="anthropic", api_key="sk-one"
+        )
+        p_two = get_provider(
+            backend="api", provider="anthropic", api_key="sk-two"
+        )
+        assert p_one is not p_two
+
+    def test_cache_returns_same_instance_for_identical_kwargs(self):
+        """Sanity: same kwargs still produce the same cached instance."""
+        clear_provider_cache()
+        p1 = get_provider(
+            backend="api", provider="local", base_url="http://one.test"
+        )
+        p2 = get_provider(
+            backend="api", provider="local", base_url="http://one.test"
+        )
         assert p1 is p2

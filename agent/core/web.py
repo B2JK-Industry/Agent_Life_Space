@@ -153,7 +153,7 @@ class WebAccess:
             )
 
     async def fetch_json(
-        self, url: str, method: str = "GET", json_data: dict | None = None,
+        self, url: str, method: str = "GET", json_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Fetch JSON from API endpoint."""
         if not _check_rate_limit():

@@ -7,7 +7,7 @@ Normalizes bounded-context artifact storage into one control-plane surface.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from agent.control.models import (
     ArtifactKind,
@@ -222,4 +222,4 @@ class ArtifactQueryService:
         record = self._control_plane_state.get_retained_artifact(artifact_id)
         if record is None:
             return {}
-        return record.to_dict()
+        return cast("dict[str, Any]", record.to_dict())

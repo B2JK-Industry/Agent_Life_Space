@@ -37,6 +37,7 @@ class TestDashboardRendering:
         assert "api('telemetry')" in html
         assert "api('retention')" in html
         assert "api('margin')" in html
+        assert "api('llm')" in html
 
     def test_contains_auth_form(self):
         from agent.social.dashboard import render_dashboard_html
@@ -49,10 +50,49 @@ class TestDashboardRendering:
         html = render_dashboard_html()
         assert 'id="metrics"' in html
         assert 'id="jobs-table"' in html
+        assert 'id="llm-card"' in html
+
+    def test_contains_llm_runtime_controls(self):
+        from agent.social.dashboard import render_dashboard_html
+        html = render_dashboard_html()
+        assert "updateLlmRuntime" in html
+        assert "Attach CLI" in html
+        assert "Follow .env" in html
 
     def test_dashboard_version_exists(self):
         from agent.social.dashboard import _DASHBOARD_VERSION
         assert _DASHBOARD_VERSION
+
+    def test_dashboard_has_html_escape_helper(self):
+        """The rendered JS must define an esc() helper that escapes HTML
+        before interpolating untrusted values into innerHTML."""
+        from agent.social.dashboard import render_dashboard_html
+        html = render_dashboard_html()
+        assert "function esc(" in html
+        # Helper must use a text-node detour, not a naive regex.
+        assert "document.createTextNode" in html
+
+    def test_dashboard_llm_panel_escapes_user_fields(self):
+        """The LLM runtime panel must wrap data.note, data.updated_by and
+        warnings in esc() before pushing them into innerHTML, otherwise an
+        operator can store JS in the note field and trigger stored XSS."""
+        from agent.social.dashboard import render_dashboard_html
+        html = render_dashboard_html()
+        # Locate the renderLlm() function block.
+        start = html.index("function renderLlm(")
+        end = html.index("function renderRetention(")
+        block = html[start:end]
+        # Free-text user fields must be escaped.
+        assert "esc(data.note)" in block
+        assert "esc(data.updated_by)" in block
+        assert "esc(data.effective_backend)" in block
+        assert "esc(data.effective_provider)" in block
+        # Warnings come from a list[str] but still go through innerHTML.
+        assert "esc(warnings.join" in block
+        # Sanity: there must be NO raw ${data.note} or ${data.updated_by}
+        # interpolation in the panel.
+        assert "${data.note}" not in block
+        assert "${data.updated_by}" not in block
 
 
 # ─────────────────────────────────────────────

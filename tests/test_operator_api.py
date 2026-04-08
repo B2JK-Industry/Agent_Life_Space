@@ -49,7 +49,7 @@ class TestOperatorEndpointAuth:
 
     OPERATOR_PATHS = [
         "jobs", "report", "telemetry", "retention",
-        "margin", "workflows", "pipelines", "audit", "archive",
+        "margin", "workflows", "pipelines", "audit", "archive", "llm",
         "settlements",
     ]
 
@@ -178,6 +178,102 @@ class TestArchivalService:
         assert flat["nested.key2"] == "42"
         assert flat["simple"] == "value"
 
+
+# ─────────────────────────────────────────────
+# Dashboard auth — query string must NOT bypass auth
+# ─────────────────────────────────────────────
+
+class TestDashboardAuthBypass:
+    """Regression tests for the ?key=… query-string bypass."""
+
+    async def test_dashboard_query_key_does_not_grant_access(self):
+        """Hitting /dashboard?key=test-key-123 must NOT serve the
+        authenticated dashboard. The handler should return the login
+        page instead, because keys in the query string leak to logs,
+        history, and referrers."""
+        api = _make_api()
+        request = MagicMock()
+        request.query = {"key": "test-key-123"}  # the valid key, but in query
+        request.headers = {}  # no Authorization header
+        request.remote = "127.0.0.1"
+
+        response = await api._handle_dashboard(request)
+
+        # Login page is served (no INITIAL_KEY containing the secret).
+        body = response.text
+        assert "test-key-123" not in body, (
+            "Dashboard leaked the API key into the response body"
+        )
+        # The login page contains a key form input but NOT the full
+        # operator dashboard JS scaffolding (which contains llm-card etc).
+        assert "llm-card" not in body, (
+            "Dashboard handler served the full dashboard for a query-string key"
+        )
+
+    async def test_dashboard_authorization_header_grants_access(self):
+        """Sanity: a valid Authorization header still works."""
+        api = _make_api()
+        request = MagicMock()
+        request.query = {}
+        request.headers = {"Authorization": "Bearer test-key-123"}
+        request.remote = "127.0.0.1"
+
+        response = await api._handle_dashboard(request)
+        body = response.text
+        # Full dashboard contains the LLM card placeholder.
+        assert "llm-card" in body
+
+
+# ─────────────────────────────────────────────
+# /api/operator/llm — invalid JSON must return 400
+# ─────────────────────────────────────────────
+
+class TestOperatorLlmInvalidJson:
+
+    async def test_post_invalid_json_returns_400(self):
+        """POST with malformed JSON body must return HTTP 400, not a
+        silent no-op (which would let clients believe an update
+        succeeded when it didn't)."""
+        api = _make_api()
+        # Wire a minimal LLM runtime surface so we get past the
+        # "runtime unavailable" early-exit.
+        api._agent.get_llm_runtime_state = MagicMock(return_value={"enabled": True})
+        api._agent.update_llm_runtime_state = MagicMock(return_value={"enabled": True})
+
+        request = MagicMock()
+        request.method = "POST"
+        request.headers = {"Authorization": "Bearer test-key-123"}
+        request.remote = "127.0.0.1"
+
+        async def _bad_json():
+            raise ValueError("not valid json")
+        request.json = _bad_json
+
+        response = await api._handle_operator_llm(request)
+        assert response.status == 400
+        # Body should mention the contract failure.
+        body_text = response.text
+        assert "invalid_json_body" in body_text or "Invalid JSON" in body_text
+
+    async def test_post_non_dict_json_returns_400(self):
+        """POST with valid JSON that isn't an object (e.g. a list) must
+        also be a 400."""
+        api = _make_api()
+        api._agent.get_llm_runtime_state = MagicMock(return_value={"enabled": True})
+        api._agent.update_llm_runtime_state = MagicMock(return_value={"enabled": True})
+
+        request = MagicMock()
+        request.method = "POST"
+        request.headers = {"Authorization": "Bearer test-key-123"}
+        request.remote = "127.0.0.1"
+
+        async def _list_json():
+            return ["not", "a", "dict"]
+        request.json = _list_json
+
+        response = await api._handle_operator_llm(request)
+        assert response.status == 400
+
     def test_flatten_handles_none(self):
         from agent.control.archival import ArchivalService
         data = {"key": None, "val": "ok"}
@@ -222,6 +318,7 @@ def _mock_request(*, headers: dict | None = None, query: dict | None = None, mat
     req.headers = headers or {}
     req.query = query or {}
     req.match_info = match_info or {}
+    req.method = "GET"
     req.remote = "127.0.0.1"
     return req
 
@@ -484,6 +581,52 @@ class TestSettlementEndpoint:
         req = _mock_request(headers={"Authorization": "Bearer test-key-123"})
         resp = await api._handle_operator_settlements(req)
         assert resp.status == 200  # graceful empty response
+
+
+class TestLlmRuntimeEndpoint:
+
+    @pytest.mark.asyncio
+    async def test_llm_runtime_get_returns_state(self):
+        api = _make_api()
+        api._agent.get_llm_runtime_state.return_value = {"enabled": True, "effective_backend": "cli"}
+        req = _mock_request(headers={"Authorization": "Bearer test-key-123"})
+        req.method = "GET"
+
+        resp = await api._handle_operator_llm(req)
+
+        assert resp.status == 200
+        api._agent.get_llm_runtime_state.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_llm_runtime_post_updates_state(self):
+        api = _make_api()
+        api._agent.update_llm_runtime_state.return_value = {"enabled": False}
+        req = _mock_request(headers={"Authorization": "Bearer test-key-123"})
+        req.method = "POST"
+        req.json = AsyncMock(return_value={"enabled": False, "note": "maintenance"})
+
+        resp = await api._handle_operator_llm(req)
+
+        assert resp.status == 200
+        api._agent.update_llm_runtime_state.assert_called_once_with(
+            enabled=False,
+            backend=None,
+            provider=None,
+            follow_env=False,
+            note="maintenance",
+            updated_by="api.operator",
+        )
+
+    @pytest.mark.asyncio
+    async def test_llm_runtime_rejects_invalid_enabled_type(self):
+        api = _make_api()
+        req = _mock_request(headers={"Authorization": "Bearer test-key-123"})
+        req.method = "POST"
+        req.json = AsyncMock(return_value={"enabled": "false"})
+
+        resp = await api._handle_operator_llm(req)
+
+        assert resp.status == 400
 
 
 # ─────────────────────────────────────────────
