@@ -56,6 +56,11 @@ class SecretsManager:
         self._salt_file = self._vault_dir / "salt.bin"
         self._audit_log: list[dict[str, str]] = []
         self._max_audit_entries = 1000
+        # _current_salt is the salt used to derive _fernet. After init
+        # it always reflects the salt that is (or will be) embedded in
+        # the on-disk v2 header, so _save() can rebuild the file
+        # without re-reading anything.
+        self._current_salt: bytes = b""
 
         # Derive encryption key
         if master_key is None:
@@ -77,194 +82,261 @@ class SecretsManager:
             )
             self._fernet = None
         else:
-            # Load existing per-vault salt, or generate a fresh one for
-            # new installs. Existing vaults that predate the random-salt
-            # change keep working via the legacy static salt fallback.
-            salt, used_legacy_fallback = self._load_or_create_salt()
-            self._fernet = self._derive_fernet(master_key, salt)
-            # If we fell back to the legacy static salt for an existing
-            # vault, attempt a one-shot migration to a per-vault random
-            # salt. We only proceed if decryption with the legacy salt
-            # actually succeeds — otherwise the master key is wrong and
-            # we must NOT touch secrets.enc.
-            if used_legacy_fallback:
-                self._migrate_legacy_salt(master_key)
+            self._fernet = self._open_or_init_vault(master_key)
 
         # In-memory decrypted cache (cleared on close)
         self._cache: dict[str, str] = {}
 
-    # ── Salt management ────────────────────────────────────────────
-    # We accept three states:
-    #   1. Brand-new install: no salt.bin AND no secrets.enc → generate
-    #      a fresh random salt and persist it.
-    #   2. Pre-random-salt install: no salt.bin but secrets.enc EXISTS
-    #      → fall back to the legacy static salt so the existing vault
-    #      can still be decrypted. Operators are expected to rotate by
-    #      re-encrypting (out of band) which then writes salt.bin.
-    #   3. Post-random-salt install: salt.bin exists → use it.
+    # ── Vault on-disk format ───────────────────────────────────────
+    #
+    # v2 (current): single file ``secrets.enc`` whose first bytes are:
+    #
+    #     b"ALSv2\n"   (6 bytes magic)
+    #     salt         (16 bytes random per-vault)
+    #     fernet_token (rest of the file — Fernet/AES-128-CBC + HMAC)
+    #
+    # v1 (legacy):   ``secrets.enc`` is a raw fernet token with no
+    #                header. The salt lives either in a separate
+    #                ``salt.bin`` (post-1.34 random salt era) or is
+    #                ``_LEGACY_SALT`` (pre-1.34 static salt era).
+    #
+    # The v2 format eliminates the multi-file crash window: every
+    # write is a single atomic ``os.replace`` of ``secrets.enc.tmp``,
+    # so the salt and the encrypted blob can never get out of sync.
+    # ``salt.bin`` becomes obsolete — we delete it after a successful
+    # v1→v2 migration.
 
+    _V2_HEADER: ClassVar[bytes] = b"ALSv2\n"
+    _V2_SALT_LEN: ClassVar[int] = 16
     _LEGACY_SALT: ClassVar[bytes] = b"agent-life-space-vault-salt-v1"
 
-    def _load_or_create_salt(self) -> tuple[bytes, bool]:
-        """Return ``(salt, used_legacy_fallback)``.
+    def _open_or_init_vault(self, master_key: str) -> Fernet:
+        """Open the existing vault or initialise a fresh one.
 
-        ``used_legacy_fallback`` is True iff we returned ``_LEGACY_SALT``
-        because an existing pre-rotation vault has no ``salt.bin``. The
-        caller uses that flag to trigger the one-shot migration that
-        re-encrypts the vault with a per-vault random salt.
+        After this returns, ``self._current_salt`` holds the salt that
+        is (or will be) embedded in the v2 header on disk, and the
+        returned Fernet is derived from it. The on-disk format is
+        guaranteed to be v2 in two cases:
+
+            * fresh install (we wrote the empty v2 file)
+            * legacy install where the master key was correct (we
+              migrated atomically — see ``_migrate_to_v2``)
+
+        If the vault is legacy AND the master key is wrong, we set up
+        a Fernet anyway so write callers can fail-fast on the next
+        ``_load()``. We do NOT touch ``secrets.enc`` in that case —
+        the operator can fix ``.env`` and recover.
         """
+        # Brand-new vault: nothing on disk, generate a fresh salt and
+        # persist an empty v2 file so the first write does not need a
+        # special path.
+        if not self._secrets_file.exists():
+            new_salt = secrets_module.token_bytes(self._V2_SALT_LEN)
+            self._current_salt = new_salt
+            fernet = self._derive_fernet(master_key, new_salt)
+            # Don't write an empty v2 file — set_secret() will create
+            # it on first write. This avoids touching disk when the
+            # operator is just probing the vault.
+            self._cleanup_legacy_salt_file()
+            return fernet
+
+        try:
+            raw = self._secrets_file.read_bytes()
+        except OSError as e:
+            logger.error("vault_read_error", error=str(e))
+            # Treat as fresh install — caller will get errors on
+            # subsequent reads/writes via the normal _load path.
+            new_salt = secrets_module.token_bytes(self._V2_SALT_LEN)
+            self._current_salt = new_salt
+            return self._derive_fernet(master_key, new_salt)
+
+        # v2 path: header present → extract embedded salt.
+        if raw.startswith(self._V2_HEADER):
+            header_len = len(self._V2_HEADER)
+            if len(raw) < header_len + self._V2_SALT_LEN:
+                logger.error(
+                    "vault_v2_truncated",
+                    bytes=len(raw),
+                    hint="secrets.enc is shorter than the v2 header — refusing to touch it",
+                )
+                # Use a synthetic salt so write paths fail-fast.
+                self._current_salt = secrets_module.token_bytes(self._V2_SALT_LEN)
+                return self._derive_fernet(master_key, self._current_salt)
+            salt = raw[header_len:header_len + self._V2_SALT_LEN]
+            self._current_salt = salt
+            self._cleanup_legacy_salt_file()
+            return self._derive_fernet(master_key, salt)
+
+        # v1 path: no header. Locate the salt and try to decrypt.
+        legacy_salt = self._locate_legacy_salt()
+        legacy_fernet = self._derive_fernet(master_key, legacy_salt)
+        try:
+            plaintext = legacy_fernet.decrypt(raw)
+        except InvalidToken:
+            # Wrong master key. Set _current_salt so subsequent reads
+            # can still try the same legacy fernet (and the read path
+            # will surface a clean VaultDecryptionError); critically,
+            # we do NOT touch the on-disk file in this branch.
+            logger.error(
+                "vault_legacy_decrypt_failed",
+                hint="Wrong master key — leaving legacy secrets.enc untouched",
+            )
+            self._current_salt = legacy_salt
+            return legacy_fernet
+        except Exception as e:  # noqa: BLE001 - last-resort safety
+            logger.error("vault_legacy_decrypt_unexpected_error", error=str(e))
+            self._current_salt = legacy_salt
+            return legacy_fernet
+
+        # Successful legacy decrypt → migrate to v2 atomically.
+        return self._migrate_to_v2(master_key, plaintext)
+
+    def _locate_legacy_salt(self) -> bytes:
+        """Pick the salt for a v1 vault: prefer ``salt.bin`` (post-1.34
+        installs), fall back to the static legacy salt (pre-1.34)."""
         if self._salt_file.exists():
             try:
                 data = self._salt_file.read_bytes()
-                if len(data) >= 16:
-                    return data, False
+                if len(data) >= self._V2_SALT_LEN:
+                    return data
                 logger.warning(
                     "vault_salt_too_short",
                     bytes=len(data),
-                    hint="Regenerating salt — existing secrets cannot be decrypted",
+                    hint="Falling back to legacy static salt",
                 )
             except OSError as e:
                 logger.warning("vault_salt_read_error", error=str(e))
-                # Fall through to legacy/regen path
+        return self._LEGACY_SALT
 
-        if self._secrets_file.exists():
-            # Existing vault from pre-salt-rotation era. Return the
-            # legacy static salt so the caller can decrypt; the caller
-            # is responsible for migrating to a random salt afterwards.
-            return self._LEGACY_SALT, True
+    def _migrate_to_v2(self, master_key: str, plaintext: bytes) -> Fernet:
+        """Re-encrypt the legacy plaintext into v2 format.
 
-        # Brand-new vault: generate a strong random salt and persist it.
-        salt = secrets_module.token_bytes(16)
-        self._persist_salt(salt)
-        return salt, False
+        Single-file atomic operation:
 
-    def _persist_salt(self, salt: bytes) -> None:
-        """Write salt.bin and chmod 600. Logs (but does not raise) on failure."""
-        try:
-            self._salt_file.write_bytes(salt)
-            try:
-                self._salt_file.chmod(0o600)
-            except OSError:
-                # chmod failures are non-fatal on filesystems that
-                # ignore POSIX modes (e.g. some FUSE/Windows mounts).
-                pass
-        except OSError as e:
-            logger.warning(
-                "vault_salt_persist_failed",
-                error=str(e),
-                hint="Falling back to in-memory salt; vault may be unrecoverable on restart",
-            )
+            1. Generate a fresh random salt.
+            2. Derive a fresh Fernet from (master_key, salt).
+            3. Build the v2 blob: header + salt + fernet.encrypt(plaintext).
+            4. Write to ``secrets.enc.tmp``.
+            5. fsync the temp file.
+            6. ``os.replace`` the temp file over ``secrets.enc``.
+            7. fsync the parent directory.
+            8. Delete ``salt.bin`` (best effort) — obsolete after v2.
 
-    def _migrate_legacy_salt(self, master_key: str) -> None:
-        """Re-encrypt a legacy vault with a fresh per-vault random salt.
-
-        Only runs when ``salt.bin`` is missing AND ``secrets.enc`` exists.
-        Steps:
-            1. Decrypt the existing vault with the legacy-salt fernet.
-               If decryption fails (wrong key, corrupt file) we ABORT
-               the migration and leave secrets.enc untouched.
-            2. Generate a 16-byte random salt and derive a new fernet.
-            3. Re-encrypt the secrets payload with the new fernet.
-            4. Persist salt.bin first, then secrets.enc. If salt.bin
-               cannot be written, we abort before touching secrets.enc
-               so the operator's data stays decryptable on next boot.
+        If any of steps 4-8 fails, the legacy ``secrets.enc`` is still
+        intact because we never overwrite it directly. We log the
+        error and return the *legacy* Fernet so the agent can keep
+        running (read-only) until the operator investigates.
         """
-        if self._fernet is None:
-            return
-        if not self._secrets_file.exists():
-            return
+        new_salt = secrets_module.token_bytes(self._V2_SALT_LEN)
+        new_fernet = self._derive_fernet(master_key, new_salt)
         try:
-            encrypted = self._secrets_file.read_bytes()
-            decrypted = self._fernet.decrypt(encrypted)
-        except InvalidToken:
-            logger.warning(
-                "vault_legacy_salt_migration_skipped",
-                reason="wrong_master_key",
-                hint="Existing vault could not be decrypted with the legacy salt; not migrating.",
+            token = new_fernet.encrypt(plaintext)
+        except Exception as e:  # noqa: BLE001
+            logger.error("vault_v2_migration_encrypt_failed", error=str(e))
+            self._current_salt = self._locate_legacy_salt()
+            return self._derive_fernet(master_key, self._current_salt)
+
+        v2_blob = self._V2_HEADER + new_salt + token
+        try:
+            self._atomic_write(self._secrets_file, v2_blob)
+        except OSError as e:
+            logger.error(
+                "vault_v2_migration_write_failed",
+                error=str(e),
+                hint="Legacy secrets.enc is untouched; agent continues with legacy fernet",
             )
-            return
-        except OSError as e:
-            logger.warning("vault_legacy_salt_migration_skipped", error=str(e))
-            return
+            self._current_salt = self._locate_legacy_salt()
+            return self._derive_fernet(master_key, self._current_salt)
 
-        try:
-            import orjson
-            payload = orjson.loads(decrypted)
-        except Exception as e:
-            logger.warning("vault_legacy_salt_migration_skipped", parse_error=str(e))
-            return
-        if not isinstance(payload, dict):
-            logger.warning(
-                "vault_legacy_salt_migration_skipped",
-                reason="payload_not_dict",
-            )
-            return
-
-        new_salt = secrets_module.token_bytes(16)
-        try:
-            new_fernet = self._derive_fernet(master_key, new_salt)
-        except Exception as e:
-            logger.warning("vault_legacy_salt_migration_failed", error=str(e))
-            return
-
-        # Persist salt FIRST so a crash between the two writes leaves
-        # the operator with a salt that matches the still-legacy
-        # secrets.enc — which is wrong. To avoid that, write the new
-        # encrypted blob to a temp file, then atomically swap, and only
-        # then write salt.bin. Order: secrets.enc.tmp → salt.bin → swap.
-        try:
-            new_blob = new_fernet.encrypt(orjson.dumps(payload))
-        except Exception as e:
-            logger.warning("vault_legacy_salt_migration_failed", error=str(e))
-            return
-
-        tmp_path = self._secrets_file.with_suffix(self._secrets_file.suffix + ".migrate")
-        try:
-            tmp_path.write_bytes(new_blob)
-        except OSError as e:
-            logger.warning("vault_legacy_salt_migration_failed", error=str(e))
-            return
-
-        # Persist the new salt next. If this fails the temp file is
-        # discarded and the legacy vault stays intact.
-        try:
-            self._salt_file.write_bytes(new_salt)
-            try:
-                self._salt_file.chmod(0o600)
-            except OSError:
-                pass
-        except OSError as e:
-            logger.warning("vault_legacy_salt_migration_failed", error=str(e))
-            try:
-                tmp_path.unlink()
-            except OSError:
-                pass
-            return
-
-        # Atomic swap of the encrypted blob.
-        try:
-            os.replace(tmp_path, self._secrets_file)
-        except OSError as e:
-            # Roll back the salt file so we don't end up with a
-            # mismatched (new salt, old blob) pair.
-            logger.error("vault_legacy_salt_migration_failed", error=str(e))
-            try:
-                self._salt_file.unlink()
-            except OSError:
-                pass
-            try:
-                tmp_path.unlink()
-            except OSError:
-                pass
-            return
-
-        # Switch the live fernet to the new key so subsequent
-        # reads/writes use the migrated salt.
-        self._fernet = new_fernet
+        # On-disk format is now v2. Drop the obsolete salt.bin so the
+        # next boot does not see a confusing mix of v1 and v2 markers.
+        self._cleanup_legacy_salt_file()
+        self._current_salt = new_salt
         logger.info(
-            "vault_legacy_salt_migrated",
-            secrets_count=len(payload),
+            "vault_migrated_to_v2_single_file_format",
+            hint="Vault re-encrypted with random salt embedded in secrets.enc header.",
         )
+        return new_fernet
+
+    def _cleanup_legacy_salt_file(self) -> None:
+        """Best-effort removal of ``salt.bin`` after a v2 migration.
+
+        We do this so future boots don't see a stale salt.bin and try
+        to interpret it. Failure is non-fatal — the v2 reader does not
+        consult salt.bin at all.
+        """
+        if not self._salt_file.exists():
+            return
+        try:
+            self._salt_file.unlink()
+            logger.info("vault_legacy_salt_file_removed")
+        except OSError as e:
+            logger.warning("vault_legacy_salt_file_cleanup_failed", error=str(e))
+
+    def _atomic_write(self, target: Path, data: bytes) -> None:
+        """Write ``data`` to ``target`` atomically.
+
+        Steps:
+            1. Open ``target.tmp`` with O_WRONLY|O_CREAT|O_TRUNC mode 0600.
+            2. ``os.write`` the data.
+            3. ``os.fsync`` the file descriptor (durability of contents).
+            4. Close.
+            5. ``os.replace(tmp, target)`` — POSIX atomic rename.
+            6. Best-effort fsync of the parent directory so the rename
+               itself is durable across power loss.
+
+        On any failure we attempt to remove the temp file and re-raise.
+        """
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        # Ensure no stale temp from a prior crash.
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        fd = os.open(tmp, flags, 0o600)
+        try:
+            written = 0
+            view = memoryview(data)
+            while written < len(view):
+                n = os.write(fd, view[written:])
+                if n <= 0:
+                    msg = "os.write returned 0 — disk full?"
+                    raise OSError(msg)
+                written += n
+            os.fsync(fd)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
+        else:
+            os.close(fd)
+        try:
+            os.replace(tmp, target)
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
+        # Best-effort directory fsync to make the rename durable on
+        # POSIX. On filesystems / platforms where this is not
+        # supported (Windows, some FUSE) the call is a no-op.
+        try:
+            dir_fd = os.open(target.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
 
     @property
     def is_ready(self) -> bool:
@@ -298,6 +370,11 @@ class SecretsManager:
         (set/delete) also tolerate it because the first write will
         create the file.
 
+        Format detection: a v2 header (``ALSv2\\n``) means strip the
+        header + salt before passing the rest to Fernet. Anything else
+        is treated as legacy v1 — the entire file goes to Fernet.
+        Both branches share the same fernet object set up at __init__.
+
         On *decryption* failure (wrong master key, corrupt blob) we
         raise ``VaultDecryptionError`` regardless of caller. Returning
         ``{}`` here was the bug Codex flagged: a subsequent ``_save``
@@ -319,9 +396,13 @@ class SecretsManager:
             raise VaultDecryptionError(msg)
 
         try:
-            encrypted = self._secrets_file.read_bytes()
+            raw = self._secrets_file.read_bytes()
+            if raw.startswith(self._V2_HEADER):
+                blob = raw[len(self._V2_HEADER) + self._V2_SALT_LEN:]
+            else:
+                blob = raw
             import orjson
-            decrypted = self._fernet.decrypt(encrypted)
+            decrypted = self._fernet.decrypt(blob)
             return cast("dict[str, str]", orjson.loads(decrypted))
         except InvalidToken as e:
             logger.error("vault_decryption_failed", reason="Wrong master key")
@@ -348,15 +429,27 @@ class SecretsManager:
             return {}
 
     def _save(self, secrets: dict[str, str]) -> None:
-        """Encrypt and save secrets to file."""
+        """Encrypt and atomically save secrets in v2 format.
+
+        Format: ``ALSv2\\n`` magic + 16-byte salt + Fernet token.
+        Written via ``_atomic_write`` (temp file + fsync + os.replace),
+        so a crash mid-write leaves either the previous good blob or
+        the new good blob — never a partial / mismatched state.
+        """
         if self._fernet is None:
             logger.error("vault_cannot_encrypt", reason="No master key")
             return
+        if not self._current_salt:
+            # Should never happen — _open_or_init_vault always sets it.
+            # Generate one as a last resort so we don't write a
+            # malformed v2 file.
+            self._current_salt = secrets_module.token_bytes(self._V2_SALT_LEN)
 
         import orjson
-        data = orjson.dumps(secrets)
-        encrypted = self._fernet.encrypt(data)
-        self._secrets_file.write_bytes(encrypted)
+        plaintext = orjson.dumps(secrets)
+        token = self._fernet.encrypt(plaintext)
+        v2_blob = self._V2_HEADER + self._current_salt + token
+        self._atomic_write(self._secrets_file, v2_blob)
 
     def set_secret(self, name: str, value: str) -> None:
         """Store a secret securely."""

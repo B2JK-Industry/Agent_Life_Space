@@ -151,51 +151,71 @@ class TestKeyGeneration:
         assert len(key) > 20
 
 
-class TestVaultSaltRotation:
-    """A fresh vault must use a per-vault random salt, not the legacy
-    static salt. Pre-existing vaults must keep working via the legacy
-    fallback."""
+class TestVaultV2Format:
+    """The on-disk format is v2 single-file: ``ALSv2\\n`` magic + 16-byte
+    salt + Fernet token. There is no separate salt.bin — every write is
+    a single atomic os.replace, so the salt and the encrypted blob can
+    never get out of sync."""
 
-    def test_new_vault_persists_random_salt(self, tmp_path):
+    def test_new_vault_writes_v2_header_only_after_first_write(self, tmp_path):
+        """Opening an empty vault does not touch disk; the file is
+        only created on the first set_secret call, in v2 format."""
         SecretsManager(vault_dir=str(tmp_path), master_key="testkey")
-        salt_file = tmp_path / "salt.bin"
-        assert salt_file.exists(), "fresh vault should create salt.bin"
-        salt_bytes = salt_file.read_bytes()
-        assert len(salt_bytes) >= 16, "salt should be at least 16 bytes"
-        # And the salt MUST NOT be the legacy static value.
-        assert salt_bytes != SecretsManager._LEGACY_SALT
+        assert not (tmp_path / "secrets.enc").exists()
+        assert not (tmp_path / "salt.bin").exists()
 
-    def test_two_fresh_vaults_have_different_salts(self, tmp_path):
-        d1 = tmp_path / "v1"
-        d2 = tmp_path / "v2"
+    def test_first_write_creates_v2_file_with_header(self, tmp_path):
+        mgr = SecretsManager(vault_dir=str(tmp_path), master_key="testkey")
+        mgr.set_secret("K", "v")
+        raw = (tmp_path / "secrets.enc").read_bytes()
+        assert raw.startswith(b"ALSv2\n")
+        # No legacy salt.bin sidecar.
+        assert not (tmp_path / "salt.bin").exists()
+
+    def test_v2_file_embeds_random_salt_in_header(self, tmp_path):
+        mgr = SecretsManager(vault_dir=str(tmp_path), master_key="testkey")
+        mgr.set_secret("K", "v")
+        raw = (tmp_path / "secrets.enc").read_bytes()
+        header_len = len(b"ALSv2\n")
+        salt = raw[header_len:header_len + 16]
+        assert len(salt) == 16
+        assert salt != SecretsManager._LEGACY_SALT
+
+    def test_two_fresh_vaults_have_different_embedded_salts(self, tmp_path):
+        d1 = tmp_path / "vault1"
+        d2 = tmp_path / "vault2"
         d1.mkdir()
         d2.mkdir()
         mgr1 = SecretsManager(vault_dir=str(d1), master_key="samekey")
         mgr2 = SecretsManager(vault_dir=str(d2), master_key="samekey")
-        salt1 = (d1 / "salt.bin").read_bytes()
-        salt2 = (d2 / "salt.bin").read_bytes()
-        assert salt1 != salt2, "two fresh vaults must have independent salts"
-        # And consequently the same secret encrypts to different bytes.
         mgr1.set_secret("API_KEY", "shared-value")
         mgr2.set_secret("API_KEY", "shared-value")
         bytes1 = (d1 / "secrets.enc").read_bytes()
         bytes2 = (d2 / "secrets.enc").read_bytes()
+        # Both have v2 header but different embedded salts → different bytes.
+        header_len = len(b"ALSv2\n")
+        salt1 = bytes1[header_len:header_len + 16]
+        salt2 = bytes2[header_len:header_len + 16]
+        assert salt1 != salt2
         assert bytes1 != bytes2
 
-    def test_legacy_vault_without_salt_file_keeps_working(self, tmp_path):
-        """A vault that was created before the random-salt change has
-        only secrets.enc and no salt.bin. The new code must fall back
-        to the legacy static salt so it can still decrypt."""
-        # Bootstrap a legacy vault by writing secrets first, then
-        # deleting salt.bin (simulating a pre-rotation install).
-        mgr = SecretsManager(vault_dir=str(tmp_path), master_key="legacy-key")
-        mgr.set_secret("LEGACY", "value-1")
-        # Wipe the per-vault salt and replace with the legacy fixture by
-        # encrypting with the legacy salt directly.
-        (tmp_path / "salt.bin").unlink()
-        # Re-bootstrap with the same key so encryption uses legacy salt.
+    def test_v2_writes_use_atomic_temp_replace(self, tmp_path):
+        """No leftover .tmp file after a normal write."""
+        mgr = SecretsManager(vault_dir=str(tmp_path), master_key="testkey")
+        mgr.set_secret("K", "v")
+        assert not (tmp_path / "secrets.enc.tmp").exists()
+
+
+class TestLegacyV1Compat:
+    """Vaults created before the v2 single-file format must still
+    decrypt correctly on first open, and migrate to v2 atomically."""
+
+    def _bootstrap_v1_static_salt(self, tmp_path, payload, master_key="legacy-key"):
+        """Write a true pre-1.34 vault: secrets.enc encrypted with the
+        static legacy salt, no salt.bin sidecar."""
         import base64
 
+        import orjson
         from cryptography.fernet import Fernet
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -205,91 +225,147 @@ class TestVaultSaltRotation:
             salt=SecretsManager._LEGACY_SALT,
             iterations=480000,
         )
-        legacy_key = base64.urlsafe_b64encode(kdf.derive(b"legacy-key"))
-        legacy_fernet = Fernet(legacy_key)
-        import orjson
-        legacy_payload = legacy_fernet.encrypt(orjson.dumps({"LEGACY": "value-1"}))
-        (tmp_path / "secrets.enc").write_bytes(legacy_payload)
+        fernet = Fernet(base64.urlsafe_b64encode(kdf.derive(master_key.encode())))
+        (tmp_path / "secrets.enc").write_bytes(fernet.encrypt(orjson.dumps(payload)))
 
-        # Now open the vault again — no salt.bin, but secrets.enc exists.
-        mgr2 = SecretsManager(vault_dir=str(tmp_path), master_key="legacy-key")
-        assert mgr2.get_secret("LEGACY") == "value-1"
-
-
-class TestLegacyVaultSaltMigration:
-    """Regression: opening a legacy vault with the correct master key
-    must MIGRATE it to a per-vault random salt, not just keep falling
-    back to the static legacy salt forever."""
-
-    def _bootstrap_legacy_vault(self, tmp_path, secrets_dict):
-        """Write a true pre-rotation vault: secrets.enc encrypted with
-        the legacy static salt, no salt.bin file present."""
+    def _bootstrap_v1_random_salt(self, tmp_path, payload, master_key="legacy-key"):
+        """Write a 1.34-era vault: secrets.enc encrypted with a random
+        salt that lives in salt.bin (no v2 header)."""
         import base64
+        import secrets as sm
 
         import orjson
         from cryptography.fernet import Fernet
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-
+        salt = sm.token_bytes(16)
+        (tmp_path / "salt.bin").write_bytes(salt)
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=SecretsManager._LEGACY_SALT,
+            salt=salt,
             iterations=480000,
         )
-        key = base64.urlsafe_b64encode(kdf.derive(b"legacy-key"))
-        fernet = Fernet(key)
-        blob = fernet.encrypt(orjson.dumps(secrets_dict))
-        (tmp_path / "secrets.enc").write_bytes(blob)
-        assert not (tmp_path / "salt.bin").exists()
+        fernet = Fernet(base64.urlsafe_b64encode(kdf.derive(master_key.encode())))
+        (tmp_path / "secrets.enc").write_bytes(fernet.encrypt(orjson.dumps(payload)))
 
-    def test_correct_key_migrates_to_random_salt(self, tmp_path):
-        self._bootstrap_legacy_vault(tmp_path, {"OLD_KEY": "old_value"})
-        blob_before = (tmp_path / "secrets.enc").read_bytes()
+    def test_v1_static_salt_vault_reads_and_migrates(self, tmp_path):
+        self._bootstrap_v1_static_salt(tmp_path, {"OLD": "old-value"})
+
+        # Pre-condition: file is NOT v2.
+        assert not (tmp_path / "secrets.enc").read_bytes().startswith(b"ALSv2\n")
 
         mgr = SecretsManager(vault_dir=str(tmp_path), master_key="legacy-key")
 
-        # salt.bin must now exist with a random (non-legacy) salt.
-        salt_path = tmp_path / "salt.bin"
-        assert salt_path.exists(), "migration must persist salt.bin"
-        salt_bytes = salt_path.read_bytes()
-        assert len(salt_bytes) >= 16
-        assert salt_bytes != SecretsManager._LEGACY_SALT
+        # Post-condition: file IS v2 after the open call.
+        assert (tmp_path / "secrets.enc").read_bytes().startswith(b"ALSv2\n")
+        assert mgr.get_secret("OLD") == "old-value"
 
-        # secrets.enc must have been re-encrypted with the new salt.
-        blob_after = (tmp_path / "secrets.enc").read_bytes()
-        assert blob_after != blob_before, "vault must be re-encrypted under new salt"
+    def test_v1_random_salt_vault_reads_and_migrates_drops_salt_file(self, tmp_path):
+        self._bootstrap_v1_random_salt(tmp_path, {"KEY": "val"})
+        assert (tmp_path / "salt.bin").exists()
 
-        # And the secret remains readable on this instance and after reopen.
-        assert mgr.get_secret("OLD_KEY") == "old_value"
-        mgr2 = SecretsManager(vault_dir=str(tmp_path), master_key="legacy-key")
-        assert mgr2.get_secret("OLD_KEY") == "old_value"
+        mgr = SecretsManager(vault_dir=str(tmp_path), master_key="legacy-key")
 
-    def test_wrong_key_does_not_migrate(self, tmp_path):
-        """If the master key is wrong, decryption fails and we MUST NOT
-        touch secrets.enc or write salt.bin — otherwise the next boot
-        with the correct key would be unrecoverable."""
-        self._bootstrap_legacy_vault(tmp_path, {"OLD_KEY": "old_value"})
-        blob_before = (tmp_path / "secrets.enc").read_bytes()
-
-        SecretsManager(vault_dir=str(tmp_path), master_key="WRONG-KEY")
-
+        assert (tmp_path / "secrets.enc").read_bytes().startswith(b"ALSv2\n")
         assert not (tmp_path / "salt.bin").exists(), \
-            "wrong key must not produce a salt.bin"
-        assert (tmp_path / "secrets.enc").read_bytes() == blob_before, \
-            "wrong key must not touch the encrypted blob"
+            "salt.bin must be removed after v1→v2 migration"
+        assert mgr.get_secret("KEY") == "val"
+
+    def test_v1_wrong_key_does_not_touch_file(self, tmp_path):
+        """Opening a legacy vault with the wrong key MUST NOT migrate
+        or otherwise modify secrets.enc — that would silently destroy
+        recoverable data."""
+        self._bootstrap_v1_static_salt(tmp_path, {"KEEP": "important"})
+        blob_before = (tmp_path / "secrets.enc").read_bytes()
+
+        SecretsManager(vault_dir=str(tmp_path), master_key="WRONG")
+
+        assert (tmp_path / "secrets.enc").read_bytes() == blob_before
+        # Still legacy format — no migration happened.
+        assert not (tmp_path / "secrets.enc").read_bytes().startswith(b"ALSv2\n")
+
+
+class TestVaultV2MigrationCrashSafety:
+    """Codex finding (MED): the previous v1→v2 migration wrote salt.bin
+    BEFORE swapping secrets.enc, leaving a window where a crash could
+    desync salt and blob. The v2 single-file format eliminates that
+    window by embedding the salt in the secrets.enc header — every
+    write is one atomic os.replace."""
+
+    def _v1_static_salt_blob(self, payload, master_key="legacy-key"):
+        import base64
+
+        import orjson
+        from cryptography.fernet import Fernet
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=SecretsManager._LEGACY_SALT,
+            iterations=480000,
+        )
+        fernet = Fernet(base64.urlsafe_b64encode(kdf.derive(master_key.encode())))
+        return fernet.encrypt(orjson.dumps(payload))
+
+    def test_migration_uses_atomic_swap_no_partial_state(self, tmp_path):
+        """The migration must never leave a half-written file or a
+        salt.bin without a matching blob. We assert by inspecting the
+        post-migration directory: only secrets.enc, no .tmp file."""
+        (tmp_path / "secrets.enc").write_bytes(
+            self._v1_static_salt_blob({"K": "v"}),
+        )
+
+        mgr = SecretsManager(vault_dir=str(tmp_path), master_key="legacy-key")
+
+        # Post-migration files: only secrets.enc, in v2 format. No
+        # leftover .tmp file. No salt.bin.
+        files = sorted(p.name for p in tmp_path.iterdir())
+        assert files == ["secrets.enc"], f"unexpected files left over: {files}"
+        assert (tmp_path / "secrets.enc").read_bytes().startswith(b"ALSv2\n")
+        assert mgr.get_secret("K") == "v"
+
+    def test_migration_failure_leaves_legacy_blob_untouched(self, tmp_path, monkeypatch):
+        """If the v2 write fails (e.g. disk full), the legacy
+        secrets.enc must remain intact and the agent must keep
+        running with the legacy fernet."""
+        (tmp_path / "secrets.enc").write_bytes(
+            self._v1_static_salt_blob({"K": "v"}),
+        )
+        legacy_blob = (tmp_path / "secrets.enc").read_bytes()
+
+        # Force _atomic_write to fail on the migration attempt.
+        original_atomic_write = SecretsManager._atomic_write
+        call_count = {"n": 0}
+
+        def failing_atomic_write(self, target, data):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                msg = "simulated disk full"
+                raise OSError(msg)
+            return original_atomic_write(self, target, data)
+
+        monkeypatch.setattr(SecretsManager, "_atomic_write", failing_atomic_write)
+
+        mgr = SecretsManager(vault_dir=str(tmp_path), master_key="legacy-key")
+
+        # The legacy blob must be untouched.
+        assert (tmp_path / "secrets.enc").read_bytes() == legacy_blob
+        # And reads must still work via the legacy fernet.
+        assert mgr.get_secret("K") == "v"
 
     def test_migration_preserves_multiple_secrets(self, tmp_path):
-        self._bootstrap_legacy_vault(
-            tmp_path,
-            {"K1": "v1", "K2": "v2", "K3": "v3"},
+        (tmp_path / "secrets.enc").write_bytes(
+            self._v1_static_salt_blob({"K1": "v1", "K2": "v2", "K3": "v3"}),
         )
         mgr = SecretsManager(vault_dir=str(tmp_path), master_key="legacy-key")
         assert mgr.get_secret("K1") == "v1"
         assert mgr.get_secret("K2") == "v2"
         assert mgr.get_secret("K3") == "v3"
-        # And the post-migration vault stores new secrets under the new salt.
+        # And new writes go through the v2 format unchanged.
         mgr.set_secret("K4", "v4")
+        assert (tmp_path / "secrets.enc").read_bytes().startswith(b"ALSv2\n")
         mgr2 = SecretsManager(vault_dir=str(tmp_path), master_key="legacy-key")
         assert mgr2.get_secret("K4") == "v4"
 

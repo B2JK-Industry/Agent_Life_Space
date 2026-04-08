@@ -124,12 +124,48 @@ async def run_agent(data_dir: str = "agent") -> None:
         # get_project_root()/agent/logs while __main__ wrote into
         # <data_dir>/logs and retention silently swept nothing.
         os.environ.update({"AGENT_LOG_DIR": log_dir})
+        # Resolve long retention in HOURS — same env var the cron-side
+        # LogRetentionManager reads. Default is 720h (30 days).
+        # Backwards compat: if AGENT_LOG_LONG_RETENTION_HOURS is unset
+        # but AGENT_LOG_LONG_RETENTION_DAYS is, honour DAYS once and
+        # warn the operator that the variable is deprecated.
+        env_hours = os.environ.get("AGENT_LOG_LONG_RETENTION_HOURS", "").strip()
+        env_days_legacy = os.environ.get("AGENT_LOG_LONG_RETENTION_DAYS", "").strip()
+        if env_hours:
+            try:
+                long_retention_hours = int(env_hours)
+            except ValueError:
+                logger.warning(
+                    "log_retention_hours_invalid",
+                    raw=env_hours,
+                    fallback=720,
+                )
+                long_retention_hours = 720
+        elif env_days_legacy:
+            try:
+                long_retention_hours = int(env_days_legacy) * 24
+            except ValueError:
+                long_retention_hours = 720
+            logger.warning(
+                "log_retention_days_env_deprecated",
+                hint=(
+                    "AGENT_LOG_LONG_RETENTION_DAYS is deprecated; use "
+                    "AGENT_LOG_LONG_RETENTION_HOURS instead. The cron "
+                    "prune sweep only reads the HOURS variable, so "
+                    "setting only DAYS leaves the two halves out of sync."
+                ),
+                derived_hours=long_retention_hours,
+            )
+            # Pin the equivalent HOURS value so the cron sweep agrees.
+            os.environ.update({
+                "AGENT_LOG_LONG_RETENTION_HOURS": str(long_retention_hours),
+            })
+        else:
+            long_retention_hours = 720
         try:
             paths = setup_tiered_logging(
                 log_dir,
-                long_retention_days=int(
-                    os.environ.get("AGENT_LOG_LONG_RETENTION_DAYS", "30"),
-                ),
+                long_retention_hours=long_retention_hours,
                 short_retention_hours=int(
                     os.environ.get("AGENT_LOG_SHORT_RETENTION_HOURS", "6"),
                 ),

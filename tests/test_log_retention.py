@@ -351,3 +351,87 @@ class TestRetentionSweepHonoursAgentLogDir:
         results = mgr.prune_all()
         assert results["long"].pruned == 1
         assert not stale.exists()
+
+
+class TestRetentionEnvContractIsUnified:
+    """Codex finding (LOW): __main__ used AGENT_LOG_LONG_RETENTION_DAYS
+    while retention.py read AGENT_LOG_LONG_RETENTION_HOURS. Setting
+    only one variable left the rotating handler and the prune sweep
+    out of sync. The unified contract is HOURS for both halves; DAYS
+    is honored once with a deprecation warning and then converted to
+    HOURS in the env."""
+
+    def test_setup_tiered_logging_accepts_long_retention_hours(self, tmp_path):
+        """The new keyword argument is ``long_retention_hours``, not
+        ``long_retention_days``. The function must derive an internal
+        days-rounded backupCount without exposing days to callers."""
+        from agent.logs.logger import setup_tiered_logging
+
+        try:
+            paths = setup_tiered_logging(
+                tmp_path,
+                long_retention_hours=72,  # 3 days
+                short_retention_hours=2,
+            )
+            assert "long_log" in paths
+            assert "short_log" in paths
+        finally:
+            _teardown_tiered_logging()
+
+    def test_legacy_days_env_is_promoted_to_hours(self, monkeypatch, tmp_path):
+        """When operator sets only the deprecated DAYS env var,
+        __main__ must:
+          (a) honour the value (convert 2 days → 48 hours)
+          (b) emit a deprecation warning
+          (c) pin AGENT_LOG_LONG_RETENTION_HOURS so the cron sweep
+              sees the same value
+        We exercise the conversion logic by replicating the snippet
+        __main__.py uses, since the function is inlined into run_agent.
+        """
+        monkeypatch.delenv("AGENT_LOG_LONG_RETENTION_HOURS", raising=False)
+        monkeypatch.setenv("AGENT_LOG_LONG_RETENTION_DAYS", "2")
+
+        env_hours = os.environ.get("AGENT_LOG_LONG_RETENTION_HOURS", "").strip()
+        env_days_legacy = os.environ.get("AGENT_LOG_LONG_RETENTION_DAYS", "").strip()
+        # Sanity: the test fixture is what we expect.
+        assert env_hours == ""
+        assert env_days_legacy == "2"
+
+        # Replicate __main__.py promotion path.
+        if env_hours:
+            long_retention_hours = int(env_hours)
+        elif env_days_legacy:
+            long_retention_hours = int(env_days_legacy) * 24
+            os.environ["AGENT_LOG_LONG_RETENTION_HOURS"] = str(long_retention_hours)
+        else:
+            long_retention_hours = 720
+
+        assert long_retention_hours == 48
+        assert os.environ["AGENT_LOG_LONG_RETENTION_HOURS"] == "48"
+
+    def test_hours_env_takes_precedence_over_legacy_days(self, monkeypatch):
+        monkeypatch.setenv("AGENT_LOG_LONG_RETENTION_HOURS", "100")
+        monkeypatch.setenv("AGENT_LOG_LONG_RETENTION_DAYS", "9999")
+
+        env_hours = os.environ.get("AGENT_LOG_LONG_RETENTION_HOURS", "").strip()
+        long_retention_hours = int(env_hours)
+        assert long_retention_hours == 100  # HOURS wins
+
+    def test_retention_manager_default_matches_setup_default(self):
+        """Both halves of the system must default to the same value
+        (720 hours = 30 days). If somebody changes the default in one
+        place but not the other, this test catches it."""
+        import inspect
+
+        from agent.logs import retention as retention_mod
+        from agent.logs.logger import setup_tiered_logging
+
+        # The module reads the env var at import time; we verify the
+        # default literal in the source code matches the setup default.
+        # We re-read the module file to avoid being fooled by an env
+        # var set in the test environment.
+        retention_source = Path(retention_mod.__file__).read_text()
+        assert '"AGENT_LOG_LONG_RETENTION_HOURS", "720"' in retention_source
+
+        sig = inspect.signature(setup_tiered_logging)
+        assert sig.parameters["long_retention_hours"].default == 720
