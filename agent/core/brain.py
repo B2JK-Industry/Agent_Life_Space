@@ -195,6 +195,74 @@ class AgentBrain:
             task_type = "chat"
             model = get_model(task_type)
 
+        # ── Layer 5.1: Telegram + CLI + sandbox-only deny guard ──
+        # The Claude Code CLI's interactive permission flow is unreachable
+        # from Telegram — there is no operator clicking "Allow" on a tool
+        # call. If we let a programming task hit the CLI in this state,
+        # the LLM tool-use call blocks until errormaxturns / typing
+        # indicator times out and the operator sees a hang.
+        #
+        # Decision tree:
+        #   • channel != telegram        → not our problem (other channels
+        #                                   may have their own UX)
+        #   • task_type != programming   → no tool-use needed, plain
+        #                                   conversational generate is fine
+        #   • effective backend != cli   → API path uses ToolUseLoop, no
+        #                                   interactive prompts
+        #   • AGENT_SANDBOX_ONLY=0       → operator explicitly opted in to
+        #                                   host file access; the CLI is
+        #                                   running with --dangerously-skip-
+        #                                   permissions and won't prompt
+        #   • otherwise                  → FAIL-CLOSED with a clear
+        #                                   operator message
+        #
+        # This guard runs BEFORE prompt building so we never spend tokens
+        # on a request we know cannot complete. We do not silently bypass
+        # the sandbox; the operator must take an explicit action to
+        # unblock the path.
+        from agent.control.llm_runtime import resolve_llm_runtime_state
+
+        runtime_state_for_guard = resolve_llm_runtime_state(environ=os.environ)
+        effective_backend_for_guard = str(
+            runtime_state_for_guard.get("effective_backend", "cli"),
+        )
+        sandbox_only_for_guard = (
+            os.environ.get("AGENT_SANDBOX_ONLY", "1").strip() != "0"
+        )
+        if (
+            message.channel_type == "telegram"
+            and task_type == "programming"
+            and effective_backend_for_guard == "cli"
+            and sandbox_only_for_guard
+        ):
+            logger.warning(
+                "telegram_cli_programming_denied",
+                hint=(
+                    "Telegram + CLI backend + sandbox-only mode cannot "
+                    "complete a programming task because the Claude Code "
+                    "permission prompt is unreachable from Telegram."
+                ),
+                channel_type=message.channel_type,
+                effective_backend=effective_backend_for_guard,
+                sandbox_only=True,
+            )
+            return (
+                "Programovacie úlohy cez Telegram momentálne nemôžu "
+                "použiť Claude CLI backend bez interaktívneho povolenia "
+                "v Claude Code UI.\n\n"
+                "Možnosti ako to odblokovať:\n"
+                "• Prepni LLM runtime na API backend cez /runtime alebo "
+                "/api/operator/llm — ToolUseLoop v API móde nevyžaduje "
+                "interaktívny approval.\n"
+                "• Alebo na servery nastav AGENT_SANDBOX_ONLY=0 (host "
+                "opt-in — agent dostane host file access cez CLI s "
+                "--dangerously-skip-permissions). Toto je explicitné a "
+                "auditované; rob tak iba ak vieš čo robíš.\n\n"
+                "Pre úlohy ktoré nepotrebujú codegen (otázky, status, "
+                "memory, finance) je všetko v poriadku — tento guard "
+                "sa týka len 'programming' tasku."
+            )
+
         # Channel enforcement for CLI path — restricted channels block file access
         # regardless of task_type (prevents API callers from getting host access)
         restricted_channels = {"agent_api", "webhook", "public"}

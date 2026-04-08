@@ -237,6 +237,212 @@ class TestExplicitWorkQueueDetector:
         assert items == []
 
 
+class TestTelegramCliProgrammingDenyGuard:
+    """Regression: Telegram + CLI backend + sandbox-only must NOT enter
+    the Claude CLI permission prompt flow because there is no operator
+    clicking 'Allow' from Telegram. The brain must fail-closed with a
+    clear operator message before the LLM call is made."""
+
+    @pytest.mark.asyncio
+    async def test_telegram_programming_cli_sandbox_denied(self, brain, monkeypatch):
+        """Programming task from Telegram on the CLI backend with
+        AGENT_SANDBOX_ONLY=1 must NOT call provider.generate."""
+        monkeypatch.setenv("LLM_BACKEND", "cli")
+        monkeypatch.setenv("AGENT_SANDBOX_ONLY", "1")
+        monkeypatch.delenv("AGENT_DATA_DIR", raising=False)
+
+        fake_provider = MagicMock()
+        fake_provider.supports_tools.return_value = True
+        fake_provider.generate = AsyncMock()
+        monkeypatch.setattr(
+            "agent.core.llm_provider.get_provider", lambda: fake_provider,
+        )
+
+        msg = IncomingMessage(
+            text="naprogramuj python script ktorý spočíta primes",
+            sender_id="1",
+            sender_name="owner",
+            channel_type="telegram",
+            chat_id="123",
+            is_owner=True,
+        )
+        result = await brain.process(msg)
+
+        # Provider must NOT have been called.
+        fake_provider.generate.assert_not_called()
+
+        # Operator must see a clear, deterministic message.
+        assert "Telegram" in result
+        assert "API backend" in result or "AGENT_SANDBOX_ONLY" in result
+
+    @pytest.mark.asyncio
+    async def test_telegram_non_programming_still_works_on_cli(self, brain, monkeypatch):
+        """Conversational tasks (non-programming) on the CLI backend
+        must still reach the provider — guard is task-specific."""
+        from agent.core.llm_provider import GenerateResponse
+
+        monkeypatch.setenv("LLM_BACKEND", "cli")
+        monkeypatch.setenv("AGENT_SANDBOX_ONLY", "1")
+
+        fake_provider = MagicMock()
+        fake_provider.supports_tools.return_value = False
+        fake_provider.generate = AsyncMock(
+            return_value=GenerateResponse(
+                text="Som agent, žijem.",
+                success=True,
+                input_tokens=5,
+                output_tokens=3,
+                cost_usd=0.0,
+                latency_ms=100,
+            ),
+        )
+        monkeypatch.setattr(
+            "agent.core.llm_provider.get_provider", lambda: fake_provider,
+        )
+
+        msg = IncomingMessage(
+            text="ahoj",
+            sender_id="1",
+            sender_name="owner",
+            channel_type="telegram",
+            chat_id="123",
+            is_owner=True,
+        )
+        result = await brain.process(msg)
+
+        # Provider WAS called for the conversational reply.
+        assert fake_provider.generate.await_count >= 1
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_telegram_programming_api_backend_uses_tool_loop(self, brain, monkeypatch):
+        """Programming task from Telegram on the API backend must
+        still reach ToolUseLoop normally — guard is CLI-only."""
+        from agent.core.tool_loop import ToolLoopResult
+
+        monkeypatch.setenv("LLM_BACKEND", "api")
+        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+        monkeypatch.setenv("AGENT_SANDBOX_ONLY", "1")
+
+        fake_provider = MagicMock()
+        fake_provider.supports_tools.return_value = True
+        fake_loop = MagicMock()
+        fake_loop.run = AsyncMock(return_value=ToolLoopResult(
+            text="Hotovo, navrhol som riešenie.",
+            success=True,
+            turns=1,
+            total_tokens=20,
+            total_input_tokens=15,
+            total_output_tokens=5,
+            total_cost=0.0,
+            model="claude-sonnet-4-6",
+        ))
+        brain._tool_executor = MagicMock()
+        monkeypatch.setattr(
+            "agent.core.llm_provider.get_provider", lambda: fake_provider,
+        )
+
+        with patch("agent.core.tool_loop.ToolUseLoop", return_value=fake_loop):
+            msg = IncomingMessage(
+                text="naprogramuj python script ktorý spočíta primes",
+                sender_id="1",
+                sender_name="owner",
+                channel_type="telegram",
+                chat_id="123",
+                is_owner=True,
+            )
+            result = await brain.process(msg)
+
+        # Tool loop WAS called — API path is unaffected by the guard.
+        fake_loop.run.assert_called_once()
+        assert "Hotovo" in result
+
+    @pytest.mark.asyncio
+    async def test_telegram_programming_cli_with_host_optin_passes_guard(self, brain, monkeypatch):
+        """If AGENT_SANDBOX_ONLY=0, the operator has explicitly opted
+        in to host file access. The CLI runs with --dangerously-skip-
+        permissions in this state, so there is no interactive prompt
+        and the guard must NOT block the request."""
+        from agent.core.llm_provider import GenerateResponse
+
+        monkeypatch.setenv("LLM_BACKEND", "cli")
+        monkeypatch.setenv("AGENT_SANDBOX_ONLY", "0")  # explicit host opt-in
+
+        fake_provider = MagicMock()
+        fake_provider.supports_tools.return_value = False
+        fake_provider.generate = AsyncMock(
+            return_value=GenerateResponse(
+                text="def is_prime(n): return ...",
+                success=True,
+                input_tokens=10,
+                output_tokens=20,
+                cost_usd=0.0,
+                latency_ms=200,
+            ),
+        )
+        monkeypatch.setattr(
+            "agent.core.llm_provider.get_provider", lambda: fake_provider,
+        )
+
+        msg = IncomingMessage(
+            text="naprogramuj python script ktorý spočíta primes",
+            sender_id="1",
+            sender_name="owner",
+            channel_type="telegram",
+            chat_id="123",
+            is_owner=True,
+        )
+        result = await brain.process(msg)
+
+        # Provider WAS called — host opt-in unblocks the path.
+        assert fake_provider.generate.await_count >= 1
+        assert result is not None
+        # Result is not the deny message.
+        assert "interaktívneho povolenia" not in result
+
+    @pytest.mark.asyncio
+    async def test_non_telegram_programming_cli_passes_guard(self, brain, monkeypatch):
+        """The guard targets Telegram specifically — other channels
+        (e.g. agent_api) have their own enforcement and must not be
+        affected. We test agent_api here because it does NOT enter
+        cli_allow_file_access mode (restricted channels list)."""
+        from agent.core.llm_provider import GenerateResponse
+
+        monkeypatch.setenv("LLM_BACKEND", "cli")
+        monkeypatch.setenv("AGENT_SANDBOX_ONLY", "1")
+
+        fake_provider = MagicMock()
+        fake_provider.supports_tools.return_value = False
+        fake_provider.generate = AsyncMock(
+            return_value=GenerateResponse(
+                text="Reply",
+                success=True,
+                input_tokens=5,
+                output_tokens=3,
+                cost_usd=0.0,
+                latency_ms=100,
+            ),
+        )
+        monkeypatch.setattr(
+            "agent.core.llm_provider.get_provider", lambda: fake_provider,
+        )
+
+        msg = IncomingMessage(
+            text="naprogramuj python skript",
+            sender_id="bot",
+            sender_name="agent",
+            channel_type="agent_api",
+            chat_id="api_1",
+        )
+        result = await brain.process(msg)
+
+        # agent_api channel is unaffected by the Telegram-specific guard.
+        # It may still hit other restrictions (cli_allow_file_access=False
+        # because agent_api is in restricted_channels) but the brain
+        # MUST reach the LLM call, not return the Telegram deny message.
+        assert "Telegram" not in (result or "")
+
+
 class TestShortFollowupGetsHistory:
     """Regression: previously the simple/factual/greeting prompt branch
     rebuilt the prompt without ``conv_context``/``persistent_context``,
