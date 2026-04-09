@@ -59,14 +59,29 @@ _INTERNAL_NOISE_SUBSTRINGS: tuple[str, ...] = (
 
 _TOKEN_COST_LINE = re.compile(r"_💰 .*?tokens_", re.DOTALL)
 
-# Plain-text CLI timeout. The Claude Code subprocess returns a string
-# like ``CLI timeout after 180s`` (sometimes ``timeout after 60s``,
-# ``timed out after 180 seconds``, etc.) when the wall-clock budget
-# is exceeded. We normalize these to a short human sentence so the
-# user does not see "CLI timeout after 180s" in chat.
+# Plain-text CLI / network timeout. We normalize a wide variety of
+# wording so the user always sees a short friendly sentence and never
+# sees "CLI timeout after 180s" or "asyncio.TimeoutError" in chat.
+#
+# Variants matched:
+#   * ``CLI timeout after 180s``
+#   * ``timeout after 60s`` / ``timed out after 120 seconds``
+#   * ``deadline exceeded`` (gRPC / aiohttp style)
+#   * ``request_timeout=60``
+#   * ``asyncio.TimeoutError`` / ``TimeoutError``
+#   * ``read timed out``
 _CLI_TIMEOUT_RE = re.compile(
-    r"\b(?:cli\s+)?(?:timed?\s+out|timeout)(?:\s+after\s+(?P<secs>\d+)\s*(?:s|sec|seconds?))?\b",
+    r"\b(?:cli\s+)?(?:read\s+)?(?:timed?\s+out|timeout)"
+    r"(?:\s+after\s+(?P<secs>\d+)\s*(?:s|sec|seconds?))?\b",
     re.IGNORECASE,
+)
+_DEADLINE_RE = re.compile(r"\bdeadline\s+exceeded\b", re.IGNORECASE)
+_REQUEST_TIMEOUT_RE = re.compile(
+    r"\brequest_timeout\s*[=:]\s*(?P<secs>\d+)\b",
+    re.IGNORECASE,
+)
+_ASYNCIO_TIMEOUT_RE = re.compile(
+    r"\b(?:asyncio\.)?TimeoutError\b",
 )
 
 
@@ -96,9 +111,14 @@ def normalize_user_error(raw: str | None) -> str:
 
     lower = text.lower()
 
-    # Plain CLI timeout — must run BEFORE the structured-noise check
-    # because "timeout" is also in the internal-noise table for the
-    # *structured* form.
+    # Plain CLI / network timeout family — must run BEFORE the
+    # structured-noise check because "timeout" is also in the
+    # internal-noise table for the *structured* form.
+    req_timeout = _REQUEST_TIMEOUT_RE.search(text)
+    if req_timeout:
+        return _friendly_timeout(req_timeout.group("secs"))
+    if _DEADLINE_RE.search(text) or _ASYNCIO_TIMEOUT_RE.search(text):
+        return _friendly_timeout(None)
     timeout_match = _CLI_TIMEOUT_RE.search(text)
     if timeout_match:
         return _friendly_timeout(timeout_match.group("secs"))

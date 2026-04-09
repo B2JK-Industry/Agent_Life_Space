@@ -216,11 +216,19 @@ class PersistentConversation:
         return row[0] if row and row[0] else ""
 
     async def _get_recent_messages(self, conversation_id: str) -> list[tuple[str, str]]:
+        """Return the most recent unsummarized messages in chronological
+        order (oldest first).
+
+        Uses ``id DESC`` for the inner select so the tie-breaker is
+        deterministic insertion order even when ``save_exchange`` writes
+        a user/assistant pair under the same wall-clock timestamp.
+        Reversing the result then yields strict chronological order.
+        """
         assert self._db
         async with self._db.execute(
             "SELECT sender, content FROM messages "
             "WHERE conversation_id = ? AND summarized = 0 "
-            "ORDER BY timestamp DESC LIMIT ?",
+            "ORDER BY id DESC LIMIT ?",
             (conversation_id, self._max_raw),
         ) as cur:
             rows = await cur.fetchall()

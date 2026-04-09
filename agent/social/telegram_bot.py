@@ -81,6 +81,11 @@ class TelegramBot:
         # asyncio's weak-reference set lets long-running handler tasks
         # be garbage-collected mid-execution.
         self._inflight: set[asyncio.Task[None]] = set()
+        # Per-chat asyncio locks. Two messages in the same chat must
+        # serialize so the assistant replies arrive in the same order
+        # the operator sent them. Different chats stay concurrent —
+        # the lock is keyed on chat_id, not global.
+        self._chat_locks: dict[int, asyncio.Lock] = {}
 
     def _load_last_update_id(self) -> int:
         """Load last processed update ID from disk."""
@@ -265,28 +270,48 @@ class TelegramBot:
             text_length=len(text),
         )
 
-        # Route to callback — include username and chat_type
+        # Route to callback — include username and chat_type.
+        # Per-chat serialization (`_get_chat_lock`) keeps the reply
+        # ordering deterministic for any single chat. Different chats
+        # still process concurrently because each holds its own lock.
         if self._message_callback:
-            try:
-                response = await self._message_callback(
-                    text, user_id, chat_id,
-                    username=username, chat_type=chat_type,
-                    is_owner=is_owner,
-                )
-                if response:
-                    await self.send_message(chat_id, str(response))
-            except TypeError as e:
-                if "unexpected keyword argument 'is_owner'" not in str(e):
-                    raise
-                response = await self._message_callback(
-                    text, user_id, chat_id,
-                    username=username, chat_type=chat_type,
-                )
-                if response:
-                    await self.send_message(chat_id, str(response))
-            except Exception as e:
-                logger.error("telegram_callback_error", error=str(e))
-                await self.send_message(chat_id, f"Error: {e!s}")
+            chat_lock = self._get_chat_lock(chat_id)
+            async with chat_lock:
+                try:
+                    response = await self._message_callback(
+                        text, user_id, chat_id,
+                        username=username, chat_type=chat_type,
+                        is_owner=is_owner,
+                    )
+                    if response:
+                        await self.send_message(chat_id, str(response))
+                except TypeError as e:
+                    if "unexpected keyword argument 'is_owner'" not in str(e):
+                        raise
+                    response = await self._message_callback(
+                        text, user_id, chat_id,
+                        username=username, chat_type=chat_type,
+                    )
+                    if response:
+                        await self.send_message(chat_id, str(response))
+                except Exception as e:
+                    logger.error("telegram_callback_error", error=str(e))
+                    await self.send_message(chat_id, f"Error: {e!s}")
+
+    def _get_chat_lock(self, chat_id: int) -> asyncio.Lock:
+        """Return (lazily creating) the asyncio.Lock for this chat.
+
+        Two concurrent messages in the same chat must serialize so the
+        assistant replies arrive in send-order. The lock is held for
+        the entire callback + send_message round-trip — only the
+        previous reply landing in Telegram releases it. Different
+        chats stay concurrent because each chat_id has its own lock.
+        """
+        lock = self._chat_locks.get(chat_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._chat_locks[chat_id] = lock
+        return lock
 
     async def _api_call(self, method: str, **params: Any) -> Any:
         """Make a Telegram Bot API call."""

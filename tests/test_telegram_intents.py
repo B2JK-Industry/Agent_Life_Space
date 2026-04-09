@@ -519,18 +519,27 @@ class TestErrorNormalization:
             "timeout after 30s",
             "timed out after 120 seconds",
             "Cli Timeout After 90s",  # case-insensitive
+            "read timed out",
+            "deadline exceeded",
+            "asyncio.TimeoutError",
+            "TimeoutError",
+            "request_timeout=60",
+            "request_timeout: 180",
         ],
     )
     def test_plain_cli_timeout_normalized(self, raw):
-        """Plain CLI timeouts must become a short user-facing sentence,
-        not a raw 'CLI timeout after 180s' string."""
+        """Plain CLI timeouts (and the wider timeout family) must
+        become a short user-facing sentence, not a raw error string."""
         from agent.core.error_normalize import normalize_user_error
 
         out = normalize_user_error(raw)
         assert "took too long" in out.lower()
         assert "shorten" in out.lower() or "shortening" in out.lower()
-        # The raw 'CLI timeout' phrasing must NOT survive verbatim.
+        # None of the raw technical phrasings survive verbatim.
         assert "cli timeout" not in out.lower()
+        assert "asyncio.timeouterror" not in out.lower()
+        assert "deadline exceeded" not in out.lower()
+        assert "request_timeout" not in out.lower()
 
 
 # ─────────────────────────────────────────────
