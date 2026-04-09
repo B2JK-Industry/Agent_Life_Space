@@ -751,7 +751,7 @@ class AgentBrain:
                 # brain instance via a tiny shim attribute on the
                 # agent — no global state.
                 try:
-                    setattr(self._agent, "_brain", self)
+                    self._agent._brain = self  # type: ignore[attr-defined]
                 except Exception:
                     pass
                 return telegram_intents.handle_memory_horizon(self._agent)
