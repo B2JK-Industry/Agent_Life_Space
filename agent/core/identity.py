@@ -219,7 +219,7 @@ def get_agent_identity() -> AgentIdentity:
         owner_full_name=owner_full_name,
         server_name=_resolve_server_name(),
         project_name=project_name,
-        default_language=_env("AGENT_DEFAULT_LANGUAGE", ""),
+        default_language=_env("AGENT_DEFAULT_LANGUAGE", "English"),
     )
 
 
@@ -257,13 +257,22 @@ def get_identity_onboarding_warnings() -> list[str]:
 
 
 def get_response_language_instruction() -> str:
-    language = get_agent_identity().default_language
-    if language:
-        return (
-            f"Respond in {language} unless the user explicitly asks to switch "
-            "languages."
-        )
+    """Return the response-language instruction injected into prompts.
+
+    Default behavior:
+      • Respond in English.
+      • If the user writes in another language (Slovak, Spanish,
+        German, French, Czech, Polish, …), match that language for
+        the response.
+      • If the user explicitly asks to switch languages, follow the
+        request.
+      • The default can be overridden with the ``AGENT_DEFAULT_LANGUAGE``
+        environment variable.
+    """
+    language = get_agent_identity().default_language or "English"
     return (
-        "Respond in the user's language. If the user explicitly asks to switch "
+        f"Respond in {language} by default. If the user writes in another "
+        "language (Slovak, Spanish, German, French, Czech, Polish, …) "
+        "match that language. If the user explicitly asks to switch "
         "languages, follow that request."
     )

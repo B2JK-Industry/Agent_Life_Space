@@ -44,7 +44,7 @@ class TestAgentBrainBasics:
             channel_type="telegram", chat_id="123",
         )
         result = await brain.process(msg)
-        assert "Prázdna" in result
+        assert "Empty" in result or "Prázdna" in result
 
     @pytest.mark.asyncio
     async def test_identity_handled_internally(self, brain):
@@ -301,7 +301,7 @@ class TestTelegramCliProgrammingDenyGuard:
         )
 
         msg = IncomingMessage(
-            text="ahoj",
+            text="rozprávaj mi krátko o klimatických zmenách prosím",
             sender_id="1",
             sender_name="owner",
             channel_type="telegram",
@@ -399,6 +399,7 @@ class TestTelegramCliProgrammingDenyGuard:
         assert result is not None
         # Result is not the deny message.
         assert "interaktívneho povolenia" not in result
+        assert "interactive approval" not in result
 
     @pytest.mark.asyncio
     async def test_non_telegram_programming_cli_passes_guard(self, brain, monkeypatch):
