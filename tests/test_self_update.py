@@ -213,6 +213,194 @@ async def test_successful_fast_forward():
     assert "restart" in result.message.lower()
 
 
+# ─────────────────────────────────────────────
+# Self-restart opt-in
+# ─────────────────────────────────────────────
+
+
+def _successful_update_run_git_seq() -> AsyncMock:
+    """Helper: returns an AsyncMock side_effect-list for a successful
+    fast-forward, used by every self-restart test below."""
+    return AsyncMock(side_effect=[
+        (0, "main\n", ""),                  # rev-parse --abbrev-ref HEAD
+        (0, "origin/main\n", ""),           # rev-parse @{u}
+        (0, "abc1234567\n", ""),            # before
+        (0, "https://github.com/foo/bar\n", ""),
+        (0, "", ""),                        # clean status
+        (0, "", ""),                        # fetch
+        (0, "5\n", ""),                     # behind
+        (0, "0\n", ""),                     # ahead
+        (0, "Updating abc1234..def5678\n", ""),  # pull --ff-only
+        (0, "def5678901\n", ""),            # rev-parse HEAD after
+    ])
+
+
+@pytest.mark.asyncio
+async def test_self_restart_off_by_default(monkeypatch):
+    """Without AGENT_SELF_RESTART_AFTER_UPDATE the result must NOT
+    request a self-restart, even after a successful update."""
+    monkeypatch.delenv("AGENT_SELF_RESTART_AFTER_UPDATE", raising=False)
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    monkeypatch.delenv("AGENT_PROCESS_SUPERVISOR", raising=False)
+
+    fake = _successful_update_run_git_seq()
+    with patch("agent.core.self_update._run_git", fake), \
+         patch("os.path.isdir", return_value=True):
+        result = await run_self_update(
+            repo_root="/fake/repo", is_owner=True, is_group=False,
+        )
+
+    assert result.status == "updated"
+    assert result.should_self_restart is False
+    # Default message still tells the operator how to enable it.
+    assert "AGENT_SELF_RESTART_AFTER_UPDATE" in result.message
+
+
+@pytest.mark.asyncio
+async def test_self_restart_requires_supervisor(monkeypatch):
+    """Opt-in flag without a detected supervisor must NOT trigger
+    self-restart — agent refuses to self-kill in an unsupervised env."""
+    monkeypatch.setenv("AGENT_SELF_RESTART_AFTER_UPDATE", "1")
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    monkeypatch.delenv("AGENT_PROCESS_SUPERVISOR", raising=False)
+    monkeypatch.delenv("SUPERVISOR_ENABLED", raising=False)
+    monkeypatch.delenv("container", raising=False)
+
+    fake = _successful_update_run_git_seq()
+    with patch("agent.core.self_update._run_git", fake), \
+         patch("os.path.isdir", return_value=True), \
+         patch("os.path.exists", return_value=False):
+        result = await run_self_update(
+            repo_root="/fake/repo", is_owner=True, is_group=False,
+        )
+
+    assert result.status == "updated"
+    assert result.should_self_restart is False
+    # Message must explain the misconfiguration.
+    msg = result.message.lower()
+    assert "no process supervisor" in msg or "unsupervised" in msg
+
+
+@pytest.mark.asyncio
+async def test_self_restart_with_systemd(monkeypatch):
+    """Opt-in flag + INVOCATION_ID (systemd) → should_self_restart is True."""
+    monkeypatch.setenv("AGENT_SELF_RESTART_AFTER_UPDATE", "1")
+    monkeypatch.setenv("INVOCATION_ID", "test-systemd-invocation")
+
+    fake = _successful_update_run_git_seq()
+    with patch("agent.core.self_update._run_git", fake), \
+         patch("os.path.isdir", return_value=True):
+        result = await run_self_update(
+            repo_root="/fake/repo", is_owner=True, is_group=False,
+        )
+
+    assert result.status == "updated"
+    assert result.should_self_restart is True
+    msg = result.message.lower()
+    assert "systemd" in msg
+    assert "drain" in msg or "exit" in msg or "restart" in msg
+
+
+@pytest.mark.asyncio
+async def test_self_restart_with_explicit_supervisor_env(monkeypatch):
+    """AGENT_PROCESS_SUPERVISOR env overrides detection."""
+    monkeypatch.setenv("AGENT_SELF_RESTART_AFTER_UPDATE", "1")
+    monkeypatch.setenv("AGENT_PROCESS_SUPERVISOR", "supervisord")
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+
+    fake = _successful_update_run_git_seq()
+    with patch("agent.core.self_update._run_git", fake), \
+         patch("os.path.isdir", return_value=True):
+        result = await run_self_update(
+            repo_root="/fake/repo", is_owner=True, is_group=False,
+        )
+
+    assert result.status == "updated"
+    assert result.should_self_restart is True
+    assert "supervisord" in result.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_self_restart_truthy_variants(monkeypatch):
+    """All documented truthy values for the opt-in flag must work."""
+    monkeypatch.setenv("INVOCATION_ID", "test")
+    for value in ("1", "true", "yes", "on", "systemd", "TRUE", "Yes"):
+        monkeypatch.setenv("AGENT_SELF_RESTART_AFTER_UPDATE", value)
+        fake = _successful_update_run_git_seq()
+        with patch("agent.core.self_update._run_git", fake), \
+             patch("os.path.isdir", return_value=True):
+            result = await run_self_update(
+                repo_root="/fake/repo", is_owner=True, is_group=False,
+            )
+        assert result.should_self_restart is True, f"failed for value={value!r}"
+
+
+@pytest.mark.asyncio
+async def test_self_restart_falsy_variants(monkeypatch):
+    """Falsy / empty values must NOT enable self-restart."""
+    monkeypatch.setenv("INVOCATION_ID", "test")
+    for value in ("", "0", "false", "no", "off", "disabled"):
+        monkeypatch.setenv("AGENT_SELF_RESTART_AFTER_UPDATE", value)
+        fake = _successful_update_run_git_seq()
+        with patch("agent.core.self_update._run_git", fake), \
+             patch("os.path.isdir", return_value=True):
+            result = await run_self_update(
+                repo_root="/fake/repo", is_owner=True, is_group=False,
+            )
+        assert result.should_self_restart is False, f"failed for value={value!r}"
+
+
+@pytest.mark.asyncio
+async def test_self_restart_not_triggered_on_up_to_date(monkeypatch):
+    """should_self_restart must be False on a no-op update even with
+    the flag enabled — there's no new code to switch to."""
+    monkeypatch.setenv("AGENT_SELF_RESTART_AFTER_UPDATE", "1")
+    monkeypatch.setenv("INVOCATION_ID", "test")
+
+    fake = AsyncMock(side_effect=[
+        (0, "main\n", ""),
+        (0, "origin/main\n", ""),
+        (0, "abc1234567\n", ""),
+        (0, "https://github.com/foo/bar\n", ""),
+        (0, "", ""),                  # clean
+        (0, "", ""),                  # fetch
+        (0, "0\n", ""),                # behind = 0
+        (0, "0\n", ""),                # ahead = 0
+    ])
+
+    with patch("agent.core.self_update._run_git", fake), \
+         patch("os.path.isdir", return_value=True):
+        result = await run_self_update(
+            repo_root="/fake/repo", is_owner=True, is_group=False,
+        )
+
+    assert result.status == "up_to_date"
+    assert result.should_self_restart is False
+
+
+@pytest.mark.asyncio
+async def test_self_restart_not_triggered_on_dirty(monkeypatch):
+    """Dirty fail-closed must not also try to restart."""
+    monkeypatch.setenv("AGENT_SELF_RESTART_AFTER_UPDATE", "1")
+    monkeypatch.setenv("INVOCATION_ID", "test")
+
+    fake = AsyncMock(side_effect=[
+        (0, "main\n", ""),
+        (0, "origin/main\n", ""),
+        (0, "abc1234567\n", ""),
+        (0, "https://github.com/foo/bar\n", ""),
+        (0, " M agent/core/brain.py\n", ""),  # dirty
+    ])
+    with patch("agent.core.self_update._run_git", fake), \
+         patch("os.path.isdir", return_value=True):
+        result = await run_self_update(
+            repo_root="/fake/repo", is_owner=True, is_group=False,
+        )
+
+    assert result.status == "dirty"
+    assert result.should_self_restart is False
+
+
 @pytest.mark.asyncio
 async def test_git_error_friendly():
     """A failing git command should produce a short, human sentence."""

@@ -736,6 +736,94 @@ class AgentBrain:
     # Pipeline components
     # ─────────────────────────────────────────────
 
+    def _schedule_graceful_restart(self) -> None:
+        """Schedule a graceful self-restart on the running event loop.
+
+        Called only after a successful self-update when (a) the
+        operator has opted in via ``AGENT_SELF_RESTART_AFTER_UPDATE``
+        and (b) ``run_self_update`` detected a process supervisor.
+        The detection + opt-in gating happens in ``self_update.py`` —
+        this helper just schedules the work.
+
+        Sequence:
+          1. Wait ``AGENT_SELF_RESTART_GRACE_S`` seconds (default 3)
+             so the Telegram bot has time to deliver the reply that
+             this method's caller is about to return.
+          2. Stop the agent orchestrator (drains cron loops, queue,
+             closes DBs cleanly).
+          3. Flush stdout/stderr and call ``os._exit(0)``.
+             The supervisor (systemd / supervisord / docker
+             ``restart=always``) brings up a fresh process with the
+             newly pulled code.
+
+        We deliberately use ``os._exit`` instead of ``sys.exit`` so
+        no further Python finalizers can run after the agent has
+        already drained — they would race with the supervisor.
+
+        On any exception during shutdown we still call ``os._exit(1)``
+        because the supervisor will bring us back regardless.
+        """
+        import asyncio as _asyncio
+        import sys as _sys
+
+        try:
+            loop = _asyncio.get_running_loop()
+        except RuntimeError:
+            logger.error("self_restart_no_event_loop")
+            return
+
+        async def _do_restart() -> None:
+            try:
+                grace_s = float(
+                    os.environ.get("AGENT_SELF_RESTART_GRACE_S", "3"),
+                )
+            except (TypeError, ValueError):
+                grace_s = 3.0
+            grace_s = max(0.0, min(grace_s, 30.0))
+
+            try:
+                await _asyncio.sleep(grace_s)
+                logger.warning(
+                    "self_restart_initiated",
+                    grace_s=grace_s,
+                    hint=(
+                        "Self-update completed, draining and exiting "
+                        "so the supervisor can start a fresh process."
+                    ),
+                )
+                try:
+                    if hasattr(self._agent, "stop"):
+                        await self._agent.stop()
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "self_restart_drain_failed",
+                        error=str(exc),
+                    )
+                try:
+                    _sys.stdout.flush()
+                    _sys.stderr.flush()
+                except Exception:
+                    pass
+                logger.warning("self_restart_exiting", code=0)
+                os._exit(0)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("self_restart_failed", error=str(exc))
+                try:
+                    _sys.stdout.flush()
+                    _sys.stderr.flush()
+                except Exception:
+                    pass
+                os._exit(1)
+
+        # Schedule the shutdown task. We don't await it — the caller
+        # needs to return so the Telegram bot can send the reply.
+        task = loop.create_task(_do_restart())
+        # Hold a strong reference so the task isn't GC'd before it runs.
+        if not hasattr(self, "_pending_shutdown_tasks"):
+            self._pending_shutdown_tasks: set[Any] = set()
+        self._pending_shutdown_tasks.add(task)
+        task.add_done_callback(self._pending_shutdown_tasks.discard)
+
     async def _try_deterministic_intent(
         self, message: IncomingMessage, text: str,
     ) -> str | None:
@@ -827,7 +915,15 @@ class AgentBrain:
                     status=result.status,
                     branch=result.branch,
                     fetched=result.fetched_commits,
+                    will_self_restart=result.should_self_restart,
                 )
+                # Schedule the graceful restart AFTER we return so the
+                # Telegram bot has a chance to send the reply first.
+                # The shutdown task waits a few seconds (configurable),
+                # drains the orchestrator, and calls os._exit(0) so
+                # the supervisor brings up a fresh process.
+                if result.should_self_restart:
+                    self._schedule_graceful_restart()
                 return result.message
 
             if intent == telegram_intents.WEB_OPEN:

@@ -50,6 +50,14 @@ class SelfUpdateResult:
     branch: str = ""
     remote_url: str = ""
     fetched_commits: int = 0
+    # When True, the caller is expected to schedule a graceful
+    # shutdown so the process supervisor (systemd / supervisor /
+    # docker restart=always) can bring up a fresh process with the
+    # newly pulled code. This is set ONLY when:
+    #   * status == "updated"
+    #   * AGENT_SELF_RESTART_AFTER_UPDATE is enabled
+    #   * a process supervisor is detected (or explicitly declared)
+    should_self_restart: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,8 +69,51 @@ class SelfUpdateResult:
             "branch": self.branch,
             "remote_url": self.remote_url,
             "fetched_commits": self.fetched_commits,
+            "should_self_restart": self.should_self_restart,
             **self.extra,
         }
+
+
+# ─────────────────────────────────────────────
+# Self-restart opt-in
+# ─────────────────────────────────────────────
+
+
+def _is_self_restart_requested() -> bool:
+    """Has the operator opted in to automatic post-update restart?
+
+    Reads ``AGENT_SELF_RESTART_AFTER_UPDATE``. Truthy values:
+    ``1``, ``true``, ``yes``, ``on``, ``systemd``. Default is OFF.
+    """
+    raw = os.environ.get("AGENT_SELF_RESTART_AFTER_UPDATE", "").strip().lower()
+    return raw in {"1", "true", "yes", "on", "systemd", "supervisor", "docker"}
+
+
+def _detect_process_supervisor() -> str:
+    """Return the name of the supervising process manager, or "" if none.
+
+    Detection order (cheapest first):
+      1. ``AGENT_PROCESS_SUPERVISOR`` env (operator override)
+      2. systemd: ``INVOCATION_ID`` is set when running under a unit
+      3. supervisord: ``SUPERVISOR_ENABLED`` env
+      4. docker / kubernetes: ``container`` env or ``/.dockerenv`` file
+    """
+    explicit = os.environ.get("AGENT_PROCESS_SUPERVISOR", "").strip().lower()
+    if explicit:
+        return explicit
+    if os.environ.get("INVOCATION_ID"):
+        return "systemd"
+    if os.environ.get("SUPERVISOR_ENABLED"):
+        return "supervisord"
+    container_env = os.environ.get("container", "")
+    if container_env:
+        return container_env
+    try:
+        if os.path.exists("/.dockerenv"):
+            return "docker"
+    except Exception:
+        pass
+    return ""
 
 
 # ─────────────────────────────────────────────
@@ -290,20 +341,56 @@ async def run_self_update(
     rc, after_sha, _ = await _run_git(["rev-parse", "HEAD"], cwd=repo_root)
     after_sha = after_sha.strip()
 
-    return SelfUpdateResult(
-        status="updated",
-        message=(
+    # Decide whether to schedule a self-restart. The opt-in flag is
+    # checked AGAINST a detected supervisor — we refuse to self-kill
+    # in an environment where nothing would bring the process back.
+    self_restart_requested = _is_self_restart_requested()
+    supervisor = _detect_process_supervisor()
+    should_self_restart = bool(self_restart_requested and supervisor)
+
+    if should_self_restart:
+        message = (
+            f"Fast-forwarded `{branch}` from {before_sha[:7]} to "
+            f"{after_sha[:7]} ({behind} commit(s)).\n\n"
+            f"Process supervisor detected: `{supervisor}`. I will now "
+            "drain in-flight work and exit gracefully so the supervisor "
+            "starts a fresh process with the new code. You should see "
+            "the new version reply to your next message."
+        )
+    elif self_restart_requested and not supervisor:
+        # Operator asked for auto-restart but the environment cannot
+        # support it. We pull successfully but refuse to self-kill,
+        # AND we surface the misconfiguration so it can be fixed.
+        message = (
+            f"Fast-forwarded `{branch}` from {before_sha[:7]} to "
+            f"{after_sha[:7]} ({behind} commit(s)).\n\n"
+            "AGENT_SELF_RESTART_AFTER_UPDATE is set but no process "
+            "supervisor was detected (no INVOCATION_ID, no "
+            "AGENT_PROCESS_SUPERVISOR, no /.dockerenv). I will not "
+            "self-kill in an unsupervised environment — restart "
+            "manually, then set AGENT_PROCESS_SUPERVISOR=systemd "
+            "(or run me under systemd / supervisord / docker)."
+        )
+    else:
+        message = (
             f"Fast-forwarded `{branch}` from {before_sha[:7]} to "
             f"{after_sha[:7]} ({behind} commit(s)).\n"
             "A restart through your existing ops mechanism (systemd, "
             "supervisor, watchdog) is required for the new code to "
-            "take effect — I will not self-kill."
-        ),
+            "take effect — I will not self-kill (set "
+            "AGENT_SELF_RESTART_AFTER_UPDATE=1 to enable automatic "
+            "self-restart under a supervisor)."
+        )
+
+    return SelfUpdateResult(
+        status="updated",
+        message=message,
         branch=branch,
         before_sha=before_sha,
         after_sha=after_sha,
         remote_url=remote_url,
         fetched_commits=behind,
+        should_self_restart=should_self_restart,
     )
 
 

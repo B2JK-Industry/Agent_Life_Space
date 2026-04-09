@@ -237,6 +237,100 @@ class TestBrainBypassesProviderForIntents:
         fake.generate.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_self_update_schedules_restart_when_flagged(self, brain, monkeypatch):
+        """When run_self_update returns should_self_restart=True the
+        brain must schedule the graceful restart task."""
+        fake = _patch_provider(monkeypatch)
+        from agent.core.self_update import SelfUpdateResult
+
+        run_mock = AsyncMock(return_value=SelfUpdateResult(
+            status="updated",
+            message="Fast-forwarded `main` from abc1234 to def5678 (5 commits).",
+            branch="main",
+            before_sha="abc1234567",
+            after_sha="def5678901",
+            fetched_commits=5,
+            should_self_restart=True,
+        ))
+
+        # Replace _schedule_graceful_restart with a recording stub so
+        # we never actually call os._exit during a test.
+        scheduled = {"called": False}
+
+        def fake_schedule() -> None:
+            scheduled["called"] = True
+
+        brain._schedule_graceful_restart = fake_schedule  # type: ignore[method-assign]
+
+        with patch("agent.core.self_update.run_self_update", run_mock):
+            result = await brain.process(_msg("nasad novú verziu u seba"))
+
+        run_mock.assert_awaited_once()
+        assert "Fast-forwarded" in result
+        assert scheduled["called"] is True
+        fake.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_self_update_does_not_schedule_restart_when_not_flagged(
+        self, brain, monkeypatch,
+    ):
+        """When the result has should_self_restart=False (default),
+        the brain must NOT schedule a restart even on success."""
+        fake = _patch_provider(monkeypatch)
+        from agent.core.self_update import SelfUpdateResult
+
+        run_mock = AsyncMock(return_value=SelfUpdateResult(
+            status="updated",
+            message="Fast-forwarded `main` from abc1234 to def5678 (5 commits).",
+            branch="main",
+            should_self_restart=False,
+        ))
+        scheduled = {"called": False}
+
+        def fake_schedule() -> None:
+            scheduled["called"] = True
+
+        brain._schedule_graceful_restart = fake_schedule  # type: ignore[method-assign]
+
+        with patch("agent.core.self_update.run_self_update", run_mock):
+            result = await brain.process(_msg("nasad novú verziu u seba"))
+
+        assert "Fast-forwarded" in result
+        assert scheduled["called"] is False
+        fake.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_schedule_graceful_restart_uses_running_loop(
+        self, brain, monkeypatch,
+    ):
+        """The scheduler creates an asyncio task on the running loop
+        and registers a strong reference so it isn't GC'd."""
+        # Patch os._exit so we never actually exit the test process.
+        monkeypatch.setattr("os._exit", lambda code=0: None)
+        # Patch agent.stop to a no-op so the drain finishes fast.
+        brain._agent.stop = AsyncMock()  # type: ignore[method-assign]
+        # Set the grace period to 0 so the test doesn't sleep.
+        monkeypatch.setenv("AGENT_SELF_RESTART_GRACE_S", "0")
+
+        # Call the scheduler directly.
+        brain._schedule_graceful_restart()
+        # The set should have one task registered.
+        assert hasattr(brain, "_pending_shutdown_tasks")
+        assert len(brain._pending_shutdown_tasks) == 1
+        # Wait for the scheduled task to finish.
+        import asyncio as _asyncio
+        for task in list(brain._pending_shutdown_tasks):
+            try:
+                await _asyncio.wait_for(task, timeout=2.0)
+            except TimeoutError:
+                task.cancel()
+                raise
+        # After completion the task should have been removed.
+        assert len(brain._pending_shutdown_tasks) == 0
+        # And agent.stop should have been awaited.
+        brain._agent.stop.assert_awaited()
+
+    @pytest.mark.asyncio
     async def test_self_update_denied_for_non_owner(self, brain, monkeypatch):
         fake = _patch_provider(monkeypatch)
         with patch("agent.core.self_update.run_self_update") as run_mock:
