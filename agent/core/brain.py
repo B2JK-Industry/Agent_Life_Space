@@ -126,7 +126,7 @@ class AgentBrain:
         """Inner processing — separated so try/finally in process() always resets status."""
         text = message.text.strip()
         if not text:
-            return "Prázdna správa."
+            return "Empty message."
 
         # Per-chat conversation
         chat_conv = self._get_chat_conversation(message.chat_id)
@@ -147,19 +147,43 @@ class AgentBrain:
 
         if len(numbered) >= 2 and self._work_loop:
             if message.is_group and not message.is_owner:
-                return "Pracovnú frontu môže používať len owner."
+                return "The work queue is owner-only."
             added = self._work_loop.add_work(numbered, chat_id=int(message.chat_id))
-            return f"Mám {added} úloh. Spracúvam postupne, výsledky posielam priebežne."
+            return (
+                f"Got {added} tasks queued. I'll process them sequentially "
+                "and post results as they finish."
+            )
 
         # Store user message in memory
         from agent.memory.store import MemoryEntry, MemoryType
         await self._agent.memory.store(MemoryEntry(
-            content=f"{message.sender_name} mi napísal: {text}",
+            content=f"{message.sender_name} wrote to me: {text}",
             memory_type=MemoryType.EPISODIC,
             tags=["message", "user_input", message.channel_type],
             source=message.channel_type,
             importance=0.6,
         ))
+
+        # ── Layer 1.5: Deterministic Telegram intent layer ──
+        # Several common Telegram requests must NOT fall through to
+        # the generic LLM/provider flow:
+        #   • presence pings  ("are you there?", "ahoj")
+        #   • version queries ("what version?", "aká je verzia?")
+        #   • skills / capability / limits introspection
+        #   • comparison vs. unknown external systems
+        #   • memory horizon / memory usage
+        #   • autonomy / complex-task introspection
+        #   • self-update question / imperative
+        #   • natural-language web open ("open obolo.tech")
+        #   • weather-report scheduling intent
+        #
+        # All of these are handled deterministically with no provider
+        # call. Crucially this layer runs BEFORE the short-followup
+        # guard below so a follow-up "skills?" still gets caught even
+        # in a chat with prior history.
+        intent_reply = await self._try_deterministic_intent(message, text)
+        if intent_reply is not None:
+            return intent_reply
 
         # ── Layer 2: Internal dispatch (no LLM) ──
         short_followup = len(chat_conv) > 0 and len(text.split()) <= 8
@@ -181,7 +205,7 @@ class AgentBrain:
         rag_direct = self._try_rag_retrieval(text)
         if rag_direct is not None:
             if rag_direct.get("action") == "direct":
-                return f"Z knowledge base ({rag_direct.get('source', '')}):\n{rag_direct.get('context', '')}"
+                return f"From knowledge base ({rag_direct.get('source', '')}):\n{rag_direct.get('context', '')}"
             if rag_direct.get("action") == "augment":
                 rag_context = rag_direct.get("context", "")
 
@@ -247,20 +271,20 @@ class AgentBrain:
                 sandbox_only=True,
             )
             return (
-                "Programovacie úlohy cez Telegram momentálne nemôžu "
-                "použiť Claude CLI backend bez interaktívneho povolenia "
-                "v Claude Code UI.\n\n"
-                "Možnosti ako to odblokovať:\n"
-                "• Prepni LLM runtime na API backend cez /runtime alebo "
-                "/api/operator/llm — ToolUseLoop v API móde nevyžaduje "
-                "interaktívny approval.\n"
-                "• Alebo na servery nastav AGENT_SANDBOX_ONLY=0 (host "
-                "opt-in — agent dostane host file access cez CLI s "
-                "--dangerously-skip-permissions). Toto je explicitné a "
-                "auditované; rob tak iba ak vieš čo robíš.\n\n"
-                "Pre úlohy ktoré nepotrebujú codegen (otázky, status, "
-                "memory, finance) je všetko v poriadku — tento guard "
-                "sa týka len 'programming' tasku."
+                "Programming tasks via Telegram currently cannot use the "
+                "Claude CLI backend without interactive approval in the "
+                "Claude Code UI.\n\n"
+                "Options to unblock this:\n"
+                "• Switch the LLM runtime to the API backend via "
+                "`/runtime` or `/api/operator/llm` — ToolUseLoop in API "
+                "mode does not require interactive approval.\n"
+                "• Or on the host set `AGENT_SANDBOX_ONLY=0` (host opt-in "
+                "— the agent gets host file access via the CLI with "
+                "`--dangerously-skip-permissions`). This is explicit and "
+                "audited; only do it if you know what you are doing.\n\n"
+                "For non-codegen requests (questions, status, memory, "
+                "finance) everything is fine — this guard only applies "
+                "to the `programming` task type."
             )
 
         # Channel enforcement for CLI path — restricted channels block file access
@@ -473,7 +497,9 @@ class AgentBrain:
                 ),
             )
 
-            reply = loop_result.text or "Prepáč, nepodarilo sa mi odpovedať."
+            from agent.core.error_normalize import normalize_user_error
+            tool_text = normalize_user_error(loop_result.text or "")
+            reply = tool_text or "Sorry, I couldn't reach the LLM provider."
             self._total_cost_usd += loop_result.total_cost
             self._total_input_tokens += loop_result.total_input_tokens
             self._total_output_tokens += loop_result.total_output_tokens
@@ -499,9 +525,14 @@ class AgentBrain:
             ))
 
             if not response.success:
-                return f"Chyba: {response.error[:200]}"
+                from agent.core.error_normalize import normalize_user_error
 
-            reply = response.text or "Prepáč, nepodarilo sa mi odpovedať."
+                friendly = normalize_user_error(response.error or "")
+                return friendly or "Sorry, I couldn't reach the LLM provider."
+
+            from agent.core.error_normalize import normalize_user_error
+            normalized_text = normalize_user_error(response.text or "")
+            reply = normalized_text or "Sorry, I couldn't reach the LLM provider."
             self._total_cost_usd += response.cost_usd
             self._total_input_tokens += response.input_tokens
             self._total_output_tokens += response.output_tokens
@@ -594,7 +625,7 @@ class AgentBrain:
         )
         response_class = classify_response(reply)
         if not can_send_response(response_class, channel_caps):
-            reply = "Táto informácia nie je dostupná na tomto kanáli."
+            reply = "This information is not available on this channel."
             logger.warning("response_filtered",
                            response_class=response_class.value,
                            channel=message.channel_type)
@@ -666,6 +697,126 @@ class AgentBrain:
     # ─────────────────────────────────────────────
     # Pipeline components
     # ─────────────────────────────────────────────
+
+    async def _try_deterministic_intent(
+        self, message: IncomingMessage, text: str,
+    ) -> str | None:
+        """Layer 1.5: deterministic Telegram intent dispatch.
+
+        Returns a final reply string or ``None`` if the message did
+        not match any deterministic intent. This layer runs BEFORE the
+        generic dispatcher and BEFORE the short-followup skip, so
+        intents are always caught regardless of conversation length.
+
+        Owner-only intents (self-update imperative, weather setup) are
+        denied for non-owner / group context.
+        """
+        from agent.brain import telegram_intents
+
+        match = telegram_intents.detect_intent(text)
+        if match is None:
+            return None
+
+        intent = match.intent
+        payload = match.payload
+
+        try:
+            if intent == telegram_intents.PRESENCE:
+                return await telegram_intents.handle_presence()
+
+            if intent == telegram_intents.VERSION:
+                return telegram_intents.handle_version()
+
+            if intent == telegram_intents.SKILLS:
+                return telegram_intents.handle_skills()
+
+            if intent == telegram_intents.CAPABILITY:
+                return telegram_intents.handle_capability()
+
+            if intent == telegram_intents.LIMITS:
+                return telegram_intents.handle_limits()
+
+            if intent == telegram_intents.SELF_DESCRIPTION:
+                return telegram_intents.handle_self_description(self._agent)
+
+            if intent == telegram_intents.COMPARISON:
+                subject = str(payload.get("subject", ""))
+                return telegram_intents.handle_comparison(subject, self._agent)
+
+            if intent == telegram_intents.MEMORY_USAGE:
+                return telegram_intents.handle_memory_usage(self._agent)
+
+            if intent == telegram_intents.MEMORY_HORIZON:
+                # The handler reads the live tail size from this
+                # brain instance via a tiny shim attribute on the
+                # agent — no global state.
+                try:
+                    self._agent._brain = self  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                return telegram_intents.handle_memory_horizon(self._agent)
+
+            if intent == telegram_intents.AUTONOMY:
+                return telegram_intents.handle_autonomy(self._agent)
+
+            if intent == telegram_intents.COMPLEX_TASK:
+                return telegram_intents.handle_complex_task(self._agent)
+
+            if intent == telegram_intents.SELF_UPDATE_QUESTION:
+                return telegram_intents.handle_self_update_question()
+
+            if intent == telegram_intents.SELF_UPDATE_IMPERATIVE:
+                # Owner-only.
+                if message.is_group or not message.is_owner:
+                    return (
+                        "Self-update is owner-only and cannot be triggered "
+                        "from a group chat."
+                    )
+                from agent.core.self_update import run_self_update
+
+                repo_root = os.environ.get(
+                    "AGENT_PROJECT_ROOT",
+                    str(self._agent._data_dir.parent)
+                    if hasattr(self._agent, "_data_dir") else "",
+                )
+                result = await run_self_update(
+                    repo_root=repo_root,
+                    is_owner=message.is_owner,
+                    is_group=message.is_group,
+                )
+                logger.info(
+                    "self_update_completed",
+                    status=result.status,
+                    branch=result.branch,
+                    fetched=result.fetched_commits,
+                )
+                return result.message
+
+            if intent == telegram_intents.WEB_OPEN:
+                url = str(payload.get("url", "")).strip()
+                if not url:
+                    return "Open which page? Give me a URL or domain."
+                return await telegram_intents.handle_web_open(url, self._agent)
+
+            if intent == telegram_intents.WEATHER_REPORT_SETUP:
+                if message.is_group and not message.is_owner:
+                    return (
+                        "Recurring weather reports are owner-only and "
+                        "cannot be set up from a group chat."
+                    )
+                city = str(payload.get("city", ""))
+                return telegram_intents.handle_weather_report_setup(
+                    city, self._agent,
+                )
+        except Exception as exc:
+            logger.error(
+                "deterministic_intent_handler_error",
+                intent=intent,
+                error=str(exc),
+            )
+            return None
+
+        return None
 
     def _try_semantic_cache(self, text: str) -> str | None:
         """Layer 3: Lookup semantic cache. Returns cached response or None."""

@@ -34,12 +34,15 @@ def test_persona_uses_runtime_identity(monkeypatch) -> None:
     assert "Respond in english" in simple_prompt
 
 
-def test_persona_defaults_to_user_language_when_not_configured(monkeypatch) -> None:
+def test_persona_defaults_to_english_when_not_configured(monkeypatch) -> None:
     monkeypatch.delenv("AGENT_DEFAULT_LANGUAGE", raising=False)
 
     system_prompt = get_system_prompt()
 
-    assert "Respond in the user's language" in system_prompt
+    # New default: respond in English; switch on user-language signal
+    # or explicit operator request.
+    assert "Respond in English" in system_prompt
+    assert "user writes in another language" in system_prompt
 
 
 def test_identity_uses_saved_owner_profile_when_env_missing(
