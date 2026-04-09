@@ -1,0 +1,49 @@
+[Unit]
+Description=Agent Life Space
+Documentation=https://github.com/B2JK-Industry/Agent_Life_Space
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# CHANGE these to match your install.
+User=youruser
+Group=youruser
+WorkingDirectory=/home/youruser/Agent_Life_Space
+EnvironmentFile=/home/youruser/Agent_Life_Space/.env
+
+# Runtime data + log dirs.
+Environment=AGENT_DATA_DIR=/var/lib/agent-life-space
+Environment=AGENT_LOG_DIR=/var/log/agent-life-space
+
+# Enable Telegram self-update + automatic post-update restart.
+# When the operator messages "nasad novú verziu u seba" the agent
+# will pull the latest fast-forward, drain in-flight work, exit 0,
+# and this unit will bring up a fresh process with the new code.
+Environment=AGENT_SELF_RESTART_AFTER_UPDATE=1
+
+# Use the project venv.
+ExecStart=/home/youruser/Agent_Life_Space/.venv/bin/python -m agent
+
+# Restart policy: bring us back on every clean exit (including the
+# self-restart after a successful update). RestartSec keeps the gap
+# short; StartLimitBurst stops infinite loops on a bad update.
+Restart=always
+RestartSec=2
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Watchdog (optional). The agent's heartbeat loop satisfies systemd
+# every 15s; 120s leaves plenty of headroom.
+WatchdogSec=120
+
+# Hardening — adjust to your environment.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/agent-life-space /var/log/agent-life-space
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

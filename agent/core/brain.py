@@ -62,9 +62,16 @@ class AgentBrain:
         self._total_output_tokens: int = 0
         self._total_requests: int = 0
 
-        # Per-chat conversation buffers
+        # Per-chat conversation buffers (in-RAM tail).
+        # 20 turns = ~10 user/assistant exchanges. The tail bound is
+        # generous enough that natural multi-turn conversations stay
+        # in scope without needing the LLM to re-fetch from SQLite.
         self._conversations: dict[str, list[dict[str, str]]] = {}
-        self._max_conversation = 10
+        self._max_conversation = 20
+        # Set of chat_ids whose in-RAM buffer has already been
+        # hydrated from the persistent conversation DB. We hydrate
+        # exactly once per chat per process lifetime.
+        self._hydrated_chats: set[str] = set()
 
         # Lazy-init components
         self._semantic_cache: Any = None
@@ -98,6 +105,7 @@ class AgentBrain:
 
         Pipeline (layers 1-4 can early-return, layers 5-9 always run together):
             1. Work queue (multi-task)
+           1.5 Deterministic Telegram intent layer (presence/version/skills/...)
             2. Internal dispatch
             3. Semantic cache (early return on hit)
             4. RAG retrieval (early return on direct hit)
@@ -106,13 +114,45 @@ class AgentBrain:
             7. Quality escalation (preserves execution mode)
             8. Learning feedback
             9. Channel policy + explanation
+
+        Conversation persistence (history bug fix): every reply path —
+        deterministic intent, dispatcher, cache, RAG, work-queue,
+        deny-guard, main LLM — goes through ``_finalize_reply`` so the
+        per-chat in-RAM tail and the SQLite persistent_conv both stay
+        in sync. This is what makes "remember the previous message"
+        actually work even when the prior reply was a fast-path intent.
         """
         if self._status:
             from agent.core.status import AgentState
             self._status.transition(AgentState.THINKING, f"processing from {message.channel_type}")
 
         try:
-            return await self._process_inner(message)
+            text = message.text.strip()
+            # Hydrate the in-RAM tail from the persistent SQLite store
+            # the first time we see this chat after a process restart.
+            # Otherwise the very first message after a restart loses
+            # its conversational context entirely.
+            if text:
+                await self._hydrate_chat_conv_if_needed(message.chat_id)
+            reply = await self._process_inner(message)
+            if text and reply:
+                # Idempotent: if the main LLM path already appended the
+                # exchange, finalize is a no-op. For all the early-return
+                # paths it does the bookkeeping that the main path used
+                # to do at the bottom of _process_inner.
+                try:
+                    chat_conv = self._get_chat_conversation(message.chat_id)
+                    conv_id = self._get_conversation_id(message.chat_id)
+                    await self._finalize_reply(
+                        message=message,
+                        text=text,
+                        reply=reply,
+                        chat_conv=chat_conv,
+                        conv_id=conv_id,
+                    )
+                except Exception as exc:
+                    logger.error("brain_finalize_error", error=str(exc))
+            return reply
         finally:
             # Reset status to IDLE unless in a meaningful terminal state
             # (BLOCKED, WAITING_APPROVAL should persist for operator visibility)
@@ -598,14 +638,12 @@ class AgentBrain:
 
         await self._auto_update_skills(reply)
 
-        # Store response in conversation buffer
+        # NOTE: in-RAM buffer + persistent_conv save are now handled
+        # by `_finalize_reply` which the top-level `process()` wrapper
+        # invokes for every reply path (intents, dispatcher, cache,
+        # RAG, work-queue, deny-guard, main LLM). Doing it here would
+        # double-append.
         clean_reply = reply.split("\n\n_💰")[0] if "_💰" in reply else reply
-        chat_conv.append({"role": "assistant", "content": clean_reply[:300]})
-        if len(chat_conv) > self._max_conversation:
-            chat_conv.pop(0)
-
-        # Persist exchange
-        await self._save_exchange(conv_id, text, clean_reply, message.sender_name)
 
         # Store in semantic cache (not for programming tasks)
         if self._semantic_cache and task_type not in ("programming",):
@@ -698,6 +736,94 @@ class AgentBrain:
     # Pipeline components
     # ─────────────────────────────────────────────
 
+    def _schedule_graceful_restart(self) -> None:
+        """Schedule a graceful self-restart on the running event loop.
+
+        Called only after a successful self-update when (a) the
+        operator has opted in via ``AGENT_SELF_RESTART_AFTER_UPDATE``
+        and (b) ``run_self_update`` detected a process supervisor.
+        The detection + opt-in gating happens in ``self_update.py`` —
+        this helper just schedules the work.
+
+        Sequence:
+          1. Wait ``AGENT_SELF_RESTART_GRACE_S`` seconds (default 3)
+             so the Telegram bot has time to deliver the reply that
+             this method's caller is about to return.
+          2. Stop the agent orchestrator (drains cron loops, queue,
+             closes DBs cleanly).
+          3. Flush stdout/stderr and call ``os._exit(0)``.
+             The supervisor (systemd / supervisord / docker
+             ``restart=always``) brings up a fresh process with the
+             newly pulled code.
+
+        We deliberately use ``os._exit`` instead of ``sys.exit`` so
+        no further Python finalizers can run after the agent has
+        already drained — they would race with the supervisor.
+
+        On any exception during shutdown we still call ``os._exit(1)``
+        because the supervisor will bring us back regardless.
+        """
+        import asyncio as _asyncio
+        import sys as _sys
+
+        try:
+            loop = _asyncio.get_running_loop()
+        except RuntimeError:
+            logger.error("self_restart_no_event_loop")
+            return
+
+        async def _do_restart() -> None:
+            try:
+                grace_s = float(
+                    os.environ.get("AGENT_SELF_RESTART_GRACE_S", "3"),
+                )
+            except (TypeError, ValueError):
+                grace_s = 3.0
+            grace_s = max(0.0, min(grace_s, 30.0))
+
+            try:
+                await _asyncio.sleep(grace_s)
+                logger.warning(
+                    "self_restart_initiated",
+                    grace_s=grace_s,
+                    hint=(
+                        "Self-update completed, draining and exiting "
+                        "so the supervisor can start a fresh process."
+                    ),
+                )
+                try:
+                    if hasattr(self._agent, "stop"):
+                        await self._agent.stop()
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "self_restart_drain_failed",
+                        error=str(exc),
+                    )
+                try:
+                    _sys.stdout.flush()
+                    _sys.stderr.flush()
+                except Exception:
+                    pass
+                logger.warning("self_restart_exiting", code=0)
+                os._exit(0)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("self_restart_failed", error=str(exc))
+                try:
+                    _sys.stdout.flush()
+                    _sys.stderr.flush()
+                except Exception:
+                    pass
+                os._exit(1)
+
+        # Schedule the shutdown task. We don't await it — the caller
+        # needs to return so the Telegram bot can send the reply.
+        task = loop.create_task(_do_restart())
+        # Hold a strong reference so the task isn't GC'd before it runs.
+        if not hasattr(self, "_pending_shutdown_tasks"):
+            self._pending_shutdown_tasks: set[Any] = set()
+        self._pending_shutdown_tasks.add(task)
+        task.add_done_callback(self._pending_shutdown_tasks.discard)
+
     async def _try_deterministic_intent(
         self, message: IncomingMessage, text: str,
     ) -> str | None:
@@ -746,6 +872,13 @@ class AgentBrain:
             if intent == telegram_intents.MEMORY_USAGE:
                 return telegram_intents.handle_memory_usage(self._agent)
 
+            if intent == telegram_intents.MEMORY_LIST:
+                return await telegram_intents.handle_memory_list(self._agent)
+
+            if intent == telegram_intents.CONTEXT_RECALL:
+                chat_conv = self._get_chat_conversation(message.chat_id)
+                return telegram_intents.handle_context_recall(chat_conv)
+
             if intent == telegram_intents.MEMORY_HORIZON:
                 # The handler reads the live tail size from this
                 # brain instance via a tiny shim attribute on the
@@ -789,7 +922,15 @@ class AgentBrain:
                     status=result.status,
                     branch=result.branch,
                     fetched=result.fetched_commits,
+                    will_self_restart=result.should_self_restart,
                 )
+                # Schedule the graceful restart AFTER we return so the
+                # Telegram bot has a chance to send the reply first.
+                # The shutdown task waits a few seconds (configurable),
+                # drains the orchestrator, and calls os._exit(0) so
+                # the supervisor brings up a fresh process.
+                if result.should_self_restart:
+                    self._schedule_graceful_restart()
                 return result.message
 
             if intent == telegram_intents.WEB_OPEN:
@@ -1044,15 +1185,32 @@ class AgentBrain:
     def _get_conversation_id(chat_id: str) -> str:
         return f"chat-{chat_id}-{datetime.now(UTC).strftime('%Y-%m-%d')}"
 
-    async def _get_persistent_context(self, conv_id: str, query: str) -> str:
-        try:
-            if self._persistent_conv is None:
+    async def _ensure_persistent_conv(self) -> Any:
+        """Lazy-init the per-chat SQLite conversation store, then cache it.
+
+        We do this once and reuse — both ``_get_persistent_context`` and
+        ``_finalize_reply`` (and the hydration helper) need a live
+        instance, and re-running ``initialize()`` on every call would
+        be wasteful.
+        """
+        if self._persistent_conv is None:
+            try:
                 from agent.memory.persistent_conversation import PersistentConversation
                 self._persistent_conv = PersistentConversation(
-                    db_path=str(self._agent._data_dir / "memory" / "conversations.db")
+                    db_path=str(self._agent._data_dir / "memory" / "conversations.db"),
                 )
                 await self._persistent_conv.initialize()
-            return cast("str", await self._persistent_conv.build_context(conv_id, query=query))
+            except Exception as exc:
+                logger.error("persistent_conv_init_error", error=str(exc))
+                return None
+        return self._persistent_conv
+
+    async def _get_persistent_context(self, conv_id: str, query: str) -> str:
+        try:
+            pc = await self._ensure_persistent_conv()
+            if pc is None:
+                return ""
+            return cast("str", await pc.build_context(conv_id, query=query))
         except Exception as e:
             logger.error("persistent_conv_error", error=str(e))
             return ""
@@ -1061,12 +1219,126 @@ class AgentBrain:
         self, conv_id: str, text: str, reply: str, sender: str
     ) -> None:
         try:
-            if self._persistent_conv:
-                await self._persistent_conv.save_exchange(
+            pc = await self._ensure_persistent_conv()
+            if pc is not None:
+                await pc.save_exchange(
                     conv_id, text, reply[:500], sender=sender,
                 )
         except Exception as e:
             logger.error("persistent_save_error", error=str(e))
+
+    async def _hydrate_chat_conv_if_needed(self, chat_id: str) -> None:
+        """Hydrate the in-RAM conversation tail from the SQLite store.
+
+        Runs at most once per chat per process lifetime. Without this,
+        the very first message after a process restart loses all
+        conversational context — chat_conv is empty until the first
+        new exchange writes back to it.
+        """
+        if chat_id in self._hydrated_chats:
+            return
+        # Mark immediately so a slow / failing hydrate cannot retry
+        # forever and block subsequent messages.
+        self._hydrated_chats.add(chat_id)
+
+        existing = self._conversations.get(chat_id, [])
+        if existing:
+            # Already populated this process lifetime — nothing to do.
+            return
+
+        try:
+            pc = await self._ensure_persistent_conv()
+            if pc is None:
+                return
+            conv_id = self._get_conversation_id(chat_id)
+            # Use the public retrieval helper that respects the same
+            # max_raw bound the SQL store enforces, so we never load
+            # more than the configured number of recent exchanges.
+            recent = await pc._get_recent_messages(conv_id)  # noqa: SLF001
+        except Exception as exc:
+            logger.warning("chat_conv_hydrate_failed", chat_id=chat_id, error=str(exc))
+            return
+
+        if not recent:
+            return
+
+        identity = get_agent_identity()
+        owner_name = identity.owner_name
+        agent_name = identity.agent_name
+        buf = self._get_chat_conversation(chat_id)
+        for sender, content in recent:
+            role = "assistant" if sender == agent_name else "user"
+            entry: dict[str, str] = {"role": role, "content": str(content)[:300]}
+            if role == "user":
+                entry["sender"] = sender or owner_name
+            buf.append(entry)
+        # Bound the hydrated tail to the configured max.
+        while len(buf) > self._max_conversation:
+            buf.pop(0)
+        logger.info(
+            "chat_conv_hydrated",
+            chat_id=chat_id,
+            entries=len(buf),
+        )
+
+    async def _finalize_reply(
+        self,
+        *,
+        message: IncomingMessage,
+        text: str,
+        reply: str,
+        chat_conv: list[dict[str, str]],
+        conv_id: str,
+    ) -> None:
+        """Persist a finished exchange to the in-RAM tail and SQLite.
+
+        Idempotent: if the last entries already match this exchange
+        the helper is a no-op. This is what lets us call it from the
+        top-level ``process()`` wrapper without conflicting with the
+        per-path appends that the main LLM path used to do internally.
+
+        Strips the cost/usage banner before storing so the persisted
+        history doesn't contain the operator-only meter.
+        """
+        if not reply:
+            return
+        clean_reply = reply.split("\n\n_💰")[0] if "_💰" in reply else reply
+        clean_reply = clean_reply.strip()
+        if not clean_reply:
+            return
+
+        # 1. Idempotent in-RAM tail update.
+        last = chat_conv[-1] if chat_conv else None
+        already_recorded = (
+            last is not None
+            and last.get("role") == "assistant"
+            and last.get("content") == clean_reply[:300]
+        )
+        if not already_recorded:
+            # Append the user message if not already there as the
+            # most-recent user entry.
+            user_already_there = False
+            for entry in reversed(chat_conv):
+                if entry.get("role") == "user":
+                    user_already_there = entry.get("content") == text
+                    break
+                if entry.get("role") == "assistant":
+                    break
+            if not user_already_there:
+                chat_conv.append({
+                    "role": "user",
+                    "content": text,
+                    "sender": message.sender_name,
+                })
+            chat_conv.append({"role": "assistant", "content": clean_reply[:300]})
+            while len(chat_conv) > self._max_conversation:
+                chat_conv.pop(0)
+
+        # 2. Persist to SQLite (idempotent at the application level —
+        # save_exchange always inserts a row, but the SQL store is the
+        # single source of truth so we only call it once per process()
+        # invocation via the wrapper).
+        await self._save_exchange(conv_id, text, clean_reply, message.sender_name)
 
     def _collect_runtime_facts(self) -> str:
         """Collect verified runtime facts for anti-confabulation injection.

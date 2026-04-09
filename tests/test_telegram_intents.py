@@ -124,6 +124,21 @@ class TestIntentDetection:
             ("každé ráno mi pošli počasie v Bratislave", telegram_intents.WEATHER_REPORT_SETUP),
             ("every morning send me weather in Prague", telegram_intents.WEATHER_REPORT_SETUP),
             ("set up daily weather report for Košice", telegram_intents.WEATHER_REPORT_SETUP),
+            # Memory list (production complaint)
+            ("ake su tvoje spomienky ?", telegram_intents.MEMORY_LIST),
+            ("aké sú tvoje spomienky?", telegram_intents.MEMORY_LIST),
+            ("aké máš spomienky?", telegram_intents.MEMORY_LIST),
+            ("what are your memories?", telegram_intents.MEMORY_LIST),
+            ("list your memories", telegram_intents.MEMORY_LIST),
+            ("show me your memories", telegram_intents.MEMORY_LIST),
+            # Context recall (production complaint)
+            ("prečo si začal s touto temou ?", telegram_intents.CONTEXT_RECALL),
+            ("preco si zacal s touto temou?", telegram_intents.CONTEXT_RECALL),
+            ("o čom sme sa bavili?", telegram_intents.CONTEXT_RECALL),
+            ("čo sme riešili?", telegram_intents.CONTEXT_RECALL),
+            ("why did you start this topic?", telegram_intents.CONTEXT_RECALL),
+            ("what were we talking about?", telegram_intents.CONTEXT_RECALL),
+            ("remind me what i said", telegram_intents.CONTEXT_RECALL),
         ],
     )
     def test_detect(self, text: str, expected: str) -> None:
@@ -235,6 +250,100 @@ class TestBrainBypassesProviderForIntents:
         run_mock.assert_awaited_once()
         assert "Already up to date" in result
         fake.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_self_update_schedules_restart_when_flagged(self, brain, monkeypatch):
+        """When run_self_update returns should_self_restart=True the
+        brain must schedule the graceful restart task."""
+        fake = _patch_provider(monkeypatch)
+        from agent.core.self_update import SelfUpdateResult
+
+        run_mock = AsyncMock(return_value=SelfUpdateResult(
+            status="updated",
+            message="Fast-forwarded `main` from abc1234 to def5678 (5 commits).",
+            branch="main",
+            before_sha="abc1234567",
+            after_sha="def5678901",
+            fetched_commits=5,
+            should_self_restart=True,
+        ))
+
+        # Replace _schedule_graceful_restart with a recording stub so
+        # we never actually call os._exit during a test.
+        scheduled = {"called": False}
+
+        def fake_schedule() -> None:
+            scheduled["called"] = True
+
+        brain._schedule_graceful_restart = fake_schedule  # type: ignore[method-assign]
+
+        with patch("agent.core.self_update.run_self_update", run_mock):
+            result = await brain.process(_msg("nasad novú verziu u seba"))
+
+        run_mock.assert_awaited_once()
+        assert "Fast-forwarded" in result
+        assert scheduled["called"] is True
+        fake.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_self_update_does_not_schedule_restart_when_not_flagged(
+        self, brain, monkeypatch,
+    ):
+        """When the result has should_self_restart=False (default),
+        the brain must NOT schedule a restart even on success."""
+        fake = _patch_provider(monkeypatch)
+        from agent.core.self_update import SelfUpdateResult
+
+        run_mock = AsyncMock(return_value=SelfUpdateResult(
+            status="updated",
+            message="Fast-forwarded `main` from abc1234 to def5678 (5 commits).",
+            branch="main",
+            should_self_restart=False,
+        ))
+        scheduled = {"called": False}
+
+        def fake_schedule() -> None:
+            scheduled["called"] = True
+
+        brain._schedule_graceful_restart = fake_schedule  # type: ignore[method-assign]
+
+        with patch("agent.core.self_update.run_self_update", run_mock):
+            result = await brain.process(_msg("nasad novú verziu u seba"))
+
+        assert "Fast-forwarded" in result
+        assert scheduled["called"] is False
+        fake.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_schedule_graceful_restart_uses_running_loop(
+        self, brain, monkeypatch,
+    ):
+        """The scheduler creates an asyncio task on the running loop
+        and registers a strong reference so it isn't GC'd."""
+        # Patch os._exit so we never actually exit the test process.
+        monkeypatch.setattr("os._exit", lambda code=0: None)
+        # Patch agent.stop to a no-op so the drain finishes fast.
+        brain._agent.stop = AsyncMock()  # type: ignore[method-assign]
+        # Set the grace period to 0 so the test doesn't sleep.
+        monkeypatch.setenv("AGENT_SELF_RESTART_GRACE_S", "0")
+
+        # Call the scheduler directly.
+        brain._schedule_graceful_restart()
+        # The set should have one task registered.
+        assert hasattr(brain, "_pending_shutdown_tasks")
+        assert len(brain._pending_shutdown_tasks) == 1
+        # Wait for the scheduled task to finish.
+        import asyncio as _asyncio
+        for task in list(brain._pending_shutdown_tasks):
+            try:
+                await _asyncio.wait_for(task, timeout=2.0)
+            except TimeoutError:
+                task.cancel()
+                raise
+        # After completion the task should have been removed.
+        assert len(brain._pending_shutdown_tasks) == 0
+        # And agent.stop should have been awaited.
+        brain._agent.stop.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_self_update_denied_for_non_owner(self, brain, monkeypatch):
@@ -403,6 +512,50 @@ class TestBrainBypassesProviderForIntents:
         fake.generate.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_memory_list(self, brain, monkeypatch):
+        """The 'aké sú tvoje spomienky' intent reads the memory store
+        and produces a deterministic listing — no provider call."""
+        fake = _patch_provider(monkeypatch)
+        # Seed one memory so the listing has something to show.
+        from agent.memory.store import MemoryEntry, MemoryType
+
+        await brain._agent.memory.store(MemoryEntry(
+            content="test memory entry from regression test",
+            memory_type=MemoryType.SEMANTIC,
+            tags=["regression"],
+            source="test",
+            importance=0.5,
+        ))
+        result = await brain.process(_msg("ake su tvoje spomienky ?"))
+        assert "memory" in result.lower() or "spomien" in result.lower() or "Recent memory" in result
+        fake.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_context_recall_with_history(self, brain, monkeypatch):
+        """'prečo si začal s touto temou' reads the in-RAM chat tail
+        and lists the prior turns deterministically."""
+        fake = _patch_provider(monkeypatch)
+        # Seed history.
+        chat_conv = brain._get_chat_conversation("123")
+        chat_conv.append({"role": "user", "content": "tell me about coffee", "sender": "owner"})
+        chat_conv.append({"role": "assistant", "content": "Coffee is a beverage."})
+        chat_conv.append({"role": "user", "content": "is it healthy?", "sender": "owner"})
+        chat_conv.append({"role": "assistant", "content": "Moderate consumption is fine."})
+
+        result = await brain.process(_msg("prečo si začal s touto temou ?"))
+        assert "coffee" in result.lower() or "beverage" in result.lower()
+        fake.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_context_recall_no_history(self, brain, monkeypatch):
+        """With no prior turns the handler explains the situation
+        instead of fabricating one."""
+        fake = _patch_provider(monkeypatch)
+        result = await brain.process(_msg("o čom sme sa bavili?"))
+        assert "don't have" in result.lower() or "no earlier" in result.lower() or "fresh" in result.lower()
+        fake.generate.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_weather_setup_does_not_pre_bake(self, brain, monkeypatch):
         fake = _patch_provider(monkeypatch)
         result = await brain.process(
@@ -510,3 +663,265 @@ class TestErrorNormalization:
         assert "max_turns" not in out
         assert "session_id" not in out
         assert "tool_use" not in out
+
+    def test_legacy_chyba_payload_normalized(self):
+        """Regression: the production payload that was leaking through
+        the legacy _handle_text path. Must NOT survive verbatim."""
+        from agent.core.error_normalize import normalize_user_error
+
+        raw = (
+            '{"type":"result","subtype":"errormaxturns","durationms":2868,'
+            '"durationapims":2812,"iserror":true,"numturns":2,'
+            '"stopreason":"tooluse","sessionid":"e7ec9cd8-3907-4661-afca"}'
+        )
+        out = normalize_user_error(raw)
+        # No raw JSON / internal fields.
+        assert "errormaxturns" not in out
+        assert "sessionid" not in out
+        assert "stopreason" not in out
+        assert "durationms" not in out
+        assert "iserror" not in out
+        assert '"type"' not in out
+        # Has a friendly explanation.
+        assert "turn limit" in out.lower() or "tool-use" in out.lower()
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "CLI timeout after 180s",
+            "CLI timeout after 60s",
+            "timeout after 30s",
+            "timed out after 120 seconds",
+            "Cli Timeout After 90s",  # case-insensitive
+            "read timed out",
+            "deadline exceeded",
+            "asyncio.TimeoutError",
+            "TimeoutError",
+            "request_timeout=60",
+            "request_timeout: 180",
+        ],
+    )
+    def test_plain_cli_timeout_normalized(self, raw):
+        """Plain CLI timeouts (and the wider timeout family) must
+        become a short user-facing sentence, not a raw error string."""
+        from agent.core.error_normalize import normalize_user_error
+
+        out = normalize_user_error(raw)
+        assert "took too long" in out.lower()
+        assert "shorten" in out.lower() or "shortening" in out.lower()
+        # None of the raw technical phrasings survive verbatim.
+        assert "cli timeout" not in out.lower()
+        assert "asyncio.timeouterror" not in out.lower()
+        assert "deadline exceeded" not in out.lower()
+        assert "request_timeout" not in out.lower()
+
+
+# ─────────────────────────────────────────────
+# 5. Paraphrased self-update question fallback
+# ─────────────────────────────────────────────
+
+
+class TestParaphrasedSelfUpdateQuestion:
+    """Regression: paraphrased capability questions about self-update
+    must hit the deterministic explanation path instead of leaking into
+    a 180s CLI timeout in generic chat flow."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # User's actual production message that hit the timeout.
+            "vraj maš novu verziu kde si schopny si aj nasadit nove veci k sebe je to tak ?",
+            "je pravda že sa už vieš sám aktualizovať?",
+            "už si vieš nasadiť nové veci k sebe?",
+            "máš capability aktualizovať sám seba?",
+            "vieš si k sebe nasadiť novú verziu alebo nie?",
+        ],
+    )
+    def test_paraphrase_detected_as_self_update_question(self, text):
+        """The heuristic must catch paraphrased capability questions."""
+        match = telegram_intents.detect_intent(text)
+        assert match is not None, f"intent missed for paraphrase: {text!r}"
+        assert match.intent == telegram_intents.SELF_UPDATE_QUESTION
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Imperatives must NOT regress to question intent.
+            "nasad novú verziu u seba",
+            "update yourself",
+            "aktualizuj sa",
+            "deploy latest",
+            # Download + deploy combos (the operator's natural phrasing).
+            "stiahni si novu verziu a nasad to",
+            "stiahni si novú verziu a nasaď to",
+            "stiahni si najnovšiu verziu a nasaď ju",
+            "stiahni najnovsi kod a nasad ho",
+            "stiahni si update a nasaď",
+            "stiahni a nasaď",
+            # Standalone download against the agent itself.
+            "stiahni novú verziu",
+            "stiahni si novú verziu",
+            "stiahni si najnovšiu verziu",
+            "stiahnite novú verziu",
+            "stiahni najnovšiu verziu",
+            # English equivalents.
+            "pull and deploy",
+            "download and deploy latest",
+            "download the latest version",
+            "download newest version",
+            "pull the latest and deploy",
+            "fetch and install",
+            "pull latest and restart",
+            # Free-form heuristic paraphrases (the operator types
+            # whatever they think of, the heuristic catches it).
+            "stiahni si nový kód z githubu a nahoď ho",
+            "vezmi si najnovšiu verziu a nasaď",
+            "spusti deploy",
+            "spustite deploy nového kódu",
+            "nahoď to čo je na main",
+            "nahoď to čo je na github",
+            "aktualizuj sa na najnovšiu verziu",
+            "naťahaj nový kód a aktualizuj sa",
+            "natahaj novy kod a nasad",
+            "vezmi z githubu posledný kód",
+            "vezmi nový kód z hlavnej vetvy",
+            "stiahni github a nasaď",
+            "stiahni github update",
+            "stiahni si update",
+            "stiahni si novinky",
+            "stiahni z gitu nový kód",
+            # Bare git invocations.
+            "git pull",
+            "git pull a reštart",
+            "git pull and restart",
+            "git fetch",
+            "pull from github",
+            "pull from github and restart",
+            "pull from main",
+            # English free-form.
+            "grab the latest code",
+            "get the latest version",
+            "redeploy with the new code",
+            "release the latest",
+            "install the latest update",
+            "update to latest",
+            "fetch new version",
+        ],
+    )
+    def test_imperative_still_routes_to_execution(self, text):
+        match = telegram_intents.detect_intent(text)
+        assert match is not None
+        assert match.intent == telegram_intents.SELF_UPDATE_IMPERATIVE, (
+            f"{text!r} got {match.intent!r}, expected self_update_imperative"
+        )
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Negative regression: unrelated questions / ambiguous
+            # phrasings must NOT be misclassified as self-update.
+            "random unrelated question",
+            "môžem ti dať novú verziu prompt-u?",
+            "aktualizujme tento súbor prosím",
+            "vieš mi ukázať starú verziu kódu?",
+            "vieš si stiahnuť ten obrázok?",
+            "are you there?",
+            "what version?",
+            "aké máš skills?",
+        ],
+    )
+    def test_unrelated_questions_not_misclassified(self, text):
+        match = telegram_intents.detect_intent(text)
+        if match is not None:
+            assert match.intent != telegram_intents.SELF_UPDATE_QUESTION
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Things that *contain* "stiahni" / "download" / "pull"
+            # but are NOT about the agent updating itself. The
+            # heuristic must reject these via the non-self-target
+            # exclusion list.
+            "stiahni mi obrázok z internetu",
+            "stiahni si tento film",
+            "stiahni mi pdf z tej stránky",
+            "stiahni si tú fotku",
+            "stiahni mi mp3 z youtube",
+            "download this video for me",
+            "pull the milk from the fridge",
+            "get me a coffee",
+            "grab me the file",
+            "aktualizujme tento súbor prosím",
+            "aktualizuj toto pdf",
+        ],
+    )
+    def test_unrelated_download_not_misclassified(self, text):
+        match = telegram_intents.detect_intent(text)
+        if match is not None:
+            assert match.intent != telegram_intents.SELF_UPDATE_IMPERATIVE, (
+                f"{text!r} should not be classified as self_update_imperative"
+            )
+
+    @pytest.mark.asyncio
+    async def test_brain_routes_paraphrase_without_provider(self, brain, monkeypatch):
+        """The user's actual production message: must reach the
+        deterministic explanation path with no provider call and no
+        self_update execution."""
+        fake = _patch_provider(monkeypatch)
+        with patch("agent.core.self_update.run_self_update") as run_mock:
+            run_mock.side_effect = AssertionError(
+                "Self-update must NOT execute for a paraphrased question",
+            )
+            result = await brain.process(_msg(
+                "vraj maš novu verziu kde si schopny si aj nasadit "
+                "nove veci k sebe je to tak ?",
+            ))
+        # Capability explanation, not an execution result.
+        assert "owner-only" in result.lower() or "fast-forward" in result.lower()
+        fake.generate.assert_not_called()
+
+
+# ─────────────────────────────────────────────
+# 6. Plain CLI timeout reaches the user as friendly text
+# ─────────────────────────────────────────────
+
+
+class TestBrainTimeoutNormalization:
+    """When the CLI provider returns a plain ``CLI timeout after 180s``
+    error, the brain must surface a normalized friendly sentence — not
+    the raw timeout string."""
+
+    @pytest.mark.asyncio
+    async def test_provider_timeout_is_normalized(self, brain, monkeypatch):
+        from agent.core.llm_provider import GenerateResponse
+
+        # Avoid the deterministic intent layer so we exercise the
+        # generic provider failure path. "explain entropy" classifies
+        # as chat/factual, hits the provider, returns a timeout error.
+        fake = MagicMock()
+        fake.supports_tools.return_value = False
+        fake.generate = AsyncMock(return_value=GenerateResponse(
+            error="CLI timeout after 180s",
+            success=False,
+            input_tokens=0,
+            output_tokens=0,
+            cost_usd=0.0,
+            latency_ms=180000,
+        ))
+        monkeypatch.setattr(
+            "agent.core.llm_provider.get_provider", lambda: fake,
+        )
+        # Disable the Telegram+CLI+sandbox guard so we reach the
+        # provider call (the question is conversational, not programming).
+        monkeypatch.setenv("LLM_BACKEND", "cli")
+        monkeypatch.setenv("AGENT_SANDBOX_ONLY", "0")
+
+        result = await brain.process(_msg(
+            "Vysvetli mi prosím entropiu v termodynamike v troch vetách.",
+        ))
+
+        # Must NOT contain the raw CLI noise.
+        assert "CLI timeout" not in result
+        assert "180s" not in result or "timeout after 180s" in result.lower()
+        # Must contain the friendly sentence.
+        assert "took too long" in result.lower() or "thinking" in result.lower()

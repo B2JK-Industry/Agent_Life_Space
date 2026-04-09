@@ -430,12 +430,14 @@ class TelegramHandler:
         if not url.startswith(("http://", "https://")):
             url = f"https://{url}"
 
+        from agent.brain.telegram_intents import _friendly_web_error
         from agent.core.web import WebAccess
+
         web = WebAccess()
         try:
             result = await web.scrape_text(url, max_chars=3000)
             if "error" in result:
-                return f"Chyba: {result['error']}"
+                return _friendly_web_error(url, str(result.get("error", "")))
 
             # Store in memory
             from agent.memory.store import MemoryEntry, MemoryType
@@ -1112,9 +1114,14 @@ class TelegramHandler:
 
             if not response.success:
                 logger.error("llm_error", error=response.error[:500])
-                return f"Chyba: {response.error[:200]}"
+                from agent.core.error_normalize import normalize_user_error
 
-            reply = response.text
+                friendly = normalize_user_error(response.error or "")
+                return friendly or "Sorry, I couldn't reach the LLM provider."
+
+            from agent.core.error_normalize import normalize_user_error
+
+            reply = normalize_user_error(response.text or "")
             if not reply:
                 # Retry with simpler prompt
                 logger.warning("empty_result", original_prompt_len=len(prompt))
@@ -1131,7 +1138,10 @@ class TelegramHandler:
                     timeout=60,
                     cwd=project_root,
                 ))
-                reply = retry_response.text or "Prepáč, nepodarilo sa mi odpovedať. Skús otázku preformulovať."
+                reply = (
+                    normalize_user_error(retry_response.text or "")
+                    or "Sorry, I couldn't reach the LLM provider — try rephrasing."
+                )
 
             input_tok = response.input_tokens
             output_tok = response.output_tokens
@@ -1252,10 +1262,16 @@ class TelegramHandler:
 
         except TimeoutError:
             logger.error("john_timeout")
-            return "Premýšľanie trvalo príliš dlho. Skús kratšiu otázku."
+            return (
+                "I took too long thinking and didn't finish the reply. "
+                "Try shortening the question or asking it more directly."
+            )
         except Exception as e:
             logger.error("john_error", error=str(e))
-            return f"Chyba: {e!s}"
+            from agent.core.error_normalize import normalize_user_error
+
+            friendly = normalize_user_error(str(e))
+            return friendly or "Internal error — see logs."
 
     # --- Phase 3: Operator commands ---
 

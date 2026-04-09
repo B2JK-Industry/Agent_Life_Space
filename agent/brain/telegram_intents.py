@@ -61,6 +61,8 @@ COMPARISON = "comparison"          # "how are you different from X?"
 SELF_DESCRIPTION = "self_description"  # "what are your strengths/weaknesses?"
 MEMORY_USAGE = "memory_usage"      # "do you actually use those memories?"
 MEMORY_HORIZON = "memory_horizon"  # "how many turns back do you remember?"
+MEMORY_LIST = "memory_list"        # "what are your memories?"
+CONTEXT_RECALL = "context_recall"  # "why did you start this topic?"
 AUTONOMY = "autonomy"              # "how autonomous are you?"
 COMPLEX_TASK = "complex_task"      # "what kind of complex task can I give you?"
 LIMITS = "limits"                  # "what can't you do?"
@@ -103,15 +105,23 @@ _PRESENCE_REGEXES: tuple[re.Pattern[str], ...] = (
 )
 
 # Version intent — operator wants to know what version is running.
+#
+# Patterns deliberately require an interrogative context so they
+# don't grab imperatives like "stiahni novú verziu a nasaď". The
+# self-update detector runs FIRST in detect_intent() but the bare
+# "verziu" / "version" terminator regex was matching "stiahni novú
+# verziu" too eagerly, before the imperative detector got its turn.
 _VERSION_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bwhat\s+version\b", re.IGNORECASE),
     re.compile(r"\bwhich\s+version\b", re.IGNORECASE),
     re.compile(r"\bcurrent\s+version\b", re.IGNORECASE),
-    re.compile(r"\bversion\s*\??\s*$", re.IGNORECASE),
+    re.compile(r"^\s*version\s*\??\s*$", re.IGNORECASE),
     re.compile(r"\b(akej|aká|aka|ktorej|ktorá|ktora)\s+verzii?\b", re.IGNORECASE),
     re.compile(r"\b(aká|aka)\s+je\s+verzia\b", re.IGNORECASE),
     re.compile(r"\bna\s+akej\s+verzii\b", re.IGNORECASE),
-    re.compile(r"\b(verzia|verziu|verzie)\b\s*\??\s*$", re.IGNORECASE),
+    # Only match the bare noun if it is the WHOLE message (no
+    # leading verbs like "stiahni" / "nasaď").
+    re.compile(r"^\s*(verzia|verziu|verzie)\??\s*$", re.IGNORECASE),
 )
 
 # Skills query — user wants the list of declared skills.
@@ -141,15 +151,272 @@ _CAPABILITY_REGEXES: tuple[re.Pattern[str], ...] = (
 # Self-update **question** (just asking about the capability).
 _SELF_UPDATE_QUESTION_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bcan\s+you\s+(deploy|install|update|upgrade)\s+(yourself|a\s+new\s+version)\b", re.IGNORECASE),
-    re.compile(r"\bare\s+you\s+able\s+to\s+update\s+yourself\b", re.IGNORECASE),
+    re.compile(r"\bare\s+you\s+able\s+to\s+(update|upgrade|deploy|install)\s+(yourself|a\s+new\s+version)\b", re.IGNORECASE),
+    re.compile(r"\bdo\s+you\s+have\s+(a\s+)?(self[\s-]?update|self[\s-]?deploy)\s+capabilit", re.IGNORECASE),
     re.compile(r"\bvieš\s+si\s+nasadi(ť|t)\s+nov", re.IGNORECASE),
-    re.compile(r"\bvieš\s+sa\s+aktualizov", re.IGNORECASE),
+    re.compile(r"\bvieš\s+sa\s+(aktualizov|update)", re.IGNORECASE),
     re.compile(r"\bvieš\s+si\s+(stiahnu|stiahnu(ť|t))\s+nov", re.IGNORECASE),
     re.compile(r"\bvieš\s+si\s+update", re.IGNORECASE),
+    re.compile(r"\bmáš\s+capabilit(y|u)\s+(aktualizov|update|nasadi|deploy)", re.IGNORECASE),
+    re.compile(r"\bmas\s+capabilit(y|u)\s+(aktualizov|update|nasadi|deploy)", re.IGNORECASE),
 )
 
+# ─────────────────────────────────────────────
+# Heuristic fallback for paraphrased self-update *questions*
+# ─────────────────────────────────────────────
+#
+# The regexes above match the canonical phrasings, but operators ask
+# the same question in many ways:
+#
+#   * "vraj maš novu verziu kde si schopny si aj nasadit nove veci k sebe"
+#   * "je pravda že sa už vieš sám aktualizovať?"
+#   * "už si vieš nasadiť nové veci k sebe?"
+#   * "máš capability aktualizovať sám seba?"
+#
+# A capability *question* about self-update has THREE signals that must
+# all coexist:
+#
+#   1. A self-reference token  (sám / seba / sebe / k sebe / yourself / itself)
+#   2. A deploy/update verb    (nasadiť / aktualizov / update / deploy / install /
+#                                upgrade / stiahnu / pull / nahodiť)
+#   3. A question marker       (ends with "?", or contains a question opener like
+#                                "vieš", "je pravda", "vraj", "už", "can you",
+#                                "are you", "do you", "is it true")
+#
+# Crucially this must NOT fire on imperatives ("nasad novú verziu u seba")
+# because the imperative has its own dedicated detector that runs first.
+# We also require that the message NOT start with a known imperative verb
+# as a belt-and-braces guard.
+
+_SELF_REFERENCE_TOKENS: tuple[str, ...] = (
+    "sám", "sam", "seba", "sebe", "k sebe", "ku sebe",
+    "yourself", "itself", "self",
+)
+
+_SELF_UPDATE_VERB_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bnasadi(ť|t)\b", re.IGNORECASE),
+    re.compile(r"\bnasadit\b", re.IGNORECASE),
+    re.compile(r"\bnasad(í|i)t\b", re.IGNORECASE),
+    re.compile(r"\bnahodi(ť|t)\b", re.IGNORECASE),
+    re.compile(r"\baktualizov", re.IGNORECASE),
+    re.compile(r"\bupdate(?!\s*-?\s*ni\s+sa)\b", re.IGNORECASE),
+    re.compile(r"\bupgrade\b", re.IGNORECASE),
+    re.compile(r"\bdeploy\b", re.IGNORECASE),
+    re.compile(r"\binstall\b", re.IGNORECASE),
+    re.compile(r"\bstiahnu(ť|t)\b", re.IGNORECASE),
+    re.compile(r"\bpull\s+(the\s+)?latest\b", re.IGNORECASE),
+    re.compile(r"\bnov(ú|u|ej|e)\s+verziu\b", re.IGNORECASE),
+    re.compile(r"\bnew\s+version\b", re.IGNORECASE),
+)
+
+_QUESTION_OPENERS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bvieš\b", re.IGNORECASE),
+    re.compile(r"\bvies\b", re.IGNORECASE),
+    re.compile(r"\bmôžeš\b", re.IGNORECASE),
+    re.compile(r"\bmozes\b", re.IGNORECASE),
+    re.compile(r"\bje\s+pravda\b", re.IGNORECASE),
+    re.compile(r"\bje\s+to\s+tak\b", re.IGNORECASE),
+    re.compile(r"\bvraj\b", re.IGNORECASE),
+    re.compile(r"\buž\s+", re.IGNORECASE),
+    re.compile(r"\buz\s+", re.IGNORECASE),
+    re.compile(r"\bcan\s+you\b", re.IGNORECASE),
+    re.compile(r"\bare\s+you\b", re.IGNORECASE),
+    re.compile(r"\bdo\s+you\b", re.IGNORECASE),
+    re.compile(r"\bis\s+it\s+true\b", re.IGNORECASE),
+    re.compile(r"\bmáš\b", re.IGNORECASE),
+    re.compile(r"\bmas\b", re.IGNORECASE),
+)
+
+
+def _looks_like_self_update_question(text: str) -> bool:
+    """Heuristic fallback for paraphrased self-update capability questions.
+
+    Returns ``True`` only when ALL three signals coexist:
+      1. self-reference token
+      2. deploy/update verb
+      3. question marker
+    AND the message is not an imperative.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    lowered = stripped.lower()
+
+    # Imperative guard: if any imperative regex matches, defer to that
+    # branch instead.
+    for imp in _SELF_UPDATE_IMPERATIVE_REGEXES:
+        if imp.search(stripped):
+            return False
+
+    has_self_ref = any(token in lowered for token in _SELF_REFERENCE_TOKENS)
+    if not has_self_ref:
+        return False
+
+    has_verb = any(p.search(stripped) for p in _SELF_UPDATE_VERB_PATTERNS)
+    if not has_verb:
+        return False
+
+    is_question = (
+        stripped.rstrip().endswith("?")
+        or any(opener.search(stripped) for opener in _QUESTION_OPENERS)
+    )
+    if not is_question:
+        return False
+
+    return True
+
+
+# ─────────────────────────────────────────────
+# Heuristic fallback for paraphrased self-update *imperatives*
+# ─────────────────────────────────────────────
+#
+# The regex tables above match the canonical phrasings, but operators
+# write imperatives in many free forms:
+#
+#   * "stiahni si nový kód z githubu a nahoď ho"
+#   * "vezmi si najnovšiu verziu a nasaď"
+#   * "spusti deploy"
+#   * "nahoď to čo je na main"
+#   * "git pull a reštart"
+#   * "naťahaj nový kód a aktualizuj sa"
+#
+# A self-update *imperative* has FOUR signals that must all coexist:
+#
+#   1. The first non-trivial token is an imperative deploy/fetch verb
+#   2. There is at least one self-update target noun in the message
+#      (verziu / version / kód / code / update / latest / main / release / ...)
+#   3. The message is NOT a question (no `?`, no question opener)
+#   4. The message does NOT mention an explicit non-self target
+#      (obrázok / image / film / video / pdf / súbor / file / fotku / ...)
+#
+# Precision matters more than recall: false positives here would
+# trigger an actual `git pull --ff-only` + (when supervisor + flag
+# are set) a process restart. The negative test set includes
+# everything we explicitly do NOT want to match.
+
+_IMPERATIVE_VERBS_LEAD: tuple[str, ...] = (
+    # Slovak / Czech
+    "stiahni", "stiahnite", "stiahnúť", "stiahnut", "stiahnime",
+    "nasaď", "nasad", "nasadit", "nasadiť", "nasaďte", "nasadte",
+    "nahoď", "nahod", "nahodit", "nahoďte", "nahodte",
+    "aktualizuj", "aktualizujme", "aktualizujte",
+    "vezmi", "vezmite", "vezmime",
+    "naťahaj", "natahaj",
+    "stiahnime", "natiahnime", "natiahni",
+    "spusti", "spustite", "spravme", "sprav",
+    "rozbeh", "rozbehni", "rozbehnime",
+    "nainštaluj", "nainstaluj", "nainštalujme", "nainstalujme",
+    # English
+    "update", "deploy", "install", "pull", "fetch", "download",
+    "redeploy", "rerun", "rebuild", "release",
+    "get", "grab",
+    # git
+    "git",
+)
+
+_SELF_UPDATE_TARGET_NOUNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bnov(?:ú|u|ej|e|ý|y)\s+(?:verziu|verzia|verzie|kód|kod|code|veci)\b", re.IGNORECASE),
+    re.compile(r"\bnajnov(?:ši|si|šiu|siu|šie|sie|šia|sia)\b", re.IGNORECASE),
+    re.compile(r"\b(?:verziu|verzie|verzia)\b", re.IGNORECASE),
+    re.compile(r"\b(?:version|versions)\b", re.IGNORECASE),
+    re.compile(r"\b(?:kód|kod|code|sources?)\b", re.IGNORECASE),
+    re.compile(r"\b(?:update|updates|upgrade|upgrades|patch|patches)\b", re.IGNORECASE),
+    re.compile(r"\b(?:latest|newest|new\s+stuff)\b", re.IGNORECASE),
+    re.compile(r"\bnovink(?:y|u|ami)\b", re.IGNORECASE),
+    re.compile(r"\b(?:main|master|hlavn[áae]j?\s*(?:vetv[aey]|branch))\b", re.IGNORECASE),
+    re.compile(r"\b(?:github|gitlab|git|repo|repository|remote)\b", re.IGNORECASE),
+    re.compile(r"\b(?:release|releases|deploy|deployment|prod|production)\b", re.IGNORECASE),
+)
+
+_NON_SELF_TARGETS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(?:obrázok|obrazok|obrázky|obrazky|fotk(?:u|y|a))\b", re.IGNORECASE),
+    re.compile(r"\b(?:súbor|subor|súbory|subory|file|files)\b", re.IGNORECASE),
+    re.compile(r"\b(?:pdf|docx?|xlsx?|csv|json|yaml|yml|txt|zip)\b", re.IGNORECASE),
+    re.compile(r"\b(?:film|filmy|movie|movies|video|videá|videa)\b", re.IGNORECASE),
+    re.compile(r"\b(?:image|images|picture|pictures|photo|photos)\b", re.IGNORECASE),
+    re.compile(r"\b(?:song|songs|music|hudba|skladbu|skladby|album|albumy)\b", re.IGNORECASE),
+    re.compile(r"\b(?:milk|mlieko|chlieb|bread|food|jedlo|fridge|chladničk)\b", re.IGNORECASE),
+)
+
+
+def _looks_like_self_update_imperative(text: str) -> bool:
+    """Heuristic fallback for paraphrased self-update imperatives.
+
+    Returns ``True`` only when ALL four signals coexist:
+      1. First non-trivial token is an imperative deploy/fetch verb.
+      2. The message contains a self-update target noun.
+      3. The message is NOT a question.
+      4. The message does NOT mention an explicit non-self target.
+
+    The heuristic is intentionally precision-first because a false
+    positive triggers a real `git pull --ff-only` (and, with the
+    self-restart flag, a process restart).
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    # Strip leading interjections like "ok," / "hej," / "prosim," so
+    # the first-token check can still see the imperative verb.
+    cleaned = re.sub(
+        r"^\s*(?:ok|hej|prosím|prosim|please|hey|prosímťa|prosimta)\s*[,:]?\s*",
+        "",
+        stripped,
+        flags=re.IGNORECASE,
+    )
+    if not cleaned:
+        return False
+
+    # Tokenize the first word; tolerate Slovak diacritics.
+    first_token = re.split(r"\s+", cleaned, maxsplit=1)[0].lower()
+    first_token_clean = first_token.rstrip(",.:;!?")
+    # Strip pronoun particles like "stiahni si" / "nahoď ho" — only
+    # the leading verb counts for matching.
+    if first_token_clean not in _IMPERATIVE_VERBS_LEAD:
+        return False
+
+    # Question guard: anything that ends with "?" or starts with a
+    # question opener is NOT an imperative.
+    if cleaned.rstrip().endswith("?"):
+        return False
+    for opener in _QUESTION_OPENERS:
+        if opener.search(cleaned):
+            return False
+
+    # Exclude messages that name an explicit non-self target.
+    for excl in _NON_SELF_TARGETS:
+        if excl.search(cleaned):
+            return False
+
+    # Require at least one self-update target noun.
+    has_target = any(p.search(cleaned) for p in _SELF_UPDATE_TARGET_NOUNS)
+    if not has_target:
+        # Special case: "git pull" / "git fetch" / "git fetch + restart"
+        # are unambiguous self-update commands even without an explicit
+        # target noun.
+        if re.match(r"^\s*git\s+(pull|fetch|reset|checkout)\b", cleaned, re.IGNORECASE):
+            return True
+        return False
+
+    return True
+
 # Self-update **imperative** — operator is telling the agent to do it.
+#
+# Three families:
+#   1. Single-verb imperatives ("update yourself", "deploy latest",
+#      "nasad novú verziu", "aktualizuj sa", ...)
+#   2. Download+deploy combos where the operator chains two verbs
+#      ("stiahni si novú verziu a nasaď to", "pull and deploy",
+#      "download and deploy latest"). These are the most natural
+#      operator phrasings and we treat the whole thing as a single
+#      self-update intent.
+#   3. Standalone "stiahni" / "download" / "pull" against the agent
+#      itself — implicit deploy because the agent only knows how to
+#      ff-only update its own code, there is no "download but don't
+#      install" mode.
 _SELF_UPDATE_IMPERATIVE_REGEXES: tuple[re.Pattern[str], ...] = (
+    # Family 1: single-verb canonical imperatives.
     re.compile(r"^\s*update\s+yourself\b", re.IGNORECASE),
     re.compile(r"^\s*deploy\s+(the\s+)?latest(\s+version)?\b", re.IGNORECASE),
     re.compile(r"^\s*self[\s-]?update\b", re.IGNORECASE),
@@ -157,6 +424,40 @@ _SELF_UPDATE_IMPERATIVE_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"^\s*nasa(ď|d)\s+(nov(ú|u)\s+verziu|update)", re.IGNORECASE),
     re.compile(r"^\s*aktualizuj\s+sa\b", re.IGNORECASE),
     re.compile(r"^\s*update[\s-]?ni\s+sa\b", re.IGNORECASE),
+
+    # Family 2: download + deploy combos. Order: stiahni / pull /
+    # download somewhere AND nasad / deploy / nahod / install
+    # somewhere (not necessarily adjacent).
+    re.compile(
+        r"^\s*stiahn(?:i|ime|úť)\b.*\b(?:nasa(?:ď|d|dit|díme)|"
+        r"nahod(?:|i|ime)|nainštaluj|nainstaluj|install|deploy)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*(?:pull|fetch|download)\b.*\b(?:deploy|install|run|"
+        r"and\s+restart|restart)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*(?:stiahni|stiahnite)\s+(?:si\s+)?(?:najnov(?:ši|si|šiu)|"
+        r"nov(?:ú|u))\s+(?:verziu|kód|kod|veci)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*download\s+(?:the\s+)?(?:latest|new(?:est)?)\s+"
+        r"(?:version|code)\b",
+        re.IGNORECASE,
+    ),
+
+    # Family 3: standalone "stiahni" against the agent itself.
+    # We require a noun that ties it to the agent ("verziu", "kód",
+    # "update", "novinky") so we don't grab random "stiahni súbor".
+    re.compile(
+        r"^\s*stiahn(?:i|ite|úť|ime)(?:\s+si)?\s+(?:novú\s+verziu|"
+        r"nov(?:ú|u)\s+verziu|najnov(?:šiu|siu)\s+verziu|update|"
+        r"novinky|new(?:est)?\s+version)\b",
+        re.IGNORECASE,
+    ),
 )
 
 # Web open/read — natural language. We require an explicit verb so
@@ -231,6 +532,35 @@ _MEMORY_USAGE_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bvieš\s+(tie\s+)?spomienky\s+(aj\s+)?použ", re.IGNORECASE),
     re.compile(r"\bako\s+(funguje|používaš|pouzivas)\s+(tvoja\s+|svoju\s+)?pamä(ť|t)\b", re.IGNORECASE),
     re.compile(r"\bvieš\s+si\s+(spomenú|spomenu|pamäta|pamata)", re.IGNORECASE),
+)
+
+# Memory list — "what are your memories?", "list your memories"
+_MEMORY_LIST_REGEXES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bwhat\s+(are\s+)?your\s+memori", re.IGNORECASE),
+    re.compile(r"\blist\s+(your\s+)?memori", re.IGNORECASE),
+    re.compile(r"\bshow\s+(me\s+)?(your\s+)?memori", re.IGNORECASE),
+    re.compile(r"\b(aké|ake)\s+(sú|su)\s+tvoje\s+spomien", re.IGNORECASE),
+    re.compile(r"\b(aké|ake)\s+máš\s+spomien", re.IGNORECASE),
+    re.compile(r"\b(zoznam|ukáž|ukaz)\s+(tvoje\s+|svoje\s+)?spomien", re.IGNORECASE),
+    re.compile(r"\b(tvoje|tvoja)\s+spomien", re.IGNORECASE),
+    re.compile(r"\b(co|čo)\s+si\s+(toho\s+)?(zapamätal|zapamatal)", re.IGNORECASE),
+)
+
+# Context recall — "why did you start this topic?", "what were we
+# talking about?", "remind me what I said before"
+_CONTEXT_RECALL_REGEXES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bwhy\s+(did|are)\s+you\s+(start|talking|on\s+about)", re.IGNORECASE),
+    re.compile(r"\bwhat\s+(were|are)\s+we\s+talking\s+about\b", re.IGNORECASE),
+    re.compile(r"\bremind\s+me\s+what\s+(i|we)\s+(said|wrote|asked)", re.IGNORECASE),
+    re.compile(r"\bwhat\s+did\s+(i|we)\s+(just\s+)?(say|ask|talk\s+about)", re.IGNORECASE),
+    re.compile(r"\bcontext\s+of\s+this\s+(chat|conversation)", re.IGNORECASE),
+    re.compile(r"\b(prečo|preco)\s+si\s+za(č|c)al\s+(s\s+)?(touto\s+|s\s+touto\s+)?(t(é|e)mou|t(é|e)my)\b", re.IGNORECASE),
+    re.compile(r"\b(o\s+čom|o\s+com)\s+sme\s+sa\s+bavili\b", re.IGNORECASE),
+    re.compile(r"\b(o\s+čom|o\s+com)\s+(je|bola|je\s+to|to\s+je)\s+(táto\s+|tato\s+)?(rozhovor|konverz|debat)", re.IGNORECASE),
+    re.compile(r"\b(čo|co)\s+(som\s+ti|sme\s+ti|som\s+(mu|jej))\s+(písal|napísal|pisal|napisal)\b", re.IGNORECASE),
+    re.compile(r"\b(čo|co)\s+sme\s+riešili\b", re.IGNORECASE),
+    re.compile(r"\bpripomeň\s+mi\s+(čo|co)\s+sme\b", re.IGNORECASE),
+    re.compile(r"\b(z\s+akého|z\s+akeho)\s+dôvodu\s+(si|sme)\b", re.IGNORECASE),
 )
 
 # Memory horizon — "how many messages back do you remember?"
@@ -336,13 +666,22 @@ def detect_intent(text: str) -> IntentMatch | None:
     if not stripped:
         return None
 
-    # 1. Self-update imperative — must run before web/version because
-    #    "update" is also a generic word.
+    # 1. Self-update imperative — canonical regexes first, then a
+    #    paraphrase heuristic so the user does not have to know the
+    #    exact phrasing. Both run before web/version because "update"
+    #    is also a generic word.
     if _matches_any(stripped, _SELF_UPDATE_IMPERATIVE_REGEXES):
         return IntentMatch(intent=SELF_UPDATE_IMPERATIVE, payload={})
+    if _looks_like_self_update_imperative(stripped):
+        return IntentMatch(intent=SELF_UPDATE_IMPERATIVE, payload={})
 
-    # 2. Self-update question.
+    # 2. Self-update question — canonical regexes first, then a
+    #    paraphrase heuristic so the user does not get a 180s CLI
+    #    timeout for "vraj máš novú verziu kde si schopný si aj
+    #    nasadiť nové veci k sebe je to tak ?".
     if _matches_any(stripped, _SELF_UPDATE_QUESTION_REGEXES):
+        return IntentMatch(intent=SELF_UPDATE_QUESTION, payload={})
+    if _looks_like_self_update_question(stripped):
         return IntentMatch(intent=SELF_UPDATE_QUESTION, payload={})
 
     # 3. Natural-language web open/read.
@@ -399,31 +738,42 @@ def detect_intent(text: str) -> IntentMatch | None:
     if _matches_any(stripped, _LIMITS_REGEXES):
         return IntentMatch(intent=LIMITS, payload={})
 
-    # 8. Memory horizon (specific) before generic memory usage.
+    # 8. Context recall — "why did you start this topic?" / "what
+    #    were we talking about?". Must run before the memory family
+    #    so the question doesn't bleed into the generic memory
+    #    handlers.
+    if _matches_any(stripped, _CONTEXT_RECALL_REGEXES):
+        return IntentMatch(intent=CONTEXT_RECALL, payload={})
+
+    # 9. Memory list — "what are your memories?" / "list your memories"
+    if _matches_any(stripped, _MEMORY_LIST_REGEXES):
+        return IntentMatch(intent=MEMORY_LIST, payload={})
+
+    # 10. Memory horizon (specific) before generic memory usage.
     if _matches_any(stripped, _MEMORY_HORIZON_REGEXES):
         return IntentMatch(intent=MEMORY_HORIZON, payload={})
 
-    # 9. Memory usage.
+    # 11. Memory usage.
     if _matches_any(stripped, _MEMORY_USAGE_REGEXES):
         return IntentMatch(intent=MEMORY_USAGE, payload={})
 
-    # 10. Autonomy.
+    # 12. Autonomy.
     if _matches_any(stripped, _AUTONOMY_REGEXES):
         return IntentMatch(intent=AUTONOMY, payload={})
 
-    # 11. Complex task examples.
+    # 13. Complex task examples.
     if _matches_any(stripped, _COMPLEX_TASK_REGEXES):
         return IntentMatch(intent=COMPLEX_TASK, payload={})
 
-    # 12. Skills query.
+    # 14. Skills query.
     if _matches_any(stripped, _SKILLS_REGEXES):
         return IntentMatch(intent=SKILLS, payload={})
 
-    # 13. Capability overview.
+    # 15. Capability overview.
     if _matches_any(stripped, _CAPABILITY_REGEXES):
         return IntentMatch(intent=CAPABILITY, payload={})
 
-    # 14. Presence — last because the patterns are the loosest.
+    # 16. Presence — last because the patterns are the loosest.
     if _matches_any(stripped, _PRESENCE_REGEXES):
         return IntentMatch(intent=PRESENCE, payload={})
 
@@ -707,6 +1057,108 @@ def handle_memory_usage(agent: Any) -> str:
     return "\n".join(lines)
 
 
+async def handle_memory_list(agent: Any, *, limit: int = 10) -> str:
+    """Read the memory store and list the most recent / important
+    entries.
+
+    Grounded: numbers come from the live store, not from a hardcoded
+    string. Falls back gracefully if the store is unavailable.
+    """
+    if agent is None:
+        return "Memory store is not wired up in this brain instance."
+    try:
+        store = agent.memory
+        stats = store.get_stats() if hasattr(store, "get_stats") else {}
+        total = stats.get("total_memories") if isinstance(stats, dict) else None
+    except Exception as exc:
+        logger.error("memory_list_stats_failed", error=str(exc))
+        stats = {}
+        total = None
+
+    entries: list[Any] = []
+    try:
+        # Prefer the public query method if it exists with no kwargs.
+        if hasattr(store, "query"):
+            entries = await store.query(limit=limit)
+    except Exception as exc:
+        logger.warning("memory_list_query_failed", error=str(exc))
+        entries = []
+
+    lines = ["*Recent memory entries*"]
+    if total is not None:
+        lines[0] = f"*Recent memory entries* ({total} total)"
+    if isinstance(stats, dict):
+        by_type = stats.get("by_type") or {}
+        if by_type:
+            type_summary = ", ".join(f"{k}: {v}" for k, v in by_type.items())
+            lines.append(f"  by type: {type_summary}")
+    if not entries:
+        lines.append("")
+        lines.append(
+            "No entries returned by the live query. Memory may be "
+            "empty, or the store doesn't expose a no-arg query — try "
+            "`/memory <keyword>` for keyword search."
+        )
+        return "\n".join(lines)
+
+    lines.append("")
+    for i, entry in enumerate(entries[:limit], start=1):
+        try:
+            content = getattr(entry, "content", None) or str(entry)
+            kind = getattr(entry, "memory_type", "")
+            kind_str = kind.value if hasattr(kind, "value") else str(kind)
+            line = f"  {i}. [{kind_str}] {str(content)[:140]}"
+        except Exception:
+            line = f"  {i}. {str(entry)[:140]}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def handle_context_recall(
+    chat_conv: list[dict[str, str]],
+) -> str:
+    """Read the in-RAM chat tail and explain what we have been
+    talking about.
+
+    Pure: looks only at the per-chat conversation buffer the brain
+    already maintains, no LLM call. Reports the last few exchanges
+    factually so the operator can verify the agent has the context.
+    """
+    if not chat_conv:
+        return (
+            "I don't have any earlier turns recorded for this chat in "
+            "the in-RAM tail. Either this is a fresh chat after a "
+            "process restart (the persistent SQLite store still has "
+            "the older history — it just wasn't hydrated yet), or no "
+            "prior exchange happened."
+        )
+
+    # Pull the last ~6 entries (3 user/assistant pairs).
+    tail = list(chat_conv[-6:])
+    lines = [
+        f"Here are the last {len(tail)} entries I see in this chat's "
+        "in-RAM tail (no LLM, this is the literal buffer):",
+        "",
+    ]
+    for entry in tail:
+        role = entry.get("role", "?")
+        content = str(entry.get("content", ""))[:200]
+        sender = entry.get("sender", "")
+        if role == "user":
+            label = f"you ({sender})" if sender else "you"
+        else:
+            label = "me"
+        lines.append(f"  • {label}: {content}")
+    lines.append("")
+    lines.append(
+        "If this looks unrelated to your question, the conversation "
+        "may have rolled out of the in-RAM tail — the persistent "
+        "SQLite store has more, but only the most recent N turns are "
+        "kept hot."
+    )
+    return "\n".join(lines)
+
+
 def handle_memory_horizon(agent: Any) -> str:
     """Truthful answer to "how many turns back do you remember?".
 
@@ -985,8 +1437,10 @@ __all__ = [
     "CAPABILITY",
     "COMPARISON",
     "COMPLEX_TASK",
+    "CONTEXT_RECALL",
     "LIMITS",
     "MEMORY_HORIZON",
+    "MEMORY_LIST",
     "MEMORY_USAGE",
     "PRESENCE",
     "SELF_DESCRIPTION",
@@ -1003,8 +1457,10 @@ __all__ = [
     "handle_capability",
     "handle_comparison",
     "handle_complex_task",
+    "handle_context_recall",
     "handle_limits",
     "handle_memory_horizon",
+    "handle_memory_list",
     "handle_memory_usage",
     "handle_presence",
     "handle_self_description",
