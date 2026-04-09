@@ -10,6 +10,115 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## [Unreleased]
 
+## [1.36.0] — 2026-04-10
+
+Telegram Practical Memory, Self-Restart, and Comprehensive Intent Layer — closes the operator
+complaint that the agent forgets the previous message after a fast-path reply, adds opt-in
+end-to-end self-update + restart from Telegram, and broadens the deterministic intent layer
+so common operator phrasings never leak into a 180s CLI timeout or raw `errormaxturns` JSON
+blob.
+
+### Highlights
+- **End-to-end Telegram self-update + restart.** A single owner-only Telegram message
+  (`stiahni si novu verziu a nasad to`, `update yourself`, `git pull a reštart`, ~30
+  phrasings) now performs `git fetch` → `git pull --ff-only` → graceful drain → `os._exit(0)`.
+  Systemd / supervisord / docker brings up a fresh process with the new code. Opt-in via
+  `AGENT_SELF_RESTART_AFTER_UPDATE=1` and gated against a detected process supervisor.
+- **Practical conversation memory.** Every reply path (16 deterministic intents, dispatcher,
+  cache, RAG, work-queue, deny-guard, main LLM) now writes through one
+  `AgentBrain._finalize_reply()` so the in-RAM tail and the persistent SQLite store stay in
+  sync. The first message after a process restart hydrates the in-RAM tail from SQLite.
+- **Per-chat reply ordering.** `TelegramBot._chat_locks` keeps the reply ordering deterministic
+  inside any single chat while leaving different chats concurrent.
+- **Paraphrase-aware intent detection.** New heuristic fallbacks for self-update questions
+  AND imperatives — operators no longer need to know the exact regex phrasing.
+- **Comprehensive timeout normalization.** `errormaxturns`, `tooluse`, raw `result` JSON,
+  `CLI timeout after Xs`, `deadline exceeded`, `asyncio.TimeoutError`, `request_timeout=N`
+  — all map to a friendly user-facing sentence. Wired into both the brain path AND the
+  legacy `_handle_text` path so the production `Chyba: {"type":"result","subtype":"errormaxturns",...}`
+  leak cannot recur.
+
+### Added
+- `agent/brain/telegram_intents.py` — 18 deterministic intent handlers
+  (`presence`, `version`, `skills`, `capability`, `limits`, `self_description`, `comparison`,
+  `memory_usage`, `memory_horizon`, `memory_list`, `context_recall`, `autonomy`,
+  `complex_task`, `self_update_question`, `self_update_imperative`, `web_open`,
+  `weather_report_setup`) with English-first patterns and Slovak fallbacks. Two
+  precision-first heuristic fallbacks (`_looks_like_self_update_question`,
+  `_looks_like_self_update_imperative`) catch paraphrases without false positives.
+- `agent/core/self_update.py` — owner-only deterministic git fast-forward update with
+  eight exit branches. New `should_self_restart` field is set when the operator opt-in
+  flag is on AND a process supervisor is detected. New `_detect_process_supervisor()`
+  recognises `INVOCATION_ID` (systemd), `AGENT_PROCESS_SUPERVISOR` (operator override),
+  `SUPERVISOR_ENABLED` (supervisord), `container` env / `/.dockerenv` (docker / kubernetes).
+- `agent/core/error_normalize.py` — `normalize_user_error()` maps internal CLI noise and
+  the timeout family to short user-facing sentences.
+- `agent/core/brain.py::_finalize_reply()` + `_hydrate_chat_conv_if_needed()` — every reply
+  path persists the exchange via the same idempotent helper, and the very first message
+  after a process restart restores the per-chat tail from the persistent SQLite store.
+- `agent/core/brain.py::_schedule_graceful_restart()` — schedules a background task that
+  waits `AGENT_SELF_RESTART_GRACE_S` (default 3) so the Telegram bot delivers the reply,
+  then drains the orchestrator and calls `os._exit(0)`.
+- `agent/social/telegram_bot.py::_chat_locks` + `_get_chat_lock(chat_id)` — per-chat
+  asyncio lock so two messages in the same chat serialize while different chats stay
+  concurrent.
+- `deploy/agent-life-space.service` — drop-in systemd unit with `Restart=always`,
+  `RestartSec=2`, `StartLimitBurst=5`, optional `WatchdogSec`, hardening flags, and
+  `AGENT_SELF_RESTART_AFTER_UPDATE=1` pre-enabled.
+- `docs/SELF_UPDATE.md` — full operator handbook for the feature: TL;DR, env vars,
+  systemd / supervisord / docker recipes, failure-mode matrix, troubleshooting.
+
+### Changed
+- `agent/core/brain.py` — top-level `process()` wrapper now hydrates the chat tail and
+  finalizes every reply path through one helper. The main LLM path no longer maintains
+  its own per-path bookkeeping. `_max_conversation` 10 → 20 turns.
+- `agent/memory/persistent_conversation.py::_get_recent_messages` — `ORDER BY` switched
+  from `timestamp DESC` to `id DESC` to fix a same-timestamp ordering bug where
+  `save_exchange` writes a user/assistant pair under one `time.time()` snapshot and
+  retrieval would return them in [assistant, user] order.
+- `agent/social/telegram_handler.py` — legacy `_handle_text` path now passes
+  `response.error`, `response.text`, exception messages, and web errors through
+  `normalize_user_error()` / `_friendly_web_error()` instead of the raw `f"Chyba: ..."`
+  prefix.
+
+### Fixed
+- **Conversation memory bypass on intent paths.** Production complaint that a fast-path
+  intent reply was followed by an LLM call with zero history. Centralized in
+  `_finalize_reply`.
+- **Lost chat history after restart.** First message after process restart now hydrates
+  the in-RAM tail from the persistent SQLite store.
+- **Per-chat reply race.** Two messages from the same chat could overtake each other.
+- **Paraphrased self-update questions hitting 180s timeouts.** Production complaint:
+  "vraj máš novú verziu kde si schopný si aj nasadiť nové veci k sebe je to tak ?" fell
+  through to LLM and timed out with raw JSON. Now caught by the question heuristic.
+- **Free-form download/deploy imperatives ignored.** Production complaint:
+  "stiahni si novu verziu a nasad to" fell through because the regex set only knew "nasad"
+  and "deploy". Now caught by the imperative heuristic alongside ~30 other phrasings.
+- **`Chyba: {"type":"result",...}` raw JSON leak in Telegram.** The legacy `_handle_text`
+  path bypassed the brain's normalization. Now wired through `normalize_user_error()`
+  at every error site.
+- **`stiahni novú verziu` misclassified as `version` intent.** The bare `verziu`
+  terminator regex was too greedy. Now requires the noun to be the whole message.
+
+### Tests
+- 1967+ pytest tests passing (was 1833), 4 skipped
+- 76 new tests in `tests/test_telegram_intents.py`
+- 16 new tests in `tests/test_brain_persistence.py`
+- 7 new tests in `tests/test_telegram_bot_ordering.py`
+- 11 new tests in `tests/test_self_update.py`
+- ruff check agent tests → clean
+- mypy agent --ignore-missing-imports → 0 issues across 115 source files
+
+### Migration notes
+- **No breaking changes.** Self-restart is opt-in via `AGENT_SELF_RESTART_AFTER_UPDATE=1`,
+  default OFF. Existing deployments behave identically until the operator opts in.
+- **To enable end-to-end Telegram update + restart:** copy
+  `deploy/agent-life-space.service` to `/etc/systemd/system/`, edit user/group/paths
+  (4 lines), `systemctl daemon-reload && systemctl enable --now agent-life-space`. See
+  `docs/SELF_UPDATE.md` for the full setup.
+- **Default language is now English.** Set `AGENT_DEFAULT_LANGUAGE=Slovak` (or any other
+  language) to override. The model still matches the user's language on signal regardless.
+
 ## [1.35.0] — 2026-04-08
 
 Tiered Logging, Vault Crash-Safety, Runtime LLM Control, and Security Hardening — deterministic
