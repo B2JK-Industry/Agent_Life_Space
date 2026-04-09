@@ -59,6 +59,16 @@ _INTERNAL_NOISE_SUBSTRINGS: tuple[str, ...] = (
 
 _TOKEN_COST_LINE = re.compile(r"_💰 .*?tokens_", re.DOTALL)
 
+# Plain-text CLI timeout. The Claude Code subprocess returns a string
+# like ``CLI timeout after 180s`` (sometimes ``timeout after 60s``,
+# ``timed out after 180 seconds``, etc.) when the wall-clock budget
+# is exceeded. We normalize these to a short human sentence so the
+# user does not see "CLI timeout after 180s" in chat.
+_CLI_TIMEOUT_RE = re.compile(
+    r"\b(?:cli\s+)?(?:timed?\s+out|timeout)(?:\s+after\s+(?P<secs>\d+)\s*(?:s|sec|seconds?))?\b",
+    re.IGNORECASE,
+)
+
 
 def normalize_user_error(raw: str | None) -> str:
     """Return a short user-facing sentence for *raw*.
@@ -85,6 +95,14 @@ def normalize_user_error(raw: str | None) -> str:
                 return short
 
     lower = text.lower()
+
+    # Plain CLI timeout — must run BEFORE the structured-noise check
+    # because "timeout" is also in the internal-noise table for the
+    # *structured* form.
+    timeout_match = _CLI_TIMEOUT_RE.search(text)
+    if timeout_match:
+        return _friendly_timeout(timeout_match.group("secs"))
+
     if any(token in lower for token in _INTERNAL_NOISE_SUBSTRINGS):
         # Try to find a known stop reason.
         for key, friendly in _STOP_REASON_MAP.items():
@@ -96,6 +114,17 @@ def normalize_user_error(raw: str | None) -> str:
         )
 
     return text
+
+
+def _friendly_timeout(secs: str | None) -> str:
+    """Map a CLI timeout to a short user-facing sentence."""
+    base = (
+        "I took too long thinking and didn't finish the reply. "
+        "Try shortening the question or asking it more directly."
+    )
+    if secs:
+        return f"{base} (timeout after {secs}s)"
+    return base
 
 
 def _from_json_payload(obj: dict[str, Any]) -> str | None:

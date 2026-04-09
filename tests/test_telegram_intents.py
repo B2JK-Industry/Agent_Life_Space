@@ -510,3 +510,151 @@ class TestErrorNormalization:
         assert "max_turns" not in out
         assert "session_id" not in out
         assert "tool_use" not in out
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "CLI timeout after 180s",
+            "CLI timeout after 60s",
+            "timeout after 30s",
+            "timed out after 120 seconds",
+            "Cli Timeout After 90s",  # case-insensitive
+        ],
+    )
+    def test_plain_cli_timeout_normalized(self, raw):
+        """Plain CLI timeouts must become a short user-facing sentence,
+        not a raw 'CLI timeout after 180s' string."""
+        from agent.core.error_normalize import normalize_user_error
+
+        out = normalize_user_error(raw)
+        assert "took too long" in out.lower()
+        assert "shorten" in out.lower() or "shortening" in out.lower()
+        # The raw 'CLI timeout' phrasing must NOT survive verbatim.
+        assert "cli timeout" not in out.lower()
+
+
+# ─────────────────────────────────────────────
+# 5. Paraphrased self-update question fallback
+# ─────────────────────────────────────────────
+
+
+class TestParaphrasedSelfUpdateQuestion:
+    """Regression: paraphrased capability questions about self-update
+    must hit the deterministic explanation path instead of leaking into
+    a 180s CLI timeout in generic chat flow."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # User's actual production message that hit the timeout.
+            "vraj maš novu verziu kde si schopny si aj nasadit nove veci k sebe je to tak ?",
+            "je pravda že sa už vieš sám aktualizovať?",
+            "už si vieš nasadiť nové veci k sebe?",
+            "máš capability aktualizovať sám seba?",
+            "vieš si k sebe nasadiť novú verziu alebo nie?",
+        ],
+    )
+    def test_paraphrase_detected_as_self_update_question(self, text):
+        """The heuristic must catch paraphrased capability questions."""
+        match = telegram_intents.detect_intent(text)
+        assert match is not None, f"intent missed for paraphrase: {text!r}"
+        assert match.intent == telegram_intents.SELF_UPDATE_QUESTION
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Imperatives must NOT regress to question intent.
+            "nasad novú verziu u seba",
+            "update yourself",
+            "aktualizuj sa",
+            "deploy latest",
+        ],
+    )
+    def test_imperative_still_routes_to_execution(self, text):
+        match = telegram_intents.detect_intent(text)
+        assert match is not None
+        assert match.intent == telegram_intents.SELF_UPDATE_IMPERATIVE
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Negative regression: unrelated questions / ambiguous
+            # phrasings must NOT be misclassified as self-update.
+            "random unrelated question",
+            "môžem ti dať novú verziu prompt-u?",
+            "aktualizujme tento súbor prosím",
+            "vieš mi ukázať starú verziu kódu?",
+            "vieš si stiahnuť ten obrázok?",
+            "are you there?",
+            "what version?",
+            "aké máš skills?",
+        ],
+    )
+    def test_unrelated_questions_not_misclassified(self, text):
+        match = telegram_intents.detect_intent(text)
+        if match is not None:
+            assert match.intent != telegram_intents.SELF_UPDATE_QUESTION
+
+    @pytest.mark.asyncio
+    async def test_brain_routes_paraphrase_without_provider(self, brain, monkeypatch):
+        """The user's actual production message: must reach the
+        deterministic explanation path with no provider call and no
+        self_update execution."""
+        fake = _patch_provider(monkeypatch)
+        with patch("agent.core.self_update.run_self_update") as run_mock:
+            run_mock.side_effect = AssertionError(
+                "Self-update must NOT execute for a paraphrased question",
+            )
+            result = await brain.process(_msg(
+                "vraj maš novu verziu kde si schopny si aj nasadit "
+                "nove veci k sebe je to tak ?",
+            ))
+        # Capability explanation, not an execution result.
+        assert "owner-only" in result.lower() or "fast-forward" in result.lower()
+        fake.generate.assert_not_called()
+
+
+# ─────────────────────────────────────────────
+# 6. Plain CLI timeout reaches the user as friendly text
+# ─────────────────────────────────────────────
+
+
+class TestBrainTimeoutNormalization:
+    """When the CLI provider returns a plain ``CLI timeout after 180s``
+    error, the brain must surface a normalized friendly sentence — not
+    the raw timeout string."""
+
+    @pytest.mark.asyncio
+    async def test_provider_timeout_is_normalized(self, brain, monkeypatch):
+        from agent.core.llm_provider import GenerateResponse
+
+        # Avoid the deterministic intent layer so we exercise the
+        # generic provider failure path. "explain entropy" classifies
+        # as chat/factual, hits the provider, returns a timeout error.
+        fake = MagicMock()
+        fake.supports_tools.return_value = False
+        fake.generate = AsyncMock(return_value=GenerateResponse(
+            error="CLI timeout after 180s",
+            success=False,
+            input_tokens=0,
+            output_tokens=0,
+            cost_usd=0.0,
+            latency_ms=180000,
+        ))
+        monkeypatch.setattr(
+            "agent.core.llm_provider.get_provider", lambda: fake,
+        )
+        # Disable the Telegram+CLI+sandbox guard so we reach the
+        # provider call (the question is conversational, not programming).
+        monkeypatch.setenv("LLM_BACKEND", "cli")
+        monkeypatch.setenv("AGENT_SANDBOX_ONLY", "0")
+
+        result = await brain.process(_msg(
+            "Vysvetli mi prosím entropiu v termodynamike v troch vetách.",
+        ))
+
+        # Must NOT contain the raw CLI noise.
+        assert "CLI timeout" not in result
+        assert "180s" not in result or "timeout after 180s" in result.lower()
+        # Must contain the friendly sentence.
+        assert "took too long" in result.lower() or "thinking" in result.lower()

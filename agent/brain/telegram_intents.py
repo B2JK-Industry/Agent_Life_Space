@@ -141,12 +141,120 @@ _CAPABILITY_REGEXES: tuple[re.Pattern[str], ...] = (
 # Self-update **question** (just asking about the capability).
 _SELF_UPDATE_QUESTION_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bcan\s+you\s+(deploy|install|update|upgrade)\s+(yourself|a\s+new\s+version)\b", re.IGNORECASE),
-    re.compile(r"\bare\s+you\s+able\s+to\s+update\s+yourself\b", re.IGNORECASE),
+    re.compile(r"\bare\s+you\s+able\s+to\s+(update|upgrade|deploy|install)\s+(yourself|a\s+new\s+version)\b", re.IGNORECASE),
+    re.compile(r"\bdo\s+you\s+have\s+(a\s+)?(self[\s-]?update|self[\s-]?deploy)\s+capabilit", re.IGNORECASE),
     re.compile(r"\bvieš\s+si\s+nasadi(ť|t)\s+nov", re.IGNORECASE),
-    re.compile(r"\bvieš\s+sa\s+aktualizov", re.IGNORECASE),
+    re.compile(r"\bvieš\s+sa\s+(aktualizov|update)", re.IGNORECASE),
     re.compile(r"\bvieš\s+si\s+(stiahnu|stiahnu(ť|t))\s+nov", re.IGNORECASE),
     re.compile(r"\bvieš\s+si\s+update", re.IGNORECASE),
+    re.compile(r"\bmáš\s+capabilit(y|u)\s+(aktualizov|update|nasadi|deploy)", re.IGNORECASE),
+    re.compile(r"\bmas\s+capabilit(y|u)\s+(aktualizov|update|nasadi|deploy)", re.IGNORECASE),
 )
+
+# ─────────────────────────────────────────────
+# Heuristic fallback for paraphrased self-update *questions*
+# ─────────────────────────────────────────────
+#
+# The regexes above match the canonical phrasings, but operators ask
+# the same question in many ways:
+#
+#   * "vraj maš novu verziu kde si schopny si aj nasadit nove veci k sebe"
+#   * "je pravda že sa už vieš sám aktualizovať?"
+#   * "už si vieš nasadiť nové veci k sebe?"
+#   * "máš capability aktualizovať sám seba?"
+#
+# A capability *question* about self-update has THREE signals that must
+# all coexist:
+#
+#   1. A self-reference token  (sám / seba / sebe / k sebe / yourself / itself)
+#   2. A deploy/update verb    (nasadiť / aktualizov / update / deploy / install /
+#                                upgrade / stiahnu / pull / nahodiť)
+#   3. A question marker       (ends with "?", or contains a question opener like
+#                                "vieš", "je pravda", "vraj", "už", "can you",
+#                                "are you", "do you", "is it true")
+#
+# Crucially this must NOT fire on imperatives ("nasad novú verziu u seba")
+# because the imperative has its own dedicated detector that runs first.
+# We also require that the message NOT start with a known imperative verb
+# as a belt-and-braces guard.
+
+_SELF_REFERENCE_TOKENS: tuple[str, ...] = (
+    "sám", "sam", "seba", "sebe", "k sebe", "ku sebe",
+    "yourself", "itself", "self",
+)
+
+_SELF_UPDATE_VERB_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bnasadi(ť|t)\b", re.IGNORECASE),
+    re.compile(r"\bnasadit\b", re.IGNORECASE),
+    re.compile(r"\bnasad(í|i)t\b", re.IGNORECASE),
+    re.compile(r"\bnahodi(ť|t)\b", re.IGNORECASE),
+    re.compile(r"\baktualizov", re.IGNORECASE),
+    re.compile(r"\bupdate(?!\s*-?\s*ni\s+sa)\b", re.IGNORECASE),
+    re.compile(r"\bupgrade\b", re.IGNORECASE),
+    re.compile(r"\bdeploy\b", re.IGNORECASE),
+    re.compile(r"\binstall\b", re.IGNORECASE),
+    re.compile(r"\bstiahnu(ť|t)\b", re.IGNORECASE),
+    re.compile(r"\bpull\s+(the\s+)?latest\b", re.IGNORECASE),
+    re.compile(r"\bnov(ú|u|ej|e)\s+verziu\b", re.IGNORECASE),
+    re.compile(r"\bnew\s+version\b", re.IGNORECASE),
+)
+
+_QUESTION_OPENERS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bvieš\b", re.IGNORECASE),
+    re.compile(r"\bvies\b", re.IGNORECASE),
+    re.compile(r"\bmôžeš\b", re.IGNORECASE),
+    re.compile(r"\bmozes\b", re.IGNORECASE),
+    re.compile(r"\bje\s+pravda\b", re.IGNORECASE),
+    re.compile(r"\bje\s+to\s+tak\b", re.IGNORECASE),
+    re.compile(r"\bvraj\b", re.IGNORECASE),
+    re.compile(r"\buž\s+", re.IGNORECASE),
+    re.compile(r"\buz\s+", re.IGNORECASE),
+    re.compile(r"\bcan\s+you\b", re.IGNORECASE),
+    re.compile(r"\bare\s+you\b", re.IGNORECASE),
+    re.compile(r"\bdo\s+you\b", re.IGNORECASE),
+    re.compile(r"\bis\s+it\s+true\b", re.IGNORECASE),
+    re.compile(r"\bmáš\b", re.IGNORECASE),
+    re.compile(r"\bmas\b", re.IGNORECASE),
+)
+
+
+def _looks_like_self_update_question(text: str) -> bool:
+    """Heuristic fallback for paraphrased self-update capability questions.
+
+    Returns ``True`` only when ALL three signals coexist:
+      1. self-reference token
+      2. deploy/update verb
+      3. question marker
+    AND the message is not an imperative.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    lowered = stripped.lower()
+
+    # Imperative guard: if any imperative regex matches, defer to that
+    # branch instead.
+    for imp in _SELF_UPDATE_IMPERATIVE_REGEXES:
+        if imp.search(stripped):
+            return False
+
+    has_self_ref = any(token in lowered for token in _SELF_REFERENCE_TOKENS)
+    if not has_self_ref:
+        return False
+
+    has_verb = any(p.search(stripped) for p in _SELF_UPDATE_VERB_PATTERNS)
+    if not has_verb:
+        return False
+
+    is_question = (
+        stripped.rstrip().endswith("?")
+        or any(opener.search(stripped) for opener in _QUESTION_OPENERS)
+    )
+    if not is_question:
+        return False
+
+    return True
 
 # Self-update **imperative** — operator is telling the agent to do it.
 _SELF_UPDATE_IMPERATIVE_REGEXES: tuple[re.Pattern[str], ...] = (
@@ -341,8 +449,13 @@ def detect_intent(text: str) -> IntentMatch | None:
     if _matches_any(stripped, _SELF_UPDATE_IMPERATIVE_REGEXES):
         return IntentMatch(intent=SELF_UPDATE_IMPERATIVE, payload={})
 
-    # 2. Self-update question.
+    # 2. Self-update question — canonical regexes first, then a
+    #    paraphrase heuristic so the user does not get a 180s CLI
+    #    timeout for "vraj máš novú verziu kde si schopný si aj
+    #    nasadiť nové veci k sebe je to tak ?".
     if _matches_any(stripped, _SELF_UPDATE_QUESTION_REGEXES):
+        return IntentMatch(intent=SELF_UPDATE_QUESTION, payload={})
+    if _looks_like_self_update_question(stripped):
         return IntentMatch(intent=SELF_UPDATE_QUESTION, payload={})
 
     # 3. Natural-language web open/read.
