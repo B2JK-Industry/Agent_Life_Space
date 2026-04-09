@@ -124,6 +124,21 @@ class TestIntentDetection:
             ("každé ráno mi pošli počasie v Bratislave", telegram_intents.WEATHER_REPORT_SETUP),
             ("every morning send me weather in Prague", telegram_intents.WEATHER_REPORT_SETUP),
             ("set up daily weather report for Košice", telegram_intents.WEATHER_REPORT_SETUP),
+            # Memory list (production complaint)
+            ("ake su tvoje spomienky ?", telegram_intents.MEMORY_LIST),
+            ("aké sú tvoje spomienky?", telegram_intents.MEMORY_LIST),
+            ("aké máš spomienky?", telegram_intents.MEMORY_LIST),
+            ("what are your memories?", telegram_intents.MEMORY_LIST),
+            ("list your memories", telegram_intents.MEMORY_LIST),
+            ("show me your memories", telegram_intents.MEMORY_LIST),
+            # Context recall (production complaint)
+            ("prečo si začal s touto temou ?", telegram_intents.CONTEXT_RECALL),
+            ("preco si zacal s touto temou?", telegram_intents.CONTEXT_RECALL),
+            ("o čom sme sa bavili?", telegram_intents.CONTEXT_RECALL),
+            ("čo sme riešili?", telegram_intents.CONTEXT_RECALL),
+            ("why did you start this topic?", telegram_intents.CONTEXT_RECALL),
+            ("what were we talking about?", telegram_intents.CONTEXT_RECALL),
+            ("remind me what i said", telegram_intents.CONTEXT_RECALL),
         ],
     )
     def test_detect(self, text: str, expected: str) -> None:
@@ -497,6 +512,50 @@ class TestBrainBypassesProviderForIntents:
         fake.generate.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_memory_list(self, brain, monkeypatch):
+        """The 'aké sú tvoje spomienky' intent reads the memory store
+        and produces a deterministic listing — no provider call."""
+        fake = _patch_provider(monkeypatch)
+        # Seed one memory so the listing has something to show.
+        from agent.memory.store import MemoryEntry, MemoryType
+
+        await brain._agent.memory.store(MemoryEntry(
+            content="test memory entry from regression test",
+            memory_type=MemoryType.SEMANTIC,
+            tags=["regression"],
+            source="test",
+            importance=0.5,
+        ))
+        result = await brain.process(_msg("ake su tvoje spomienky ?"))
+        assert "memory" in result.lower() or "spomien" in result.lower() or "Recent memory" in result
+        fake.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_context_recall_with_history(self, brain, monkeypatch):
+        """'prečo si začal s touto temou' reads the in-RAM chat tail
+        and lists the prior turns deterministically."""
+        fake = _patch_provider(monkeypatch)
+        # Seed history.
+        chat_conv = brain._get_chat_conversation("123")
+        chat_conv.append({"role": "user", "content": "tell me about coffee", "sender": "owner"})
+        chat_conv.append({"role": "assistant", "content": "Coffee is a beverage."})
+        chat_conv.append({"role": "user", "content": "is it healthy?", "sender": "owner"})
+        chat_conv.append({"role": "assistant", "content": "Moderate consumption is fine."})
+
+        result = await brain.process(_msg("prečo si začal s touto temou ?"))
+        assert "coffee" in result.lower() or "beverage" in result.lower()
+        fake.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_context_recall_no_history(self, brain, monkeypatch):
+        """With no prior turns the handler explains the situation
+        instead of fabricating one."""
+        fake = _patch_provider(monkeypatch)
+        result = await brain.process(_msg("o čom sme sa bavili?"))
+        assert "don't have" in result.lower() or "no earlier" in result.lower() or "fresh" in result.lower()
+        fake.generate.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_weather_setup_does_not_pre_bake(self, brain, monkeypatch):
         fake = _patch_provider(monkeypatch)
         result = await brain.process(
@@ -605,6 +664,27 @@ class TestErrorNormalization:
         assert "session_id" not in out
         assert "tool_use" not in out
 
+    def test_legacy_chyba_payload_normalized(self):
+        """Regression: the production payload that was leaking through
+        the legacy _handle_text path. Must NOT survive verbatim."""
+        from agent.core.error_normalize import normalize_user_error
+
+        raw = (
+            '{"type":"result","subtype":"errormaxturns","durationms":2868,'
+            '"durationapims":2812,"iserror":true,"numturns":2,'
+            '"stopreason":"tooluse","sessionid":"e7ec9cd8-3907-4661-afca"}'
+        )
+        out = normalize_user_error(raw)
+        # No raw JSON / internal fields.
+        assert "errormaxturns" not in out
+        assert "sessionid" not in out
+        assert "stopreason" not in out
+        assert "durationms" not in out
+        assert "iserror" not in out
+        assert '"type"' not in out
+        # Has a friendly explanation.
+        assert "turn limit" in out.lower() or "tool-use" in out.lower()
+
     @pytest.mark.parametrize(
         "raw",
         [
@@ -671,12 +751,69 @@ class TestParaphrasedSelfUpdateQuestion:
             "update yourself",
             "aktualizuj sa",
             "deploy latest",
+            # Download + deploy combos (the operator's natural phrasing).
+            "stiahni si novu verziu a nasad to",
+            "stiahni si novú verziu a nasaď to",
+            "stiahni si najnovšiu verziu a nasaď ju",
+            "stiahni najnovsi kod a nasad ho",
+            "stiahni si update a nasaď",
+            "stiahni a nasaď",
+            # Standalone download against the agent itself.
+            "stiahni novú verziu",
+            "stiahni si novú verziu",
+            "stiahni si najnovšiu verziu",
+            "stiahnite novú verziu",
+            "stiahni najnovšiu verziu",
+            # English equivalents.
+            "pull and deploy",
+            "download and deploy latest",
+            "download the latest version",
+            "download newest version",
+            "pull the latest and deploy",
+            "fetch and install",
+            "pull latest and restart",
+            # Free-form heuristic paraphrases (the operator types
+            # whatever they think of, the heuristic catches it).
+            "stiahni si nový kód z githubu a nahoď ho",
+            "vezmi si najnovšiu verziu a nasaď",
+            "spusti deploy",
+            "spustite deploy nového kódu",
+            "nahoď to čo je na main",
+            "nahoď to čo je na github",
+            "aktualizuj sa na najnovšiu verziu",
+            "naťahaj nový kód a aktualizuj sa",
+            "natahaj novy kod a nasad",
+            "vezmi z githubu posledný kód",
+            "vezmi nový kód z hlavnej vetvy",
+            "stiahni github a nasaď",
+            "stiahni github update",
+            "stiahni si update",
+            "stiahni si novinky",
+            "stiahni z gitu nový kód",
+            # Bare git invocations.
+            "git pull",
+            "git pull a reštart",
+            "git pull and restart",
+            "git fetch",
+            "pull from github",
+            "pull from github and restart",
+            "pull from main",
+            # English free-form.
+            "grab the latest code",
+            "get the latest version",
+            "redeploy with the new code",
+            "release the latest",
+            "install the latest update",
+            "update to latest",
+            "fetch new version",
         ],
     )
     def test_imperative_still_routes_to_execution(self, text):
         match = telegram_intents.detect_intent(text)
         assert match is not None
-        assert match.intent == telegram_intents.SELF_UPDATE_IMPERATIVE
+        assert match.intent == telegram_intents.SELF_UPDATE_IMPERATIVE, (
+            f"{text!r} got {match.intent!r}, expected self_update_imperative"
+        )
 
     @pytest.mark.parametrize(
         "text",
@@ -697,6 +834,33 @@ class TestParaphrasedSelfUpdateQuestion:
         match = telegram_intents.detect_intent(text)
         if match is not None:
             assert match.intent != telegram_intents.SELF_UPDATE_QUESTION
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Things that *contain* "stiahni" / "download" / "pull"
+            # but are NOT about the agent updating itself. The
+            # heuristic must reject these via the non-self-target
+            # exclusion list.
+            "stiahni mi obrázok z internetu",
+            "stiahni si tento film",
+            "stiahni mi pdf z tej stránky",
+            "stiahni si tú fotku",
+            "stiahni mi mp3 z youtube",
+            "download this video for me",
+            "pull the milk from the fridge",
+            "get me a coffee",
+            "grab me the file",
+            "aktualizujme tento súbor prosím",
+            "aktualizuj toto pdf",
+        ],
+    )
+    def test_unrelated_download_not_misclassified(self, text):
+        match = telegram_intents.detect_intent(text)
+        if match is not None:
+            assert match.intent != telegram_intents.SELF_UPDATE_IMPERATIVE, (
+                f"{text!r} should not be classified as self_update_imperative"
+            )
 
     @pytest.mark.asyncio
     async def test_brain_routes_paraphrase_without_provider(self, brain, monkeypatch):

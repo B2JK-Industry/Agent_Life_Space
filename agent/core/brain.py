@@ -872,6 +872,13 @@ class AgentBrain:
             if intent == telegram_intents.MEMORY_USAGE:
                 return telegram_intents.handle_memory_usage(self._agent)
 
+            if intent == telegram_intents.MEMORY_LIST:
+                return await telegram_intents.handle_memory_list(self._agent)
+
+            if intent == telegram_intents.CONTEXT_RECALL:
+                chat_conv = self._get_chat_conversation(message.chat_id)
+                return telegram_intents.handle_context_recall(chat_conv)
+
             if intent == telegram_intents.MEMORY_HORIZON:
                 # The handler reads the live tail size from this
                 # brain instance via a tiny shim attribute on the
