@@ -244,8 +244,11 @@ async def run_self_update(
     remote_url = remote_url_out.strip()
 
     # 4. Dirty worktree? fail-closed.
+    # Use -uno to ignore untracked files — they don't block
+    # `git pull --ff-only` and are typically runtime artifacts
+    # (.pid, .db-shm, .db-wal, logs, etc.).
     rc, status_out, status_err = await _run_git(
-        ["status", "--porcelain"], cwd=repo_root,
+        ["status", "--porcelain", "-uno"], cwd=repo_root,
     )
     if rc != 0:
         return SelfUpdateResult(

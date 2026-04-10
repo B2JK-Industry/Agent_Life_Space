@@ -65,9 +65,13 @@ agent-test/
 workspaces/
 agent/identity/
 agent/telegram/
+.agent-life-space.pid
+.last_update_id
 
 # Agent data (persistent, not in git)
 *.db
+*.db-shm
+*.db-wal
 agent/memory/memories.db
 agent/tasks/tasks.db
 agent/logs/*.log
