@@ -40,7 +40,9 @@ StartLimitIntervalSec=60
 # WatchdogSec=120
 
 # Hardening — adjust to your environment.
-NoNewPrivileges=true
+# NoNewPrivileges disabled because Docker requires setgid for group
+# switching when running containers from the build pipeline.
+NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=false
 PrivateTmp=true
