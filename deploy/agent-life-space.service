@@ -34,9 +34,10 @@ RestartSec=2
 StartLimitBurst=5
 StartLimitIntervalSec=60
 
-# Watchdog (optional). The agent's heartbeat loop satisfies systemd
-# every 15s; 120s leaves plenty of headroom.
-WatchdogSec=120
+# Watchdog disabled — the agent runs long build jobs (codegen + Docker)
+# that can take 5+ minutes. Re-enable once sd_notify heartbeat is
+# implemented in the main loop.
+# WatchdogSec=120
 
 # Hardening — adjust to your environment.
 NoNewPrivileges=true

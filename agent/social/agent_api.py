@@ -357,7 +357,8 @@ class AgentAPI:
                     else:
                         from agent.core.models import classify_task
                         task_type = classify_task(text)
-                        api_timeout = 300 if task_type == "programming" else 90
+                        # programming routes to build pipeline now → needs 600s
+                        api_timeout = 600 if task_type == "programming" else 90
                     # Authenticated local callers get terminal-level trust.
                     # Remote authenticated callers get restricted trust.
                     is_local = ip in _LOCAL_IPS
@@ -379,7 +380,7 @@ class AgentAPI:
                     ))
                     logger.warning("agent_api_timeout", sender=sender)
                     return web.json_response({
-                        "reply": "Premýšľam príliš dlho. Skús jednoduchšiu otázku.",
+                        "reply": "I took too long thinking. Try a simpler question or use /build for complex tasks.",
                         "agent": _runtime_agent_slug(),
                         "sender": sender,
                         "timeout": True,
