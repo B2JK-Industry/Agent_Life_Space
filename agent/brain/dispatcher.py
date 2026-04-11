@@ -69,10 +69,13 @@ class InternalDispatcher:
                     logger.error("dispatch_error", handler=handler.__name__, error=str(e))
 
         # === Semantic router fallback (if model installed) ===
+        # classify_intent() calls model.encode() which is CPU-bound;
+        # run off the event loop so it cannot stall the server.
         try:
+            import asyncio as _aio
             from agent.brain.semantic_router import classify_intent, is_available
             if is_available():
-                intent, confidence = classify_intent(text_lower)
+                intent, confidence = await _aio.to_thread(classify_intent, text_lower)
                 # Zvýšený threshold — 0.55 bol príliš nízky, matchoval konverzačné otázky
                 if confidence >= 0.75 and len(text_lower.split()) <= 6:
                     intent_handler_map = {

@@ -66,6 +66,7 @@ CONTEXT_RECALL = "context_recall"  # "why did you start this topic?"
 AUTONOMY = "autonomy"              # "how autonomous are you?"
 COMPLEX_TASK = "complex_task"      # "what kind of complex task can I give you?"
 LIMITS = "limits"                  # "what can't you do?"
+PROJECT_STATUS = "project_status"  # "what's the project state?", "aký je stav projektu?"
 WEATHER_REPORT_SETUP = "weather_report_setup"  # "every morning send me weather in X"
 WEATHER_REPORT_CITY_REPLY = "weather_report_city_reply"  # plain city after follow-up
 
@@ -646,6 +647,46 @@ _COMPLEX_TASK_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(co|čo)\s+(ti\s+)?môžem\s+(zadať|zadat|dať|dat)\b", re.IGNORECASE),
 )
 
+# Project-status / project-state questions — the kind that otherwise
+# fall through to an expensive CLI/Opus LLM call and time out.
+# Patterns match Slovak + English variants of "what's the project state",
+# "what tests pass", "what's done", "what's not finished", "open problems".
+_PROJECT_STATUS_REGEXES: tuple[re.Pattern[str], ...] = (
+    # SK: "aký je (aktuálny) stav projektu / ALS / na serveri"
+    re.compile(
+        r"\b(aký|aky|jaky|jaký)\s+(je\s+)?(aktuálny\s+|aktualny\s+)?"
+        r"stav\s+(projektu|als|agenta|servera|na\s+server)",
+        re.IGNORECASE,
+    ),
+    # SK: "čo je hotové / čo ešte nie je hotové / dokončené"
+    re.compile(
+        r"\b(čo|co)\s+(je\s+)?(dnes\s+)?(hotov[éeá]|dokončen[éeá]|dokonc)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(čo|co)\s+(ešte\s+|este\s+)?(nie\s+je|neni)\s+(hotov|dokončen|dokonc|implemen)",
+        re.IGNORECASE,
+    ),
+    # SK: "koľko testov prechádza"
+    re.compile(
+        r"\b(koľko|kolko)\s+testov\s+(prechádza|prechadza|prejde|pass)",
+        re.IGNORECASE,
+    ),
+    # SK: "aké sú najväčšie otvorené problémy"
+    re.compile(
+        r"\b(aké|ake)\s+(sú|su)\s+.{0,20}(problém|problem|bug|issue|otvor)",
+        re.IGNORECASE,
+    ),
+    # EN equivalents
+    re.compile(r"\bwhat('s|\s+is)\s+(the\s+)?(current\s+)?project\s+stat", re.IGNORECASE),
+    re.compile(r"\bwhat('s|\s+is)\s+(done|finished|completed|ready)\b", re.IGNORECASE),
+    re.compile(r"\bwhat('s|\s+is)\s+not\s+(done|finished|completed)\b", re.IGNORECASE),
+    re.compile(r"\bhow\s+many\s+tests\s+(pass|fail|run)\b", re.IGNORECASE),
+    re.compile(r"\bwhat\s+(are\s+)?(the\s+)?(biggest|open|main)\s+(problem|issue|bug)", re.IGNORECASE),
+    re.compile(r"\bproject\s+status\b", re.IGNORECASE),
+    re.compile(r"\bproject\s+state\b", re.IGNORECASE),
+)
+
 
 # ─────────────────────────────────────────────
 # Detection
@@ -764,6 +805,11 @@ def detect_intent(text: str) -> IntentMatch | None:
     # 13. Complex task examples.
     if _matches_any(stripped, _COMPLEX_TASK_REGEXES):
         return IntentMatch(intent=COMPLEX_TASK, payload={})
+
+    # 13.5. Project status / state questions — catch these before they
+    #    fall through to an expensive LLM call that times out.
+    if _matches_any(stripped, _PROJECT_STATUS_REGEXES):
+        return IntentMatch(intent=PROJECT_STATUS, payload={})
 
     # 14. Skills query.
     if _matches_any(stripped, _SKILLS_REGEXES):
@@ -1240,6 +1286,84 @@ def handle_autonomy(agent: Any) -> str:
     return "\n".join(lines)
 
 
+async def handle_project_status(agent: Any) -> str:
+    """Grounded project-status answer built from live runtime data.
+
+    Answers questions like "what's the project state?", "how many tests
+    pass?", "what's done / not done?". All data is pulled from the
+    running agent — no hallucinated facts.
+    """
+    import agent as _agent_pkg
+
+    parts: list[str] = []
+    parts.append(f"*Project status — Agent Life Space v{_agent_pkg.__version__}*\n")
+
+    # Module health
+    try:
+        health = agent.get_health_report()
+        if isinstance(health, dict):
+            status = health.get("status", "unknown")
+            uptime = health.get("uptime_seconds", 0)
+            uptime_h = uptime // 3600
+            uptime_m = (uptime % 3600) // 60
+            parts.append(f"Runtime: {status} (uptime {uptime_h}h {uptime_m}m)")
+            modules = health.get("modules", {})
+            if modules:
+                healthy = sum(1 for v in modules.values() if v == "ok")
+                parts.append(f"Modules: {healthy}/{len(modules)} healthy")
+    except Exception:
+        parts.append("Runtime: running (health detail unavailable)")
+
+    # Memory stats
+    try:
+        mem_stats = agent.memory.get_stats()
+        parts.append(f"Memory store: {mem_stats.get('total', 0)} entries")
+    except Exception:
+        pass
+
+    # Tasks
+    try:
+        tasks = agent.tasks.get_all()
+        if tasks:
+            pending = sum(1 for t in tasks if t.get("status") == "pending")
+            done = sum(1 for t in tasks if t.get("status") == "completed")
+            parts.append(f"Tasks: {pending} pending, {done} completed")
+        else:
+            parts.append("Tasks: none queued")
+    except Exception:
+        pass
+
+    # Skills
+    try:
+        from agent.brain.skills import SkillRegistry
+        from agent.core.paths import get_project_root
+        registry = SkillRegistry(f"{get_project_root()}/agent/brain/skills.json")
+        all_skills = registry.list_all()
+        if all_skills:
+            total = len(all_skills)
+            mastered = sum(1 for s in all_skills if s.get("level") == "mastered")
+            parts.append(f"Skills: {total} total, {mastered} mastered")
+    except Exception:
+        pass
+
+    # Build pipeline
+    try:
+        from agent.build.storage import BuildStorage
+        storage = BuildStorage()
+        recent = storage.list_recent(limit=3)
+        if recent:
+            parts.append(f"Recent builds: {len(recent)} (latest: {recent[0].get('status', '?')})")
+        else:
+            parts.append("Recent builds: none")
+    except Exception:
+        pass
+
+    parts.append(
+        "\nFor detailed reports use `/status`, `/health`, `/jobs`, or `/skills`."
+    )
+    return "\n".join(parts)
+
+
 def handle_complex_task(agent: Any) -> str:
     """Grounded examples of complex tasks the agent can actually run."""
     return (
@@ -1443,6 +1567,7 @@ __all__ = [
     "MEMORY_LIST",
     "MEMORY_USAGE",
     "PRESENCE",
+    "PROJECT_STATUS",
     "SELF_DESCRIPTION",
     "SELF_UPDATE_IMPERATIVE",
     "SELF_UPDATE_QUESTION",
@@ -1463,6 +1588,7 @@ __all__ = [
     "handle_memory_list",
     "handle_memory_usage",
     "handle_presence",
+    "handle_project_status",
     "handle_self_description",
     "handle_self_update_question",
     "handle_skills",

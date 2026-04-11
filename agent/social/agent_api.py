@@ -391,8 +391,14 @@ class AgentAPI:
                     sender=sender, ip=ip, intent=intent,
                     status_code=200, duration_ms=duration,
                 ))
+                # Strip operator-facing meta footers (cost/cache banners)
+                # from API replies — they're noise for programmatic callers.
+                clean = response or ""
+                for _banner in ("\n\n_💰", "\n\n_📦"):
+                    if _banner in clean:
+                        clean = clean.split(_banner)[0]
                 return web.json_response({
-                    "reply": response,
+                    "reply": clean,
                     "agent": _runtime_agent_slug(),
                     "sender": sender,
                     "intent": intent,

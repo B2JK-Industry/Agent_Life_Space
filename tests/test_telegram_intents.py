@@ -139,6 +139,16 @@ class TestIntentDetection:
             ("why did you start this topic?", telegram_intents.CONTEXT_RECALL),
             ("what were we talking about?", telegram_intents.CONTEXT_RECALL),
             ("remind me what i said", telegram_intents.CONTEXT_RECALL),
+            # Project status (production crash — these timed out LLM)
+            ("aký je aktuálny stav projektu ALS na tomto serveri?", telegram_intents.PROJECT_STATUS),
+            ("aký je stav projektu?", telegram_intents.PROJECT_STATUS),
+            ("čo je dnes hotové?", telegram_intents.PROJECT_STATUS),
+            ("koľko testov prechádza?", telegram_intents.PROJECT_STATUS),
+            ("aké sú najväčšie otvorené problémy?", telegram_intents.PROJECT_STATUS),
+            ("what is the project status?", telegram_intents.PROJECT_STATUS),
+            ("what is done?", telegram_intents.PROJECT_STATUS),
+            ("what is not finished?", telegram_intents.PROJECT_STATUS),
+            ("how many tests pass?", telegram_intents.PROJECT_STATUS),
         ],
     )
     def test_detect(self, text: str, expected: str) -> None:
@@ -925,3 +935,104 @@ class TestBrainTimeoutNormalization:
         assert "180s" not in result or "timeout after 180s" in result.lower()
         # Must contain the friendly sentence.
         assert "took too long" in result.lower() or "thinking" in result.lower()
+
+
+class TestProjectStatusIntent:
+    """Project-state questions must be caught deterministically to avoid
+    expensive LLM calls that time out and crash the agent."""
+
+    @pytest.mark.parametrize("text", [
+        "aký je aktuálny stav projektu ALS na tomto serveri?",
+        "čo je dnes hotové?",
+        "koľko testov prechádza?",
+        "aké sú najväčšie otvorené problémy?",
+        "what is the project status?",
+        "what is not finished?",
+    ])
+    def test_project_status_detected(self, text: str) -> None:
+        match = telegram_intents.detect_intent(text)
+        assert match is not None
+        assert match.intent == telegram_intents.PROJECT_STATUS
+
+    @pytest.mark.parametrize("text", [
+        "aký je tvoj stav",  # agent's state, not project
+        "ahoj si tu?",
+        "naprogramuj mi niečo",
+        "koľko pamäte používaš?",  # memory usage, not project status
+    ])
+    def test_project_status_not_false_positive(self, text: str) -> None:
+        match = telegram_intents.detect_intent(text)
+        if match is not None:
+            assert match.intent != telegram_intents.PROJECT_STATUS
+
+    @pytest.mark.asyncio
+    async def test_project_status_via_brain_no_provider(self, brain, monkeypatch):
+        """Project-status question must NOT call the LLM provider."""
+        fake_provider = MagicMock()
+        fake_provider.supports_tools.return_value = False
+        fake_provider.generate = AsyncMock()
+        monkeypatch.setattr(
+            "agent.core.llm_provider.get_provider", lambda: fake_provider,
+        )
+        result = await brain.process(_msg(
+            "aký je aktuálny stav projektu ALS na tomto serveri?",
+        ))
+        fake_provider.generate.assert_not_called()
+        assert result is not None
+        assert "Agent Life Space" in result or "v1." in result or "status" in result.lower()
+
+
+class TestAgentApiReplyContract:
+    """Agent API replies must not contain operator-facing meta footers."""
+
+    def test_cost_footer_stripped(self) -> None:
+        reply = "Hello world\n\n_💰 $0.0305 | haiku | ⬆23,864 ⬇136 tokens_"
+        for banner in ("\n\n_💰", "\n\n_📦"):
+            if banner in reply:
+                reply = reply.split(banner)[0]
+        assert "💰" not in reply
+        assert reply == "Hello world"
+
+    def test_cache_footer_stripped(self) -> None:
+        reply = "Cached answer\n\n_📦 cache hit_"
+        for banner in ("\n\n_💰", "\n\n_📦"):
+            if banner in reply:
+                reply = reply.split(banner)[0]
+        assert "📦" not in reply
+        assert reply == "Cached answer"
+
+    def test_clean_reply_passes_through(self) -> None:
+        reply = "I'm here. ✅"
+        for banner in ("\n\n_💰", "\n\n_📦"):
+            if banner in reply:
+                reply = reply.split(banner)[0]
+        assert reply == "I'm here. ✅"
+
+
+class TestBlockingIOProtection:
+    """Semantic cache and RAG calls must use asyncio.to_thread to avoid
+    blocking the event loop (root cause of watchdog timeouts)."""
+
+    def test_brain_cache_call_uses_to_thread(self) -> None:
+        """Verify that brain.py wraps _try_semantic_cache in asyncio.to_thread."""
+        import inspect
+        from agent.core.brain import AgentBrain
+        # Read the source of the _process_inner method (or the method
+        # containing the cache call).
+        source = inspect.getsource(AgentBrain)
+        # The cache lookup must be wrapped in asyncio.to_thread
+        assert "asyncio.to_thread(self._try_semantic_cache" in source
+
+    def test_brain_rag_call_uses_to_thread(self) -> None:
+        """Verify that brain.py wraps _try_rag_retrieval in asyncio.to_thread."""
+        import inspect
+        from agent.core.brain import AgentBrain
+        source = inspect.getsource(AgentBrain)
+        assert "asyncio.to_thread(self._try_rag_retrieval" in source
+
+    def test_dispatcher_semantic_router_uses_to_thread(self) -> None:
+        """Verify dispatcher wraps classify_intent in asyncio.to_thread."""
+        import inspect
+        from agent.brain.dispatcher import InternalDispatcher
+        source = inspect.getsource(InternalDispatcher)
+        assert "to_thread(classify_intent" in source

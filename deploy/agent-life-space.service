@@ -13,9 +13,9 @@ Group=youruser
 WorkingDirectory=/home/youruser/Agent_Life_Space
 EnvironmentFile=/home/youruser/Agent_Life_Space/.env
 
-# Runtime data + log dirs.
-Environment=AGENT_DATA_DIR=/var/lib/agent-life-space
-Environment=AGENT_LOG_DIR=/var/log/agent-life-space
+# Runtime data + log dirs: configured in .env (EnvironmentFile above).
+# Do NOT set AGENT_DATA_DIR / AGENT_LOG_DIR here — .env is the single
+# source of truth so that agent reporting matches the actual paths.
 
 # Enable Telegram self-update + automatic post-update restart.
 # When the operator messages "nasad novú verziu u seba" the agent
@@ -42,8 +42,7 @@ StartLimitIntervalSec=60
 # Hardening — adjust to your environment.
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/lib/agent-life-space /var/log/agent-life-space
+ProtectHome=false
 PrivateTmp=true
 
 [Install]

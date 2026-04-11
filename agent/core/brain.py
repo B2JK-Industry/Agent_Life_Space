@@ -24,6 +24,7 @@ What it does NOT do:
 
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import UTC, datetime
 from typing import Any, ClassVar, cast
@@ -235,14 +236,16 @@ class AgentBrain:
                 return internal_result
 
         # ── Layer 3: Semantic cache ──
-        cached_response = self._try_semantic_cache(text)
+        # model.encode() is CPU-bound; run off the event loop.
+        cached_response = await asyncio.to_thread(self._try_semantic_cache, text)
         if cached_response:
             logger.info("brain_cache_hit", query=text[:50])
-            return f"{cached_response}\n\n_📦 cache hit_"
+            return cached_response
 
         # ── Layer 4: RAG retrieval ──
+        # model.encode() is CPU-bound; run off the event loop.
         rag_context = ""
-        rag_direct = self._try_rag_retrieval(text)
+        rag_direct = await asyncio.to_thread(self._try_rag_retrieval, text)
         if rag_direct is not None:
             if rag_direct.get("action") == "direct":
                 return f"From knowledge base ({rag_direct.get('source', '')}):\n{rag_direct.get('context', '')}"
@@ -585,9 +588,10 @@ class AgentBrain:
         clean_reply = reply.split("\n\n_💰")[0] if "_💰" in reply else reply
 
         # Store in semantic cache (not for programming tasks)
+        # store() calls model.encode(); run off the event loop.
         if self._semantic_cache and task_type not in ("programming",):
             try:
-                self._semantic_cache.store(text, clean_reply)
+                await asyncio.to_thread(self._semantic_cache.store, text, clean_reply)
             except Exception:
                 pass
 
@@ -924,6 +928,9 @@ class AgentBrain:
 
             if intent == telegram_intents.COMPLEX_TASK:
                 return telegram_intents.handle_complex_task(self._agent)
+
+            if intent == telegram_intents.PROJECT_STATUS:
+                return await telegram_intents.handle_project_status(self._agent)
 
             if intent == telegram_intents.SELF_UPDATE_QUESTION:
                 return telegram_intents.handle_self_update_question()
