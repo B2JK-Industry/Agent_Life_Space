@@ -244,9 +244,9 @@ class TestTelegramCliProgrammingDenyGuard:
     clear operator message before the LLM call is made."""
 
     @pytest.mark.asyncio
-    async def test_telegram_programming_cli_sandbox_denied(self, brain, monkeypatch):
-        """Programming task from Telegram on the CLI backend with
-        AGENT_SANDBOX_ONLY=1 must NOT call provider.generate."""
+    async def test_telegram_programming_auto_routes_to_build(self, brain, monkeypatch):
+        """Programming task from Telegram must route to build pipeline,
+        not to raw LLM provider."""
         monkeypatch.setenv("LLM_BACKEND", "cli")
         monkeypatch.setenv("AGENT_SANDBOX_ONLY", "1")
         monkeypatch.delenv("AGENT_DATA_DIR", raising=False)
@@ -258,6 +258,20 @@ class TestTelegramCliProgrammingDenyGuard:
             "agent.core.llm_provider.get_provider", lambda: fake_provider,
         )
 
+        # Mock submit_operator_intake to avoid full pipeline
+        submit_result = {
+            "status": "completed",
+            "job": {
+                "docker_result": {
+                    "test_passed": True,
+                    "lint_passed": True,
+                    "files_written": 3,
+                },
+                "total_cost_usd": 0.05,
+            },
+        }
+        brain._agent.submit_operator_intake = AsyncMock(return_value=submit_result)
+
         msg = IncomingMessage(
             text="naprogramuj python script ktorý spočíta primes",
             sender_id="1",
@@ -268,12 +282,14 @@ class TestTelegramCliProgrammingDenyGuard:
         )
         result = await brain.process(msg)
 
-        # Provider must NOT have been called.
+        # Provider must NOT have been called — routed to build.
         fake_provider.generate.assert_not_called()
 
-        # Operator must see a clear, deterministic message.
-        assert "Telegram" in result
-        assert "API backend" in result or "AGENT_SANDBOX_ONLY" in result
+        # Build pipeline was called.
+        brain._agent.submit_operator_intake.assert_called_once()
+
+        # Result should contain build summary.
+        assert "completed" in result.lower() or "Build" in result
 
     @pytest.mark.asyncio
     async def test_telegram_non_programming_still_works_on_cli(self, brain, monkeypatch):
@@ -315,73 +331,93 @@ class TestTelegramCliProgrammingDenyGuard:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_telegram_programming_api_backend_uses_tool_loop(self, brain, monkeypatch):
-        """Programming task from Telegram on the API backend must
-        still reach ToolUseLoop normally — guard is CLI-only."""
-        from agent.core.tool_loop import ToolLoopResult
-
+    async def test_telegram_programming_api_backend_also_routes_to_build(self, brain, monkeypatch):
+        """Programming task from Telegram on the API backend must also
+        route to build pipeline — all Telegram programming goes to build."""
         monkeypatch.setenv("LLM_BACKEND", "api")
         monkeypatch.setenv("LLM_PROVIDER", "anthropic")
         monkeypatch.setenv("AGENT_SANDBOX_ONLY", "1")
 
         fake_provider = MagicMock()
         fake_provider.supports_tools.return_value = True
-        fake_loop = MagicMock()
-        fake_loop.run = AsyncMock(return_value=ToolLoopResult(
-            text="Hotovo, navrhol som riešenie.",
-            success=True,
-            turns=1,
-            total_tokens=20,
-            total_input_tokens=15,
-            total_output_tokens=5,
-            total_cost=0.0,
-            model="claude-sonnet-4-6",
-        ))
-        brain._tool_executor = MagicMock()
+        fake_provider.generate = AsyncMock()
         monkeypatch.setattr(
             "agent.core.llm_provider.get_provider", lambda: fake_provider,
         )
 
-        with patch("agent.core.tool_loop.ToolUseLoop", return_value=fake_loop):
-            msg = IncomingMessage(
-                text="naprogramuj python script ktorý spočíta primes",
-                sender_id="1",
-                sender_name="owner",
-                channel_type="telegram",
-                chat_id="123",
-                is_owner=True,
-            )
-            result = await brain.process(msg)
+        submit_result = {
+            "status": "completed",
+            "job": {
+                "docker_result": {
+                    "test_passed": True,
+                    "lint_passed": True,
+                    "files_written": 2,
+                },
+                "total_cost_usd": 0.03,
+            },
+        }
+        brain._agent.submit_operator_intake = AsyncMock(return_value=submit_result)
 
-        # Tool loop WAS called — API path is unaffected by the guard.
-        fake_loop.run.assert_called_once()
-        assert "Hotovo" in result
+        msg = IncomingMessage(
+            text="naprogramuj python script ktorý spočíta primes",
+            sender_id="1",
+            sender_name="owner",
+            channel_type="telegram",
+            chat_id="123",
+            is_owner=True,
+        )
+        result = await brain.process(msg)
+
+        # Provider NOT called — routed to build pipeline.
+        fake_provider.generate.assert_not_called()
+        brain._agent.submit_operator_intake.assert_called_once()
+        assert "completed" in result.lower() or "Build" in result
 
     @pytest.mark.asyncio
-    async def test_telegram_programming_cli_with_host_optin_passes_guard(self, brain, monkeypatch):
-        """If AGENT_SANDBOX_ONLY=0, the operator has explicitly opted
-        in to host file access. The CLI runs with --dangerously-skip-
-        permissions in this state, so there is no interactive prompt
-        and the guard must NOT block the request."""
-        from agent.core.llm_provider import GenerateResponse
-
+    async def test_telegram_programming_build_failure_shows_error(self, brain, monkeypatch):
+        """When the build pipeline fails, the user sees a useful error."""
         monkeypatch.setenv("LLM_BACKEND", "cli")
-        monkeypatch.setenv("AGENT_SANDBOX_ONLY", "0")  # explicit host opt-in
+        monkeypatch.setenv("AGENT_SANDBOX_ONLY", "1")
 
         fake_provider = MagicMock()
-        fake_provider.supports_tools.return_value = False
-        fake_provider.generate = AsyncMock(
-            return_value=GenerateResponse(
-                text="def is_prime(n): return ...",
-                success=True,
-                input_tokens=10,
-                output_tokens=20,
-                cost_usd=0.0,
-                latency_ms=200,
-            ),
-        )
+        fake_provider.generate = AsyncMock()
         monkeypatch.setattr(
             "agent.core.llm_provider.get_provider", lambda: fake_provider,
+        )
+
+        submit_result = {
+            "status": "blocked",
+            "error": "Runtime execution blocked by budget policy",
+        }
+        brain._agent.submit_operator_intake = AsyncMock(return_value=submit_result)
+
+        msg = IncomingMessage(
+            text="naprogramuj python script ktorý spočíta primes",
+            sender_id="1",
+            sender_name="owner",
+            channel_type="telegram",
+            chat_id="123",
+            is_owner=True,
+        )
+        result = await brain.process(msg)
+
+        fake_provider.generate.assert_not_called()
+        assert "blocked" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_telegram_programming_build_exception_fallback(self, brain, monkeypatch):
+        """When the build pipeline raises, the user sees a fallback message."""
+        monkeypatch.setenv("LLM_BACKEND", "cli")
+        monkeypatch.setenv("AGENT_SANDBOX_ONLY", "1")
+
+        fake_provider = MagicMock()
+        fake_provider.generate = AsyncMock()
+        monkeypatch.setattr(
+            "agent.core.llm_provider.get_provider", lambda: fake_provider,
+        )
+
+        brain._agent.submit_operator_intake = AsyncMock(
+            side_effect=RuntimeError("Docker not available"),
         )
 
         msg = IncomingMessage(
@@ -394,12 +430,9 @@ class TestTelegramCliProgrammingDenyGuard:
         )
         result = await brain.process(msg)
 
-        # Provider WAS called — host opt-in unblocks the path.
-        assert fake_provider.generate.await_count >= 1
-        assert result is not None
-        # Result is not the deny message.
-        assert "interaktívneho povolenia" not in result
-        assert "interactive approval" not in result
+        fake_provider.generate.assert_not_called()
+        assert "Docker not available" in result
+        assert "/build" in result
 
     @pytest.mark.asyncio
     async def test_non_telegram_programming_cli_passes_guard(self, brain, monkeypatch):

@@ -259,73 +259,21 @@ class AgentBrain:
             task_type = "chat"
             model = get_model(task_type)
 
-        # ── Layer 5.1: Telegram + CLI + sandbox-only deny guard ──
-        # The Claude Code CLI's interactive permission flow is unreachable
-        # from Telegram — there is no operator clicking "Allow" on a tool
-        # call. If we let a programming task hit the CLI in this state,
-        # the LLM tool-use call blocks until errormaxturns / typing
-        # indicator times out and the operator sees a hang.
+        # ── Layer 5.1: Auto-route programming tasks to build pipeline ──
+        # When a Telegram user asks for a programming task, route it
+        # through the build pipeline (codegen → Docker sandbox → verify)
+        # instead of sending it to the raw LLM. The raw LLM path either
+        # blocks (CLI + sandbox) or times out (API + Opus), while the
+        # build pipeline is designed for exactly this use case.
         #
-        # Decision tree:
-        #   • channel != telegram        → not our problem (other channels
-        #                                   may have their own UX)
-        #   • task_type != programming   → no tool-use needed, plain
-        #                                   conversational generate is fine
-        #   • effective backend != cli   → API path uses ToolUseLoop, no
-        #                                   interactive prompts
-        #   • AGENT_SANDBOX_ONLY=0       → operator explicitly opted in to
-        #                                   host file access; the CLI is
-        #                                   running with --dangerously-skip-
-        #                                   permissions and won't prompt
-        #   • otherwise                  → FAIL-CLOSED with a clear
-        #                                   operator message
-        #
-        # This guard runs BEFORE prompt building so we never spend tokens
-        # on a request we know cannot complete. We do not silently bypass
-        # the sandbox; the operator must take an explicit action to
-        # unblock the path.
-        from agent.control.llm_runtime import resolve_llm_runtime_state
-
-        runtime_state_for_guard = resolve_llm_runtime_state(environ=os.environ)
-        effective_backend_for_guard = str(
-            runtime_state_for_guard.get("effective_backend", "cli"),
-        )
-        sandbox_only_for_guard = (
-            os.environ.get("AGENT_SANDBOX_ONLY", "1").strip() != "0"
-        )
+        # Owner-only: non-owner programming tasks are already downgraded
+        # to "chat" above, so this guard only fires for the operator.
         if (
             message.channel_type == "telegram"
             and task_type == "programming"
-            and effective_backend_for_guard == "cli"
-            and sandbox_only_for_guard
+            and message.is_owner
         ):
-            logger.warning(
-                "telegram_cli_programming_denied",
-                hint=(
-                    "Telegram + CLI backend + sandbox-only mode cannot "
-                    "complete a programming task because the Claude Code "
-                    "permission prompt is unreachable from Telegram."
-                ),
-                channel_type=message.channel_type,
-                effective_backend=effective_backend_for_guard,
-                sandbox_only=True,
-            )
-            return (
-                "Programming tasks via Telegram currently cannot use the "
-                "Claude CLI backend without interactive approval in the "
-                "Claude Code UI.\n\n"
-                "Options to unblock this:\n"
-                "• Switch the LLM runtime to the API backend via "
-                "`/runtime` or `/api/operator/llm` — ToolUseLoop in API "
-                "mode does not require interactive approval.\n"
-                "• Or on the host set `AGENT_SANDBOX_ONLY=0` (host opt-in "
-                "— the agent gets host file access via the CLI with "
-                "`--dangerously-skip-permissions`). This is explicit and "
-                "audited; only do it if you know what you are doing.\n\n"
-                "For non-codegen requests (questions, status, memory, "
-                "finance) everything is fine — this guard only applies "
-                "to the `programming` task type."
-            )
+            return await self._route_to_build_pipeline(text, message)
 
         # Channel enforcement for CLI path — restricted channels block file access
         # regardless of task_type (prevents API callers from getting host access)
@@ -823,6 +771,97 @@ class AgentBrain:
             self._pending_shutdown_tasks: set[Any] = set()
         self._pending_shutdown_tasks.add(task)
         task.add_done_callback(self._pending_shutdown_tasks.discard)
+
+    async def _route_to_build_pipeline(
+        self, text: str, message: IncomingMessage,
+    ) -> str:
+        """Route a programming task to the build pipeline.
+
+        Instead of sending the request to a raw LLM (which either blocks
+        on CLI permission prompts or times out), we create a BuildIntake
+        and run it through the full codegen → Docker → verify pipeline.
+        """
+        try:
+            from agent.control.intake import OperatorIntake, OperatorWorkType
+
+            repo_root = os.environ.get(
+                "AGENT_PROJECT_ROOT",
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            )
+
+            intake = OperatorIntake(
+                repo_path=repo_root,
+                work_type=OperatorWorkType.BUILD,
+                description=text,
+                requester=message.sender_name or "operator",
+                context=f"Telegram auto-routed programming task from {message.sender_name}",
+            )
+
+            errors = intake.validate()
+            if errors:
+                logger.warning("build_intake_validation_failed", errors=errors)
+                return (
+                    "I understand this is a programming task, but I couldn't "
+                    "set up the build pipeline:\n"
+                    + "\n".join(f"  • {e}" for e in errors)
+                )
+
+            logger.info(
+                "telegram_programming_auto_routed_to_build",
+                description=text[:100],
+                requester=message.sender_name,
+            )
+
+            result = await self._agent.submit_operator_intake(intake)
+
+            status = result.get("status", "unknown")
+            if status == "completed":
+                job = result.get("job", {})
+                docker = job.get("docker_result", {})
+                test_passed = docker.get("test_passed", False)
+                lint_passed = docker.get("lint_passed", False)
+                files_written = docker.get("files_written", 0)
+                cost = job.get("total_cost_usd", result.get("cost_usd", 0))
+
+                summary_parts = [f"Build **{status}**"]
+                if files_written:
+                    summary_parts.append(f"{files_written} files written")
+                summary_parts.append(
+                    f"tests: {'PASS' if test_passed else 'FAIL'}"
+                )
+                summary_parts.append(
+                    f"lint: {'PASS' if lint_passed else 'FAIL'}"
+                )
+                if cost:
+                    summary_parts.append(f"cost: ${cost:.4f}")
+
+                reply = " | ".join(summary_parts)
+
+                # Include test output if failed
+                test_output = docker.get("test_output", "")
+                if not test_passed and test_output:
+                    reply += f"\n\nTest output:\n```\n{test_output[:1000]}\n```"
+
+                return reply
+
+            if status in ("blocked", "awaiting_approval"):
+                error = result.get("error", "")
+                return f"Build {status}: {error}" if error else f"Build {status}."
+
+            # Submitted but not yet completed — async job
+            job_id = result.get("plan_record", {}).get("plan_id", "")
+            return (
+                f"Build submitted (job: `{job_id[:16]}`).\n"
+                "I'll work on it in the background. Check status with `/jobs`."
+            )
+
+        except Exception as exc:
+            logger.exception("build_pipeline_auto_route_failed", error=str(exc))
+            return (
+                f"I tried to route this to the build pipeline but hit an error:\n"
+                f"`{type(exc).__name__}: {exc!s:.200}`\n\n"
+                f"You can try manually: `/build . --description \"{text[:100]}\"`"
+            )
 
     async def _try_deterministic_intent(
         self, message: IncomingMessage, text: str,
