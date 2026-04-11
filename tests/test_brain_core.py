@@ -435,31 +435,29 @@ class TestTelegramCliProgrammingDenyGuard:
         assert "/build" in result
 
     @pytest.mark.asyncio
-    async def test_non_telegram_programming_cli_passes_guard(self, brain, monkeypatch):
-        """The guard targets Telegram specifically — other channels
-        (e.g. agent_api) have their own enforcement and must not be
-        affected. We test agent_api here because it does NOT enter
-        cli_allow_file_access mode (restricted channels list)."""
-        from agent.core.llm_provider import GenerateResponse
-
+    async def test_agent_api_programming_also_routes_to_build(self, brain, monkeypatch):
+        """Programming tasks from agent_api also route to build pipeline."""
         monkeypatch.setenv("LLM_BACKEND", "cli")
         monkeypatch.setenv("AGENT_SANDBOX_ONLY", "1")
 
         fake_provider = MagicMock()
-        fake_provider.supports_tools.return_value = False
-        fake_provider.generate = AsyncMock(
-            return_value=GenerateResponse(
-                text="Reply",
-                success=True,
-                input_tokens=5,
-                output_tokens=3,
-                cost_usd=0.0,
-                latency_ms=100,
-            ),
-        )
+        fake_provider.generate = AsyncMock()
         monkeypatch.setattr(
             "agent.core.llm_provider.get_provider", lambda: fake_provider,
         )
+
+        submit_result = {
+            "status": "completed",
+            "job": {
+                "docker_result": {
+                    "test_passed": True,
+                    "lint_passed": True,
+                    "files_written": 1,
+                },
+                "total_cost_usd": 0.02,
+            },
+        }
+        brain._agent.submit_operator_intake = AsyncMock(return_value=submit_result)
 
         msg = IncomingMessage(
             text="naprogramuj python skript",
@@ -470,11 +468,9 @@ class TestTelegramCliProgrammingDenyGuard:
         )
         result = await brain.process(msg)
 
-        # agent_api channel is unaffected by the Telegram-specific guard.
-        # It may still hit other restrictions (cli_allow_file_access=False
-        # because agent_api is in restricted_channels) but the brain
-        # MUST reach the LLM call, not return the Telegram deny message.
-        assert "Telegram" not in (result or "")
+        fake_provider.generate.assert_not_called()
+        brain._agent.submit_operator_intake.assert_called_once()
+        assert "completed" in result.lower() or "Build" in result
 
 
 class TestShortFollowupGetsHistory:

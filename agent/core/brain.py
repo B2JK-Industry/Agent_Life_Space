@@ -260,19 +260,10 @@ class AgentBrain:
             model = get_model(task_type)
 
         # ── Layer 5.1: Auto-route programming tasks to build pipeline ──
-        # When a Telegram user asks for a programming task, route it
-        # through the build pipeline (codegen → Docker sandbox → verify)
-        # instead of sending it to the raw LLM. The raw LLM path either
-        # blocks (CLI + sandbox) or times out (API + Opus), while the
-        # build pipeline is designed for exactly this use case.
-        #
-        # Owner-only: non-owner programming tasks are already downgraded
-        # to "chat" above, so this guard only fires for the operator.
-        if (
-            message.channel_type == "telegram"
-            and task_type == "programming"
-            and message.is_owner
-        ):
+        # Programming tasks from any channel go through the build pipeline
+        # (codegen → Docker sandbox → verify) instead of the raw LLM.
+        # The raw LLM path either blocks (CLI + sandbox) or times out.
+        if task_type == "programming":
             return await self._route_to_build_pipeline(text, message)
 
         # Channel enforcement for CLI path — restricted channels block file access
