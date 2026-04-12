@@ -432,8 +432,22 @@ class AgentBrain:
         if runtime_facts:
             prompt += f"\n\nCurrent runtime state (verified, do not contradict):\n{runtime_facts}"
 
-        # ── Layer 6: LLM call via provider ──
+        # ── Layer 5.6: Single-shot mode prompt hint ──
+        # When running on CLI+sandbox with tools blocked, tell the LLM
+        # to answer directly instead of attempting tool calls that will
+        # exhaust the turn budget.
         from agent.control.llm_runtime import resolve_llm_runtime_state
+        runtime = resolve_llm_runtime_state(environ=os.environ)
+        _backend = str(runtime["effective_backend"]) or "cli"
+        _sandbox = os.environ.get("AGENT_SANDBOX_ONLY", "1").strip() != "0"
+        if _backend == "cli" and _sandbox and task_type not in ("programming",):
+            prompt += (
+                "\n\nIMPORTANT: Answer directly in text. "
+                "Do NOT use any tools (Read, Bash, Glob, etc.). "
+                "Provide your best answer from your existing knowledge and the context above."
+            )
+
+        # ── Layer 6: LLM call via provider ──
         from agent.core.llm_provider import GenerateRequest, get_provider
 
         if self._status:
@@ -446,14 +460,8 @@ class AgentBrain:
         )
 
         provider = get_provider()
-        # IMPORTANT: read the *effective* backend from the same resolver
-        # the provider factory uses, not from raw os.environ. Otherwise
-        # operator overrides set via /api/operator/llm or the dashboard
-        # never reach the tool-loop branch and the agent silently keeps
-        # using the env-default backend even though the provider has
-        # already switched.
-        runtime = resolve_llm_runtime_state(environ=os.environ)
-        backend = str(runtime["effective_backend"]) or "cli"
+        # Reuse runtime state computed in Layer 5.6 above.
+        backend = _backend
         usage_cost = 0.0
         usage_input_tokens = 0
         usage_output_tokens = 0
