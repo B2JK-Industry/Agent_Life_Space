@@ -719,6 +719,19 @@ _WEB_MONITOR_CAPABILITY_REGEXES: tuple[re.Pattern[str], ...] = (
         r"\b(vieš|viete)\s+.{0,20}(hlásiť|hlasit|posielať|posielat)\s+.{0,20}(nové|nove)\s+polož",
         re.IGNORECASE,
     ),
+    # Recurring / scheduling questions
+    re.compile(
+        r"\b(vieš|viete|dokážeš|môžeš)\s+.{0,20}(periodick|opakuj|cron|schedule|recurring|pravidelne)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(vieš|viete)\s+.{0,20}(nastaviť|nastav|schedule)\s+.{0,20}(úloh|ulohu|task|job)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(can\s+you|could\s+you).{0,20}(schedule|cron|periodic|recurring)",
+        re.IGNORECASE,
+    ),
 )
 
 # Review request — "sprav review", "urob code review", "review this repo"
@@ -1428,25 +1441,26 @@ def handle_review_request() -> str:
 
 
 def handle_web_monitor_capability() -> str:
-    """Grounded answer about web monitoring capability — no hallucination."""
+    """Grounded answer about web monitoring + scheduling capability."""
     return (
-        "*Web monitoring capability*\n\n"
+        "*Web monitoring & scheduling capability*\n\n"
         "*What works today:*\n"
         "  • One-shot URL fetch + text extraction (`otvor <url>` or `/web <url>`)\n"
         "  • HTML content scraping for server-rendered pages\n"
-        "  • Web search via search tools\n\n"
+        "  • Web search via search tools\n"
+        "  • Recurring workflows (`/workflow`) — persisted across restarts via SQLite\n"
+        "  • Cron-like scheduling (hourly, daily, weekly)\n\n"
         "*Not yet implemented (needs build):*\n"
-        "  • Recurring monitoring with snapshot + diff (new/changed items)\n"
         "  • Automatic list-item extraction from HTML pages\n"
-        "  • Scheduled daily/hourly reports to Telegram\n"
-        "  • Filter-based alerting (price < X, location = Y)\n\n"
+        "  • Snapshot + diff (detect new/changed items between runs)\n"
+        "  • Filter-based alerting (price < X, location = Y)\n"
+        "  • Formatted Telegram reports from monitoring runs\n\n"
         "*Hard limits:*\n"
-        "  • JS-heavy SPA pages (React/Angular) — not supported without browser automation\n"
-        "  • CAPTCHA / anti-bot protections — no bypass capability\n"
-        "  • Login-required pages — no session/cookie management\n\n"
+        "  • JS-heavy SPA pages (React/Angular) — server-rendered only\n"
+        "  • CAPTCHA / anti-bot protections — no bypass\n"
+        "  • Login-required pages — no session management\n\n"
         "To build a monitoring workflow, use `/build` with a description of what "
-        "you want to track. The build pipeline will generate the code and run it "
-        "in a Docker sandbox."
+        "you want to track. For scheduling, use `/workflow`."
     )
 
 
