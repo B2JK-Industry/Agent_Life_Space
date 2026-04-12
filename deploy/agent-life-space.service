@@ -45,7 +45,11 @@ StartLimitIntervalSec=60
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=false
-PrivateTmp=true
+# PrivateTmp disabled because Docker mounts reference /tmp paths that
+# must be visible to the Docker daemon (which runs outside the service
+# namespace). With PrivateTmp=true the tempdir the agent writes to is
+# /tmp/systemd-private-xxx/tmp/ but Docker sees an empty /tmp/als-build-*.
+PrivateTmp=false
 
 [Install]
 WantedBy=multi-user.target
