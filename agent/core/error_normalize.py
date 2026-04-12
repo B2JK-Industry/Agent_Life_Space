@@ -57,6 +57,15 @@ _INTERNAL_NOISE_SUBSTRINGS: tuple[str, ...] = (
     '"tool_use_id"',
 )
 
+# Plain-text turn-limit messages that the CLI returns as the response
+# text (not as an error).  These are returned when the CLI used its
+# allowed turn on a tool call (Read/Glob/Grep) instead of answering.
+_TURN_LIMIT_PHRASES: tuple[str, ...] = (
+    "i hit my tool-use turn limit",
+    "tool-use turn limit",
+    "turn limit before reaching",
+)
+
 _TOKEN_COST_LINE = re.compile(r"_💰 .*?tokens_", re.DOTALL)
 
 # Plain-text CLI / network timeout. We normalize a wide variety of
@@ -110,6 +119,14 @@ def normalize_user_error(raw: str | None) -> str:
                 return short
 
     lower = text.lower()
+
+    # Turn-limit plain-text (CLI returned this as the actual response)
+    if any(phrase in lower for phrase in _TURN_LIMIT_PHRASES):
+        return (
+            "I couldn't finish — my tool-use budget ran out before "
+            "producing an answer. Try rephrasing more directly or "
+            "asking a simpler question."
+        )
 
     # Plain CLI / network timeout family — must run BEFORE the
     # structured-noise check because "timeout" is also in the
