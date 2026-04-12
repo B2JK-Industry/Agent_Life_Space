@@ -780,9 +780,16 @@ def detect_intent(text: str) -> IntentMatch | None:
         return IntentMatch(intent=SELF_UPDATE_QUESTION, payload={})
 
     # 3. Natural-language web open/read.
+    # Prefer an explicit https?:// URL anywhere in the text over a
+    # domain-only match from the verb+target regex, so that
+    # "otvor sreality.cz API na https://...full-url..." uses the full URL.
+    explicit_url_match = re.search(r"https?://\S+", stripped)
     web_match = _WEB_REGEX.search(stripped)
-    if web_match:
-        target = web_match.group("target").strip().rstrip(".,;:!?")
+    if web_match or explicit_url_match:
+        if explicit_url_match:
+            target = explicit_url_match.group(0).strip().rstrip(".,;:!?")
+        else:
+            target = web_match.group("target").strip().rstrip(".,;:!?")  # type: ignore[union-attr]
         url = _normalize_url(target)
         if url:
             return IntentMatch(
