@@ -253,11 +253,18 @@ def classify_task_detailed(text: str) -> ClassificationResult:
         signals["url_present"] = 2
         total += 2
 
-    # Action verbs
+    # Action verbs (implementation/mutation only)
     action_matches = sum(1 for v in _ACTION_VERBS if v in text_lower)
     if action_matches:
         signals["action_verbs"] = action_matches * 2
         total += action_matches * 2
+
+    # Analytical verbs — contribute to analysis threshold but capped
+    # by the analytical guard from crossing into programming.
+    analytical_matches = sum(1 for v in _ANALYTICAL_VERBS if v in text_lower)
+    if analytical_matches:
+        signals["analytical_verbs"] = analytical_matches * 2
+        total += analytical_matches * 2
 
     # Structural complexity
     punctuation_score = 0
