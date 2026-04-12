@@ -510,6 +510,29 @@ class ReviewService:
         return " ".join(parts)
 
     def _save_job(self, job: ReviewJob) -> None:
+        # Refresh executive summary from final finding_counts to ensure
+        # the text is consistent with the structured data. Without this,
+        # findings added or reclassified after the initial summary build
+        # cause severity count mismatches.
+        if job.report and job.report.findings:
+            counts = job.report.finding_counts
+            count_parts = []
+            for sev in ("critical", "high", "medium", "low"):
+                if counts.get(sev, 0) > 0:
+                    count_parts.append(f"{counts[sev]} {sev}")
+            if count_parts:
+                # Replace the findings sentence in the existing summary
+                import re as _re
+                old_summary = job.report.executive_summary or ""
+                refreshed = _re.sub(
+                    r"Nájdené:.*?\.",
+                    f"Nájdené: {', '.join(count_parts)}.",
+                    old_summary,
+                )
+                if refreshed == old_summary and count_parts:
+                    # Pattern didn't match — append instead
+                    refreshed = old_summary.rstrip() + f" Nájdené: {', '.join(count_parts)}."
+                job.report.executive_summary = refreshed
         self._storage.save_job(job)
         self._sync_product_job(job)
 

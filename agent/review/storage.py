@@ -108,10 +108,19 @@ class ReviewStorage:
     def load_job(self, job_id: str) -> dict[str, Any] | None:
         if not self._db:
             return None
+        # Exact match first
         cursor = self._db.execute("SELECT data FROM review_jobs WHERE id = ?", (job_id,))
         row = cursor.fetchone()
         if row:
             return cast("dict[str, Any]", orjson.loads(row[0]))
+        # Prefix match fallback (for short IDs from /jobs list)
+        if len(job_id) >= 8:
+            cursor = self._db.execute(
+                "SELECT data FROM review_jobs WHERE id LIKE ?", (job_id + "%",),
+            )
+            rows = cursor.fetchall()
+            if len(rows) == 1:
+                return cast("dict[str, Any]", orjson.loads(rows[0][0]))
         return None
 
     def list_jobs(self, status: str = "", limit: int = 20) -> list[dict[str, Any]]:

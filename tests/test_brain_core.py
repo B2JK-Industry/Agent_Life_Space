@@ -646,3 +646,64 @@ class TestBrainMultiChannel:
 
         assert result is not None
         assert fake_provider.generate.await_count == 1
+
+
+class TestAnalyticalQuestionClassification:
+    """Regression: analytical/follow-up questions must NOT route to build pipeline."""
+
+    @pytest.mark.parametrize("text,expected_not", [
+        # Analytical follow-ups — must NOT be "programming"
+        ("Over to ešte raz veľmi stručne, či repo má testy.", "programming"),
+        ("Tvoj posledný review job tvrdí, že repo nemá tests.", "programming"),
+        ("Vysvetli prečo vznikol tento finding", "programming"),
+        ("Analyzuj výsledok posledného review jobu", "programming"),
+        ("Porovnaj tieto dva výsledky", "programming"),
+        ("Skontroluj konzistenciu summary", "programming"),
+        ("Je to bug v tvojom review systéme?", "programming"),
+        # Short planning — must NOT be "programming"
+        ("Navrhni 3 kroky auditu s top rizikami", "programming"),
+    ])
+    def test_analytical_not_programming(self, text: str, expected_not: str) -> None:
+        from agent.core.models import classify_task
+        result = classify_task(text)
+        assert result != expected_not, f"{text!r} was misclassified as {result}"
+
+    @pytest.mark.parametrize("text", [
+        "naprogramuj mi python script",
+        "napíš test pre tento modul",
+        "write code for a REST API",
+        "implementuj nový endpoint",
+    ])
+    def test_genuine_programming_still_classified(self, text: str) -> None:
+        from agent.core.models import classify_task
+        assert classify_task(text) == "programming"
+
+    @pytest.mark.asyncio
+    async def test_analytical_followup_does_not_create_build(self, brain, monkeypatch):
+        """Analytical question about a review result must NOT route to build."""
+        fake_provider = MagicMock()
+        fake_provider.supports_tools.return_value = False
+        fake_provider.generate = AsyncMock(
+            return_value=MagicMock(
+                text="The finding was a false positive because the scope filter excluded tests/.",
+                success=True, input_tokens=10, output_tokens=20,
+                cost_usd=0.0, latency_ms=100,
+            ),
+        )
+        monkeypatch.setattr(
+            "agent.core.llm_provider.get_provider", lambda: fake_provider,
+        )
+
+        # Ensure submit_operator_intake is NOT called
+        brain._agent.submit_operator_intake = AsyncMock()
+
+        msg = IncomingMessage(
+            text="Tvoj review tvrdí že repo nemá testy. Over to stručne.",
+            sender_id="1", sender_name="owner",
+            channel_type="agent_api", chat_id="api_1",
+            is_owner=True,
+        )
+        await brain.process(msg)
+
+        # Build pipeline must NOT have been invoked
+        brain._agent.submit_operator_intake.assert_not_called()

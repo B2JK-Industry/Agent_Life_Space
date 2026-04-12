@@ -134,8 +134,11 @@ def analyze_repo_structure(
     metrics.has_license = (root / "LICENSE").exists() or (root / "LICENSE.md").exists()
     metrics.has_gitignore = (root / ".gitignore").exists()
 
-    # Structural findings
-    if not metrics.has_tests:
+    # Structural findings — scope-aware: only claim "no tests" if the
+    # full repo was scanned. When include_patterns filter the file set,
+    # absence of tests in the filtered set does not mean the repo has
+    # no tests globally.
+    if not metrics.has_tests and not include_patterns:
         findings.append(ReviewFinding(
             severity=Severity.HIGH,
             title="No test files detected",
@@ -143,6 +146,19 @@ def analyze_repo_structure(
             category="quality",
             recommendation="Add automated tests.",
             confidence=Confidence.HIGH,
+        ))
+    elif not metrics.has_tests and include_patterns:
+        findings.append(ReviewFinding(
+            severity=Severity.LOW,
+            title="No test files in analyzed scope",
+            description=(
+                f"No files with 'test' in the path within the analyzed scope "
+                f"({', '.join(include_patterns[:3])}). The repository may have "
+                f"tests outside the current filter."
+            ),
+            category="quality",
+            recommendation="Widen the review scope or run a separate test-focused review.",
+            confidence=Confidence.LOW,
         ))
 
     if not metrics.has_ci:

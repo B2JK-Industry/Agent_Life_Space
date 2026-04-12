@@ -173,19 +173,27 @@ _SIMPLE_KEYWORDS = frozenset([
 ])
 
 _ACTION_VERBS = [
-    # SK
+    # SK — implementation/mutation verbs only
     "registruj", "zaregistruj", "registrovať", "prihlás", "prihlásiť", "vytvor účet",
-    "nájdi", "vyhľadaj", "porovnaj", "analyzuj",
-    "stiahni", "nainštaluj", "nastav", "nakonfiguruj",
-    "preskúmaj", "prečítaj", "zisti", "over",
-    "spusti", "otestuj", "skontroluj",
-    # EN
+    "nainštaluj", "nastav", "nakonfiguruj",
+    # EN — implementation/mutation verbs only
     "register", "sign up", "create account",
-    "find", "search", "compare", "analyze",
     "download", "install", "configure", "set up",
-    "explore", "read", "check", "verify",
-    "run", "test", "inspect", "scan",
+    "run", "test",
 ]
+
+# Analytical / inspection verbs — these should NOT push toward "programming".
+# Questions like "over to ešte raz", "analyzuj výsledok", "skontroluj finding"
+# are follow-ups, not code-generation requests.
+_ANALYTICAL_VERBS = frozenset([
+    # SK
+    "over", "skontroluj", "preskúmaj", "analyzuj", "porovnaj",
+    "prečítaj", "zisti", "vysvetli", "objasni", "zhrň", "sumarizuj",
+    "nájdi", "vyhľadaj",
+    # EN
+    "find", "search", "compare", "analyze", "explore", "read",
+    "check", "verify", "inspect", "scan", "explain", "summarize",
+])
 
 _CAPABILITY_VERBS = [
     # SK
@@ -286,8 +294,16 @@ def classify_task_detailed(text: str) -> ClassificationResult:
         signals["intent_plus_tech"] = 5
         total += 5
 
+    # Analytical verb guard: if the message is dominated by analytical/
+    # inspection verbs (over, skontroluj, analyzuj, vysvetli, ...) and
+    # does NOT contain an unambiguous programming keyword, cap at "analysis".
+    # This prevents follow-up questions about review results from being
+    # misrouted into the build pipeline.
+    has_analytical = any(v in text_lower for v in _ANALYTICAL_VERBS)
+    has_unambiguous_prog = bool(signals.get("programming_keywords"))
+
     # === Thresholds ===
-    if total >= _THRESHOLD_PROGRAMMING:
+    if total >= _THRESHOLD_PROGRAMMING and not (has_analytical and not has_unambiguous_prog):
         task_type = "programming"
     elif total >= _THRESHOLD_ANALYSIS:
         task_type = "analysis"

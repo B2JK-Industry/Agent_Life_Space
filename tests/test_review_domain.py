@@ -282,6 +282,35 @@ class TestRepoStructureAnalyzer:
         assert len(findings) == 1
         assert findings[0].severity == Severity.CRITICAL
 
+    def test_scope_filtered_no_tests_is_not_global_claim(self, sample_repo):
+        """When include_patterns filter out test files, the finding must
+        NOT claim the repo has no tests globally."""
+        from agent.review.analyzers import analyze_repo_structure
+        metrics, findings = analyze_repo_structure(
+            sample_repo, include_patterns=["src/*"],
+        )
+        # Repo HAS tests (in tests/), but scope excludes them
+        assert metrics.test_files == 0
+        test_findings = [f for f in findings if "test" in f.title.lower()]
+        if test_findings:
+            # Must be scope-qualified, not a global claim
+            assert "scope" in test_findings[0].title.lower() or \
+                   "scope" in test_findings[0].description.lower()
+            assert test_findings[0].severity != Severity.HIGH
+
+    def test_full_repo_no_tests_is_global_claim(self):
+        """When scanning the full repo and there are genuinely no tests,
+        the finding should be HIGH severity with a global claim."""
+        from agent.review.analyzers import analyze_repo_structure
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "src").mkdir()
+            (Path(tmpdir) / "src" / "main.py").write_text("x = 1\n")
+            metrics, findings = analyze_repo_structure(tmpdir)
+            assert not metrics.has_tests
+            test_findings = [f for f in findings if "test" in f.title.lower()]
+            assert len(test_findings) == 1
+            assert test_findings[0].severity == Severity.HIGH
+
 
 class TestSecurityAnalyzer:
     @pytest.fixture()
@@ -425,6 +454,46 @@ class TestReviewStorage:
         assert artifacts[0]["format"] == "json"
         assert loaded is not None
         assert loaded["content_json"]["findings"][0]["id"] == "f-1"
+
+
+class TestReviewStoragePrefixLookup:
+    """Regression: /jobs shows truncated IDs; detail lookup must resolve prefixes."""
+
+    @pytest.fixture()
+    def storage(self):
+        from agent.review.storage import ReviewStorage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        s = ReviewStorage(db_path=db_path)
+        s.initialize()
+        yield s
+        s.close()
+        os.unlink(db_path)
+
+    def test_prefix_lookup_resolves(self, storage):
+        job = ReviewJob(job_type=ReviewJobType.REPO_AUDIT, requester="test")
+        storage.save_job(job)
+        # Use first 12 chars (same as /jobs list truncation)
+        short = job.id[:12]
+        loaded = storage.load_job(short)
+        assert loaded is not None
+        assert loaded["id"] == job.id
+
+    def test_exact_id_still_works(self, storage):
+        job = ReviewJob(job_type=ReviewJobType.REPO_AUDIT, requester="test")
+        storage.save_job(job)
+        loaded = storage.load_job(job.id)
+        assert loaded is not None
+
+    def test_ambiguous_prefix_returns_none(self, storage):
+        """If prefix matches multiple jobs, return None (not arbitrary)."""
+        j1 = ReviewJob(job_type=ReviewJobType.REPO_AUDIT, requester="t1")
+        j2 = ReviewJob(job_type=ReviewJobType.REPO_AUDIT, requester="t2")
+        storage.save_job(j1)
+        storage.save_job(j2)
+        # 1-char prefix will match both
+        loaded = storage.load_job("a")  # too short for prefix search
+        assert loaded is None
 
 
 class TestReviewStorageSqlHardening:

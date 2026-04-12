@@ -115,12 +115,21 @@ class BuildStorage:
     def load_job(self, job_id: str) -> dict[str, Any] | None:
         if not self._db:
             return None
+        # Exact match first
         row = self._db.execute(
             "SELECT data FROM build_jobs WHERE id = ?", (job_id,)
         ).fetchone()
-        if row is None:
-            return None
-        return cast("dict[str, Any]", json.loads(row[0]))
+        if row is not None:
+            return cast("dict[str, Any]", json.loads(row[0]))
+        # Prefix match fallback (for short IDs from /jobs list)
+        if len(job_id) >= 8:
+            rows = self._db.execute(
+                "SELECT data FROM build_jobs WHERE id LIKE ?",
+                (job_id + "%",),
+            ).fetchall()
+            if len(rows) == 1:
+                return cast("dict[str, Any]", json.loads(rows[0][0]))
+        return None
 
     def list_jobs(
         self, status: str = "", limit: int = 20
