@@ -257,10 +257,13 @@ class ClaudeCliProvider(LLMProvider):
                 # Block ALL tools — pure text-in/text-out. Used for
                 # non-programming queries where tool use wastes the
                 # single allowed turn and returns "turn limit" errors.
+                # List every known Claude Code tool to ensure none slip through.
                 cli_args.extend([
                     "--disallowed-tools",
                     "Bash,Edit,Write,NotebookEdit,Read,Glob,Grep,"
-                    "WebFetch,WebSearch,Agent,TodoWrite",
+                    "WebFetch,WebSearch,Agent,TodoWrite,Skill,"
+                    "ToolSearch,EnterPlanMode,ExitPlanMode,"
+                    "EnterWorktree,ExitWorktree,AskUserQuestion",
                 ])
             elif not file_access_granted and sandbox_only_active:
                 # Sandbox is on but we still bypass permissions because
