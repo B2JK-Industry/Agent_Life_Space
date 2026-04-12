@@ -66,9 +66,10 @@ class TestClassifyTask:
         assert result in ("analysis", "programming")
 
     def test_complex_multi_signal(self):
-        """URL + action verb → programming (Opus)."""
+        """URL + analytical verb → analysis (not programming).
+        Reading and analyzing a URL is not a code-generation task."""
         result = classify_task("prečítaj si https://github.com/repo a analyzuj čo tam je")
-        assert result == "programming"
+        assert result == "analysis"
 
     def test_simple_question_stays_factual(self):
         """Krátka otázka bez complexity → factual."""
