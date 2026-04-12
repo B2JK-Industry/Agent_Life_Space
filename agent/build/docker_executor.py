@@ -120,7 +120,7 @@ async def run_project_in_docker(
         if has_requirements:
             deps_result = await _docker_run_phase(
                 project_dir=project_dir,
-                script="pip install -q -r /project/requirements.txt ruff 2>&1",
+                script="pip install -q -r /work/requirements.txt ruff 2>&1",
                 network=True,
                 timeout=120,
                 memory=memory,
@@ -179,7 +179,7 @@ async def run_project_in_docker(
                 if has_requirements:
                     await _docker_run_phase(
                         project_dir=project_dir,
-                        script="pip install -q -r /project/requirements.txt 2>&1",
+                        script="pip install -q -r /work/requirements.txt 2>&1",
                         network=True, timeout=120, memory=memory, phase="deps_retry",
                     )
 
