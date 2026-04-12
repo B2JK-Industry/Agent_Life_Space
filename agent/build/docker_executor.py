@@ -274,7 +274,7 @@ async def _docker_run_phase(
         "-v", f"{project_dir}:/project:ro",
         _DOCKER_IMAGE,
         "bash", "-c",
-        f"cp -r /project /work && cd /work && {script}",
+        f"mkdir -p /work && cp -a /project/. /work/ && cd /work && {script}",
     ]
 
     docker_cmd = f"sg docker -c {shlex.quote(' '.join(shlex.quote(a) for a in docker_args))}"
