@@ -34,10 +34,16 @@ import re
 from typing import Any
 
 # Stop-reason → short user-facing line.
+_TURN_LIMIT_FRIENDLY = (
+    "I couldn't finish — my tool-use budget ran out before "
+    "producing an answer. Try rephrasing more directly or "
+    "asking a simpler question."
+)
+
 _STOP_REASON_MAP: dict[str, str] = {
-    "max_turns": "I hit my tool-use turn limit before reaching a final answer.",
-    "errormaxturns": "I hit my tool-use turn limit before reaching a final answer.",
-    "error_max_turns": "I hit my tool-use turn limit before reaching a final answer.",
+    "max_turns": _TURN_LIMIT_FRIENDLY,
+    "errormaxturns": _TURN_LIMIT_FRIENDLY,
+    "error_max_turns": _TURN_LIMIT_FRIENDLY,
     "tool_use_failed": "An internal tool call failed before I could finish.",
     "tooluse_failed": "An internal tool call failed before I could finish.",
     "permission_denied": "An internal tool call was denied by policy.",
