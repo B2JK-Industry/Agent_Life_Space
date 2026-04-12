@@ -121,11 +121,13 @@ class BuildStorage:
         ).fetchone()
         if row is not None:
             return cast("dict[str, Any]", json.loads(row[0]))
-        # Prefix match fallback (for short IDs from /jobs list)
+        # Prefix match fallback (for short IDs from /jobs list).
+        # Escape LIKE wildcards in user input to prevent enumeration.
         if len(job_id) >= 8:
+            escaped = job_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             rows = self._db.execute(
-                "SELECT data FROM build_jobs WHERE id LIKE ?",
-                (job_id + "%",),
+                "SELECT data FROM build_jobs WHERE id LIKE ? ESCAPE '\\'",
+                (escaped + "%",),
             ).fetchall()
             if len(rows) == 1:
                 return cast("dict[str, Any]", json.loads(rows[0][0]))

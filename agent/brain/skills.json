@@ -2,7 +2,7 @@
   "curl": {
     "category": "internet",
     "command_example": "curl -s https://example.com",
-    "confidence": 0.95,
+    "confidence": 0.2,
     "description": "HTTP requesty cez curl",
     "fail_count": 0,
     "first_learned": "2026-03-24",
@@ -16,7 +16,7 @@
   "docker_run": {
     "category": "docker",
     "command_example": "sg docker -c 'docker run --rm image'",
-    "confidence": 0.9,
+    "confidence": 0.2,
     "description": "Spustenie Docker kontajnera",
     "fail_count": 0,
     "first_learned": "2026-03-24",
@@ -30,7 +30,7 @@
   "file_read": {
     "category": "filesystem",
     "command_example": "cat file.py",
-    "confidence": 0.95,
+    "confidence": 0.2,
     "description": "Čítanie súborov",
     "fail_count": 0,
     "first_learned": "2026-03-24",
@@ -44,7 +44,7 @@
   "file_write": {
     "category": "filesystem",
     "command_example": "echo 'text' > file",
-    "confidence": 0.9,
+    "confidence": 0.2,
     "description": "Zápis do súborov",
     "fail_count": 0,
     "first_learned": "2026-03-24",
@@ -72,7 +72,7 @@
   "git_status": {
     "category": "git",
     "command_example": "git status",
-    "confidence": 0.9,
+    "confidence": 0.1,
     "description": "Git status check",
     "fail_count": 0,
     "first_learned": "2026-03-24",
@@ -86,7 +86,7 @@
   "github_api": {
     "category": "internet",
     "command_example": "curl -H 'Authorization: token $GITHUB_TOKEN' https://api.github.com/...",
-    "confidence": 0.9,
+    "confidence": 0.2,
     "description": "GitHub API volania",
     "fail_count": 0,
     "first_learned": "2026-03-24",
@@ -100,7 +100,7 @@
   "github_create_issue": {
     "category": "github",
     "command_example": "curl -X POST -H 'Authorization: token $GITHUB_TOKEN' https://api.github.com/repos/B2JK-Industry/REPO/issues -d '{\"title\":\"...\",\"body\":\"...\"}'",
-    "confidence": 0.95,
+    "confidence": 0.2,
     "description": "Vytvoriť GitHub issue",
     "fail_count": 0,
     "first_learned": "2026-03-24",
@@ -198,7 +198,7 @@
   "pytest": {
     "category": "code",
     "command_example": "python -m pytest tests/ -q",
-    "confidence": 0.9,
+    "confidence": 0.1,
     "description": "Spustenie testov",
     "fail_count": 0,
     "first_learned": "2026-03-24",
@@ -212,7 +212,7 @@
   "python_run": {
     "category": "code",
     "command_example": "python3 script.py",
-    "confidence": 0.95,
+    "confidence": 0.2,
     "description": "Spustenie Python skriptu",
     "fail_count": 0,
     "first_learned": "2026-03-24",
@@ -226,7 +226,7 @@
   "system_health": {
     "category": "system",
     "command_example": "free -h && df -h /",
-    "confidence": 0.9,
+    "confidence": 0.1,
     "description": "Kontrola CPU/RAM/disk",
     "fail_count": 0,
     "first_learned": "2026-03-24",
@@ -240,7 +240,7 @@
   "task_create": {
     "category": "agent",
     "command_example": "tasks.create_task(name=...)",
-    "confidence": 0.9,
+    "confidence": 0.1,
     "description": "Vytvorenie úlohy",
     "fail_count": 0,
     "first_learned": "2026-03-24",
@@ -254,7 +254,7 @@
   "telegram_send": {
     "category": "communication",
     "command_example": "via TelegramBot.send_message",
-    "confidence": 0.9,
+    "confidence": 0.1,
     "description": "Posielanie Telegram správ",
     "fail_count": 0,
     "first_learned": "2026-03-24",
@@ -268,12 +268,12 @@
   "web_scraping": {
     "category": "internet",
     "command_example": "requests.get(url) + BeautifulSoup(html, \"html.parser\")",
-    "confidence": 0.95,
+    "confidence": 0.3,
     "description": "Čítanie webových stránok",
-    "fail_count": 0,
+    "fail_count": 1,
     "first_learned": "2026-03-24",
     "last_error": "",
-    "last_used": "2026-03-24",
+    "last_used": "2026-04-12T21:55:43.959404+00:00",
     "name": "web_scraping",
     "notes": "Otestované 5 scenárov: 1) Základný GET+parse (quotes.toscrape.com) - OK, 2) Stránkovanie (pagination cez 3 strany) - OK, 3) Extrahovanie linkov (a[href]) - OK, 4) Custom User-Agent headers - OK, 5) JSON API scraping (github.com) - OK. Používa requests + BeautifulSoup4. Dôležité: vždy nastaviť timeout, rešpektovať robots.txt, neposielať spam.",
     "status": "mastered",

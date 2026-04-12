@@ -62,6 +62,7 @@ class GenerateRequest:
     # CLI-specific (no-op for API providers)
     max_turns: int = 1
     allow_file_access: bool = False
+    no_tools: bool = False  # block ALL tool use (single-shot text only)
     cwd: str = ""
 
 
@@ -252,7 +253,16 @@ class ClaudeCliProvider(LLMProvider):
         cli_args.extend(["--max-turns", str(max(request.max_turns, 1))])
         if file_access_granted or headless_auto_approve:
             cli_args.append("--dangerously-skip-permissions")
-            if not file_access_granted and sandbox_only_active:
+            if request.no_tools:
+                # Block ALL tools — pure text-in/text-out. Used for
+                # non-programming queries where tool use wastes the
+                # single allowed turn and returns "turn limit" errors.
+                cli_args.extend([
+                    "--disallowed-tools",
+                    "Bash,Edit,Write,NotebookEdit,Read,Glob,Grep,"
+                    "WebFetch,WebSearch,Agent,TodoWrite",
+                ])
+            elif not file_access_granted and sandbox_only_active:
                 # Sandbox is on but we still bypass permissions because
                 # we are headless. Lock down the destructive tools so
                 # the LLM can read/search but never mutate the host.

@@ -521,17 +521,19 @@ class ReviewService:
                 if counts.get(sev, 0) > 0:
                     count_parts.append(f"{counts[sev]} {sev}")
             if count_parts:
-                # Replace the findings sentence in the existing summary
+                # Replace the findings sentence in the existing summary.
+                # Match both SK "Nájdené:" and EN "Found:" patterns.
                 import re as _re
                 old_summary = job.report.executive_summary or ""
+                findings_text = f"Findings: {', '.join(count_parts)}."
                 refreshed = _re.sub(
-                    r"Nájdené:.*?\.",
-                    f"Nájdené: {', '.join(count_parts)}.",
+                    r"(?:Nájdené|Findings|Found):.*?\.",
+                    findings_text,
                     old_summary,
                 )
-                if refreshed == old_summary and count_parts:
-                    # Pattern didn't match — append instead
-                    refreshed = old_summary.rstrip() + f" Nájdené: {', '.join(count_parts)}."
+                if refreshed == old_summary:
+                    # Pattern didn't match — append
+                    refreshed = f"{old_summary.rstrip()} {findings_text}"
                 job.report.executive_summary = refreshed
         self._storage.save_job(job)
         self._sync_product_job(job)

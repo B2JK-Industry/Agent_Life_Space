@@ -113,10 +113,13 @@ class ReviewStorage:
         row = cursor.fetchone()
         if row:
             return cast("dict[str, Any]", orjson.loads(row[0]))
-        # Prefix match fallback (for short IDs from /jobs list)
+        # Prefix match fallback (for short IDs from /jobs list).
+        # Escape LIKE wildcards in user input to prevent enumeration.
         if len(job_id) >= 8:
+            escaped = job_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             cursor = self._db.execute(
-                "SELECT data FROM review_jobs WHERE id LIKE ?", (job_id + "%",),
+                "SELECT data FROM review_jobs WHERE id LIKE ? ESCAPE '\\'",
+                (escaped + "%",),
             )
             rows = cursor.fetchall()
             if len(rows) == 1:

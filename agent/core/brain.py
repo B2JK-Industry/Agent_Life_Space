@@ -502,20 +502,22 @@ class AgentBrain:
             # errormaxturns — the root cause of analytical question timeouts.
             effective_max_turns = model.max_turns
             sandbox_active = os.environ.get("AGENT_SANDBOX_ONLY", "1").strip() != "0"
-            if (
+            single_shot = (
                 backend == "cli"
                 and sandbox_active
                 and task_type not in ("programming",)
-            ):
+            )
+            if single_shot:
                 effective_max_turns = 1
 
             # Channel enforcement: restricted channels never get file access
             response = await provider.generate(GenerateRequest(
                 messages=[{"role": "user", "content": prompt}],
                 model=model.model_id,
-                timeout=min(model.timeout, 90) if effective_max_turns == 1 else model.timeout,
+                timeout=min(model.timeout, 90) if single_shot else model.timeout,
                 max_turns=effective_max_turns,
                 allow_file_access=cli_allow_file_access,
+                no_tools=single_shot,
                 cwd=project_root,
             ))
 

@@ -1287,74 +1287,73 @@ def handle_autonomy(agent: Any) -> str:
 
 
 async def handle_project_status(agent: Any) -> str:
-    """Grounded project-status answer built from live runtime data.
+    """Grounded project-status answer from ``agent.get_status()``.
 
-    Answers questions like "what's the project state?", "how many tests
-    pass?", "what's done / not done?". All data is pulled from the
-    running agent — no hallucinated facts.
+    Each section is individually guarded so a failure in one doesn't
+    suppress the others.
     """
     import agent as _agent_pkg
 
     parts: list[str] = []
     parts.append(f"*Project status — Agent Life Space v{_agent_pkg.__version__}*\n")
 
-    # Module health
+    # Pull the canonical status dict (single call, many sub-dicts).
     try:
-        health = agent.get_health_report()
-        if isinstance(health, dict):
-            status = health.get("status", "unknown")
-            uptime = health.get("uptime_seconds", 0)
-            uptime_h = uptime // 3600
-            uptime_m = (uptime % 3600) // 60
-            parts.append(f"Runtime: {status} (uptime {uptime_h}h {uptime_m}m)")
-            modules = health.get("modules", {})
-            if modules:
-                healthy = sum(1 for v in modules.values() if v == "ok")
-                parts.append(f"Modules: {healthy}/{len(modules)} healthy")
+        status = agent.get_status()
     except Exception:
-        parts.append("Runtime: running (health detail unavailable)")
+        status = {}
 
-    # Memory stats
+    # Runtime
     try:
-        mem_stats = agent.memory.get_stats()
-        parts.append(f"Memory store: {mem_stats.get('total', 0)} entries")
+        parts.append(f"Runtime: {'running' if status.get('running') else 'idle'}")
+    except Exception:
+        parts.append("Runtime: unknown")
+
+    # Memory
+    try:
+        mem = status.get("memory", {})
+        parts.append(f"Memory: {mem.get('total', 0)} entries")
     except Exception:
         pass
 
     # Tasks
     try:
-        tasks = agent.tasks.get_all()
-        if tasks:
-            pending = sum(1 for t in tasks if t.get("status") == "pending")
-            done = sum(1 for t in tasks if t.get("status") == "completed")
-            parts.append(f"Tasks: {pending} pending, {done} completed")
-        else:
-            parts.append("Tasks: none queued")
+        tasks = status.get("tasks", {})
+        parts.append(
+            f"Tasks: {tasks.get('pending', 0)} pending, "
+            f"{tasks.get('completed', 0)} completed"
+        )
     except Exception:
         pass
 
-    # Skills
+    # Skills (from brain stats, not separate registry)
     try:
-        from agent.brain.skills import SkillRegistry
-        from agent.core.paths import get_project_root
-        registry = SkillRegistry(f"{get_project_root()}/agent/brain/skills.json")
-        all_skills = registry.list_all()
-        if all_skills:
-            total = len(all_skills)
-            mastered = sum(1 for s in all_skills if s.get("level") == "mastered")
-            parts.append(f"Skills: {total} total, {mastered} mastered")
+        brain = status.get("brain", {})
+        skills_count = brain.get("skills_total") or brain.get("skills_count", 0)
+        if skills_count:
+            parts.append(f"Skills: {skills_count}")
     except Exception:
         pass
 
     # Build pipeline
     try:
-        from agent.build.storage import BuildStorage
-        storage = BuildStorage()
-        recent = storage.list_recent(limit=3)
-        if recent:
-            parts.append(f"Recent builds: {len(recent)} (latest: {recent[0].get('status', '?')})")
+        build = status.get("build", {})
+        total_builds = build.get("total_jobs", build.get("total", 0))
+        if total_builds:
+            completed = build.get("completed", 0)
+            failed = build.get("failed", 0)
+            parts.append(f"Builds: {total_builds} total ({completed} completed, {failed} failed)")
         else:
-            parts.append("Recent builds: none")
+            parts.append("Builds: none")
+    except Exception:
+        pass
+
+    # Review
+    try:
+        review = status.get("review", {})
+        total_reviews = review.get("total_jobs", review.get("total", 0))
+        if total_reviews:
+            parts.append(f"Reviews: {total_reviews} total")
     except Exception:
         pass
 

@@ -638,8 +638,8 @@ class TestErrorNormalization:
         from agent.core.error_normalize import normalize_user_error
 
         out = normalize_user_error("errormaxturns: tool_use exceeded the limit")
-        assert "tool-use turn limit" in out
-        assert "errormaxturns" not in out.lower() or "limit" in out
+        assert "couldn't finish" in out or "budget" in out
+        assert "errormaxturns" not in out.lower()
 
     def test_max_turns_json(self):
         from agent.core.error_normalize import normalize_user_error
@@ -647,7 +647,7 @@ class TestErrorNormalization:
         out = normalize_user_error(
             '{"is_error": true, "stop_reason": "max_turns", "result": "boom"}',
         )
-        assert "turn limit" in out
+        assert "couldn't finish" in out or "budget" in out
 
     def test_plain_text_passthrough(self):
         from agent.core.error_normalize import normalize_user_error
@@ -979,7 +979,35 @@ class TestProjectStatusIntent:
         ))
         fake_provider.generate.assert_not_called()
         assert result is not None
-        assert "Agent Life Space" in result or "v1." in result or "status" in result.lower()
+        # Must contain grounded sections from agent.get_status()
+        assert "Agent Life Space" in result or "v1." in result
+        lower = result.lower()
+        assert "runtime" in lower or "running" in lower
+        assert "memory" in lower or "entries" in lower
+        assert "tasks" in lower or "pending" in lower
+        assert "build" in lower or "review" in lower
+
+    async def test_project_status_section_resilience(self, brain, monkeypatch):
+        """If one status section fails, others must still appear."""
+        fake_provider = MagicMock()
+        fake_provider.generate = AsyncMock()
+        monkeypatch.setattr(
+            "agent.core.llm_provider.get_provider", lambda: fake_provider,
+        )
+        # Sabotage memory stats to simulate a failure
+        original_get_status = brain._agent.get_status
+        def broken_status():
+            s = original_get_status()
+            s.pop("memory", None)  # remove memory section
+            return s
+        brain._agent.get_status = broken_status
+
+        result = await brain.process(_msg("aký je stav projektu?"))
+        fake_provider.generate.assert_not_called()
+        lower = result.lower()
+        # Memory section may be missing, but others must survive
+        assert "runtime" in lower or "running" in lower
+        assert "tasks" in lower or "pending" in lower
 
 
 class TestAgentApiReplyContract:
@@ -1016,6 +1044,7 @@ class TestBlockingIOProtection:
     def test_brain_cache_call_uses_to_thread(self) -> None:
         """Verify that brain.py wraps _try_semantic_cache in asyncio.to_thread."""
         import inspect
+
         from agent.core.brain import AgentBrain
         # Read the source of the _process_inner method (or the method
         # containing the cache call).
@@ -1026,6 +1055,7 @@ class TestBlockingIOProtection:
     def test_brain_rag_call_uses_to_thread(self) -> None:
         """Verify that brain.py wraps _try_rag_retrieval in asyncio.to_thread."""
         import inspect
+
         from agent.core.brain import AgentBrain
         source = inspect.getsource(AgentBrain)
         assert "asyncio.to_thread(self._try_rag_retrieval" in source
@@ -1033,6 +1063,7 @@ class TestBlockingIOProtection:
     def test_dispatcher_semantic_router_uses_to_thread(self) -> None:
         """Verify dispatcher wraps classify_intent in asyncio.to_thread."""
         import inspect
+
         from agent.brain.dispatcher import InternalDispatcher
         source = inspect.getsource(InternalDispatcher)
         assert "to_thread(classify_intent" in source

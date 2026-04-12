@@ -223,6 +223,7 @@ def classify_task_detailed(text: str) -> ClassificationResult:
     """
     text_lower = text.lower().strip()
     words = text_lower.split()
+    word_set = set(words)  # for O(1) whole-word matching
     signals: dict[str, int] = {}
 
     # === Code content early check (before simple) ===
@@ -254,14 +255,19 @@ def classify_task_detailed(text: str) -> ClassificationResult:
         total += 2
 
     # Action verbs (implementation/mutation only)
-    action_matches = sum(1 for v in _ACTION_VERBS if v in text_lower)
+    # Use word_set for single words, text_lower for multi-word phrases.
+    action_matches = sum(
+        1 for v in _ACTION_VERBS
+        if (v in word_set if " " not in v else v in text_lower)
+    )
     if action_matches:
         signals["action_verbs"] = action_matches * 2
         total += action_matches * 2
 
     # Analytical verbs — contribute to analysis threshold but capped
     # by the analytical guard from crossing into programming.
-    analytical_matches = sum(1 for v in _ANALYTICAL_VERBS if v in text_lower)
+    # Word-boundary matching prevents "read" in "thread", "find" in "finding".
+    analytical_matches = sum(1 for v in _ANALYTICAL_VERBS if v in word_set)
     if analytical_matches:
         signals["analytical_verbs"] = analytical_matches * 2
         total += analytical_matches * 2
@@ -276,11 +282,14 @@ def classify_task_detailed(text: str) -> ClassificationResult:
         signals["structural_complexity"] = punctuation_score
         total += punctuation_score
 
-    # Capability questions
+    # Capability questions (multi-word phrases → text_lower match)
     cap_matches = sum(1 for v in _CAPABILITY_VERBS if v in text_lower)
     if cap_matches:
         signals["capability_question"] = cap_matches
         total += cap_matches
+
+    # Analytical verb guard check (used in threshold decision below)
+    has_analytical = analytical_matches > 0
 
     # Code-like content (backticks, indentation, function calls)
     if has_code:
@@ -301,12 +310,7 @@ def classify_task_detailed(text: str) -> ClassificationResult:
         signals["intent_plus_tech"] = 5
         total += 5
 
-    # Analytical verb guard: if the message is dominated by analytical/
-    # inspection verbs (over, skontroluj, analyzuj, vysvetli, ...) and
-    # does NOT contain an unambiguous programming keyword, cap at "analysis".
-    # This prevents follow-up questions about review results from being
-    # misrouted into the build pipeline.
-    has_analytical = any(v in text_lower for v in _ANALYTICAL_VERBS)
+    # Analytical verb guard (has_analytical computed above from word_set)
     has_unambiguous_prog = bool(signals.get("programming_keywords"))
 
     # === Thresholds ===

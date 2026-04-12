@@ -73,6 +73,7 @@ class InternalDispatcher:
         # run off the event loop so it cannot stall the server.
         try:
             import asyncio as _aio
+
             from agent.brain.semantic_router import classify_intent, is_available
             if is_available():
                 intent, confidence = await _aio.to_thread(classify_intent, text_lower)
