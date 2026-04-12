@@ -67,6 +67,8 @@ AUTONOMY = "autonomy"              # "how autonomous are you?"
 COMPLEX_TASK = "complex_task"      # "what kind of complex task can I give you?"
 LIMITS = "limits"                  # "what can't you do?"
 PROJECT_STATUS = "project_status"  # "what's the project state?", "aký je stav projektu?"
+WEB_MONITOR_CAPABILITY = "web_monitor_capability"  # "can you monitor a website?"
+REVIEW_REQUEST = "review_request"  # "sprav review", "urob code review"
 WEATHER_REPORT_SETUP = "weather_report_setup"  # "every morning send me weather in X"
 WEATHER_REPORT_CITY_REPLY = "weather_report_city_reply"  # plain city after follow-up
 
@@ -685,6 +687,45 @@ _PROJECT_STATUS_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bwhat\s+(are\s+)?(the\s+)?(biggest|open|main)\s+(problem|issue|bug)", re.IGNORECASE),
     re.compile(r"\bproject\s+status\b", re.IGNORECASE),
     re.compile(r"\bproject\s+state\b", re.IGNORECASE),
+    # SK: "obsahuje repo testy?", "má repo testy?", "koľko testov?"
+    re.compile(r"\b(obsahuje|má|ma)\s+.{0,15}(repo|repozitár|repozitar|projekt).{0,15}test", re.IGNORECASE),
+    re.compile(r"\b(koľko|kolko)\s+(je\s+)?(testov|súborov|modulov|riadkov)", re.IGNORECASE),
+    re.compile(r"\b(does|has)\s+(the\s+)?(repo|repository)\s+(have|contain)\s+test", re.IGNORECASE),
+)
+
+# Web monitoring capability questions — grounded answer before the LLM
+# hallucinates capabilities like BeautifulSoup, /schedule, /loop.
+_WEB_MONITOR_CAPABILITY_REGEXES: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(vieš|viete|dokážeš|môžeš|umíš)\s+.{0,30}"
+        r"(monitorovať|sledovať|scrapovať|scrape|monitor|track)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(vieš|viete|dokážeš|môžeš)\s+.{0,30}"
+        r"(web|stránk|url|stranok|stranku|sajt)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(can\s+you|could\s+you|are\s+you\s+able)\s+.{0,30}"
+        r"(monitor|scrape|track|watch|crawl)\s+(a\s+)?(web|url|page|site)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(vieš|viete)\s+.{0,20}(ranný|ranny|denný|denny)\s+report",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(vieš|viete)\s+.{0,20}(hlásiť|hlasit|posielať|posielat)\s+.{0,20}(nové|nove)\s+polož",
+        re.IGNORECASE,
+    ),
+)
+
+# Review request — "sprav review", "urob code review", "review this repo"
+_REVIEW_REQUEST_REGEXES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(sprav|urob|run|do)\s+.{0,10}review\b", re.IGNORECASE),
+    re.compile(r"\breview\s+(tohto|this|posledn|last|latest|môj|moj)\b", re.IGNORECASE),
+    re.compile(r"\b(skontroluj|over|audit)\s+.{0,15}(kód|kod|code|commit|repo)\b", re.IGNORECASE),
 )
 
 
@@ -810,6 +851,16 @@ def detect_intent(text: str) -> IntentMatch | None:
     #    fall through to an expensive LLM call that times out.
     if _matches_any(stripped, _PROJECT_STATUS_REGEXES):
         return IntentMatch(intent=PROJECT_STATUS, payload={})
+
+    # 13.6. Review request — catch "sprav review", "urob review" before
+    #    the LLM path that would time out trying to use tools.
+    if _matches_any(stripped, _REVIEW_REQUEST_REGEXES):
+        return IntentMatch(intent=REVIEW_REQUEST, payload={})
+
+    # 13.7. Web monitoring capability questions — grounded answer
+    #    before generic capability or LLM path that would hallucinate.
+    if _matches_any(stripped, _WEB_MONITOR_CAPABILITY_REGEXES):
+        return IntentMatch(intent=WEB_MONITOR_CAPABILITY, payload={})
 
     # 14. Skills query.
     if _matches_any(stripped, _SKILLS_REGEXES):
@@ -1363,6 +1414,42 @@ async def handle_project_status(agent: Any) -> str:
     return "\n".join(parts)
 
 
+def handle_review_request() -> str:
+    """Grounded reply for review requests — routes to /review."""
+    return (
+        "I can run a structured code review. Use:\n\n"
+        "  `/review .` — full repo audit\n"
+        "  `/review agent/core/` — focused directory audit\n"
+        "  `/review . --diff HEAD~1` — review the last commit\n\n"
+        "The review pipeline produces structured findings with severity, "
+        "category, and recommendations. Results are persisted as job "
+        "artifacts you can query with `/jobs`."
+    )
+
+
+def handle_web_monitor_capability() -> str:
+    """Grounded answer about web monitoring capability — no hallucination."""
+    return (
+        "*Web monitoring capability*\n\n"
+        "*What works today:*\n"
+        "  • One-shot URL fetch + text extraction (`otvor <url>` or `/web <url>`)\n"
+        "  • HTML content scraping for server-rendered pages\n"
+        "  • Web search via search tools\n\n"
+        "*Not yet implemented (needs build):*\n"
+        "  • Recurring monitoring with snapshot + diff (new/changed items)\n"
+        "  • Automatic list-item extraction from HTML pages\n"
+        "  • Scheduled daily/hourly reports to Telegram\n"
+        "  • Filter-based alerting (price < X, location = Y)\n\n"
+        "*Hard limits:*\n"
+        "  • JS-heavy SPA pages (React/Angular) — not supported without browser automation\n"
+        "  • CAPTCHA / anti-bot protections — no bypass capability\n"
+        "  • Login-required pages — no session/cookie management\n\n"
+        "To build a monitoring workflow, use `/build` with a description of what "
+        "you want to track. The build pipeline will generate the code and run it "
+        "in a Docker sandbox."
+    )
+
+
 def handle_complex_task(agent: Any) -> str:
     """Grounded examples of complex tasks the agent can actually run."""
     return (
@@ -1567,6 +1654,7 @@ __all__ = [
     "MEMORY_USAGE",
     "PRESENCE",
     "PROJECT_STATUS",
+    "REVIEW_REQUEST",
     "SELF_DESCRIPTION",
     "SELF_UPDATE_IMPERATIVE",
     "SELF_UPDATE_QUESTION",
@@ -1574,6 +1662,7 @@ __all__ = [
     "VERSION",
     "WEATHER_REPORT_CITY_REPLY",
     "WEATHER_REPORT_SETUP",
+    "WEB_MONITOR_CAPABILITY",
     "WEB_OPEN",
     "IntentMatch",
     "detect_intent",
@@ -1588,10 +1677,12 @@ __all__ = [
     "handle_memory_usage",
     "handle_presence",
     "handle_project_status",
+    "handle_review_request",
     "handle_self_description",
     "handle_self_update_question",
     "handle_skills",
     "handle_version",
     "handle_weather_report_setup",
+    "handle_web_monitor_capability",
     "handle_web_open",
 ]

@@ -947,6 +947,12 @@ class AgentBrain:
             if intent == telegram_intents.PROJECT_STATUS:
                 return await telegram_intents.handle_project_status(self._agent)
 
+            if intent == telegram_intents.WEB_MONITOR_CAPABILITY:
+                return telegram_intents.handle_web_monitor_capability()
+
+            if intent == telegram_intents.REVIEW_REQUEST:
+                return telegram_intents.handle_review_request()
+
             if intent == telegram_intents.SELF_UPDATE_QUESTION:
                 return telegram_intents.handle_self_update_question()
 
