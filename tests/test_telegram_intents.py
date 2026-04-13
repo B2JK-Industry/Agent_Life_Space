@@ -143,12 +143,25 @@ class TestIntentDetection:
             ("aký je aktuálny stav projektu ALS na tomto serveri?", telegram_intents.PROJECT_STATUS),
             ("aký je stav projektu?", telegram_intents.PROJECT_STATUS),
             ("čo je dnes hotové?", telegram_intents.PROJECT_STATUS),
-            ("koľko testov prechádza?", telegram_intents.PROJECT_STATUS),
+            ("koľko testov prechádza?", telegram_intents.REPO_VERIFICATION),
             ("aké sú najväčšie otvorené problémy?", telegram_intents.PROJECT_STATUS),
             ("what is the project status?", telegram_intents.PROJECT_STATUS),
             ("what is done?", telegram_intents.PROJECT_STATUS),
             ("what is not finished?", telegram_intents.PROJECT_STATUS),
             ("how many tests pass?", telegram_intents.PROJECT_STATUS),
+            # Repo verification (factual codebase questions)
+            ("má repo tests?", telegram_intents.REPO_VERIFICATION),
+            ("uveď 2 test súbory", telegram_intents.REPO_VERIFICATION),
+            ("je tam README?", telegram_intents.REPO_VERIFICATION),
+            ("obsahuje repozitár testy?", telegram_intents.REPO_VERIFICATION),
+            ("koľko testov je v projekte?", telegram_intents.REPO_VERIFICATION),
+            ("Repo ALS má tests?", telegram_intents.REPO_VERIFICATION),
+            # Project decomposition
+            ("čo z toho vieš urobiť dnes?", telegram_intents.PROJECT_DECOMPOSITION),
+            ("kde potrebuješ nové capability?", telegram_intents.PROJECT_DECOMPOSITION),
+            # Soft web-access capability
+            ("vieš sa dostať na sreality.cz?", telegram_intents.WEB_ACCESS_CAPABILITY),
+            ("dostaneš sa na danú stránku?", telegram_intents.WEB_ACCESS_CAPABILITY),
         ],
     )
     def test_detect(self, text: str, expected: str) -> None:
@@ -944,7 +957,6 @@ class TestProjectStatusIntent:
     @pytest.mark.parametrize("text", [
         "aký je aktuálny stav projektu ALS na tomto serveri?",
         "čo je dnes hotové?",
-        "koľko testov prechádza?",
         "aké sú najväčšie otvorené problémy?",
         "what is the project status?",
         "what is not finished?",
@@ -1008,6 +1020,62 @@ class TestProjectStatusIntent:
         # Memory section may be missing, but others must survive
         assert "runtime" in lower or "running" in lower
         assert "tasks" in lower or "pending" in lower
+
+
+class TestRepoVerificationHandler:
+    """Repo verification returns grounded filesystem facts."""
+
+    def test_reports_tests_exist(self) -> None:
+        result = telegram_intents.handle_repo_verification()
+        assert "tests/" in result.lower() or "test" in result.lower()
+        assert "test_" in result  # at least one example file
+
+    def test_reports_key_files(self) -> None:
+        result = telegram_intents.handle_repo_verification()
+        assert "README" in result or "pyproject" in result
+
+    def test_no_provider_needed(self) -> None:
+        """Handler is pure filesystem — no LLM call."""
+        # Just verify it returns a non-empty string synchronously
+        result = telegram_intents.handle_repo_verification()
+        assert isinstance(result, str)
+        assert len(result) > 20
+
+
+class TestProjectDecompositionHandler:
+    """Project decomposition returns grounded capability gap analysis."""
+
+    @pytest.mark.asyncio
+    async def test_returns_implemented_and_missing(self, brain):
+        fake_provider = MagicMock()
+        fake_provider.generate = AsyncMock()
+        from unittest.mock import patch as _patch
+        with _patch("agent.core.llm_provider.get_provider", return_value=fake_provider):
+            result = await brain.process(_msg(
+                "čo z toho vieš urobiť dnes a kde chýba capability?",
+            ))
+        fake_provider.generate.assert_not_called()
+        lower = result.lower()
+        assert "implemented" in lower or "✅" in result or "existuje" in lower
+        assert "missing" in lower or "❌" in result or "chýba" in lower or "chyba" in lower
+
+
+class TestWebAccessCapabilityHandler:
+    """Soft web-access questions get grounded answer, not presence reply."""
+
+    def test_grounded_web_answer(self) -> None:
+        result = telegram_intents.handle_web_access_capability()
+        lower = result.lower()
+        assert "web" in lower
+        assert "url" in lower or "html" in lower
+        assert "limitation" in lower or "limit" in lower
+
+    @pytest.mark.asyncio
+    async def test_not_presence_reply(self, brain):
+        """'vieš sa dostať na sreality.cz?' must NOT return presence reply."""
+        result = await brain.process(_msg("vieš sa dostať na sreality.cz?"))
+        assert "I'm here" not in result
+        assert "✅" not in result or "web" in result.lower()
 
 
 class TestAgentApiReplyContract:

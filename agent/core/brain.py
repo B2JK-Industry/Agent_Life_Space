@@ -961,6 +961,15 @@ class AgentBrain:
             if intent == telegram_intents.REVIEW_REQUEST:
                 return telegram_intents.handle_review_request()
 
+            if intent == telegram_intents.REPO_VERIFICATION:
+                return telegram_intents.handle_repo_verification()
+
+            if intent == telegram_intents.PROJECT_DECOMPOSITION:
+                return telegram_intents.handle_project_decomposition(self._agent)
+
+            if intent == telegram_intents.WEB_ACCESS_CAPABILITY:
+                return telegram_intents.handle_web_access_capability()
+
             if intent == telegram_intents.SELF_UPDATE_QUESTION:
                 return telegram_intents.handle_self_update_question()
 

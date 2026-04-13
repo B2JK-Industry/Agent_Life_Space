@@ -69,6 +69,9 @@ LIMITS = "limits"                  # "what can't you do?"
 PROJECT_STATUS = "project_status"  # "what's the project state?", "aký je stav projektu?"
 WEB_MONITOR_CAPABILITY = "web_monitor_capability"  # "can you monitor a website?"
 REVIEW_REQUEST = "review_request"  # "sprav review", "urob code review"
+REPO_VERIFICATION = "repo_verification"  # "má repo tests?", "uveď 2 test súbory"
+PROJECT_DECOMPOSITION = "project_decomposition"  # "čo z toho vieš dnes / čo chýba?"
+WEB_ACCESS_CAPABILITY = "web_access_capability"  # "vieš sa dostať na X?"
 WEATHER_REPORT_SETUP = "weather_report_setup"  # "every morning send me weather in X"
 WEATHER_REPORT_CITY_REPLY = "weather_report_city_reply"  # plain city after follow-up
 
@@ -741,6 +744,85 @@ _REVIEW_REQUEST_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(skontroluj|over|audit)\s+.{0,15}(kód|kod|code|commit|repo)\b", re.IGNORECASE),
 )
 
+# Repo verification — factual questions about the local codebase:
+# "má repo tests?", "uveď 2 test súbory", "je tam README?"
+_REPO_VERIFICATION_REGEXES: tuple[re.Pattern[str], ...] = (
+    # SK: "má/obsahuje repo/repozitár tests/testy"
+    re.compile(
+        r"\b(má|ma|obsahuje)\s+.{0,15}(repo|repozitár|repozitar|projekt)\s+.{0,10}test",
+        re.IGNORECASE,
+    ),
+    # SK: "uveď/povedz/ukáž X test súborov/súbory"
+    re.compile(
+        r"\b(uveď|uved|povedz|ukáž|ukaz|vymenuj|vypiš|vypis)\s+.{0,10}\d*\s*test",
+        re.IGNORECASE,
+    ),
+    # SK: "má repo/projekt README / CI / Dockerfile"
+    re.compile(
+        r"\b(má|ma|je\s+tam|existuje|obsahuje)\s+.{0,15}"
+        r"(README|Dockerfile|CI|\.github|gitignore|pyproject|setup\.py|requirements)",
+        re.IGNORECASE,
+    ),
+    # SK: "koľko testov je v repo" (also in PROJECT_STATUS, but we catch it here for richer answer)
+    re.compile(r"\b(koľko|kolko)\s+.{0,10}(testov|test\s+súborov|test\s+file)", re.IGNORECASE),
+    # SK: "existuje modul/adresár X"
+    re.compile(r"\b(existuje|je\s+tam)\s+.{0,10}(modul|adresár|adresar|súbor|subor|file|dir)", re.IGNORECASE),
+    # SK: "repo ALS má tests?"  (noun-first order)
+    re.compile(r"\b(repo|repozitár|repozitar|projekt)\s+.{0,10}(má|ma|obsahuje)\s+.{0,10}test", re.IGNORECASE),
+    # EN
+    re.compile(r"\b(does|has)\s+(the\s+)?(repo|repository|project)\s+(have|contain)\s+test", re.IGNORECASE),
+    re.compile(r"\b(list|show|give)\s+.{0,10}\d*\s*test\s+file", re.IGNORECASE),
+    re.compile(r"\b(is\s+there|does\s+it\s+have)\s+(a\s+)?(README|Dockerfile|CI)", re.IGNORECASE),
+)
+
+# Project capability decomposition — "čo z toho vieš / čo chýba"
+_PROJECT_DECOMPOSITION_REGEXES: tuple[re.Pattern[str], ...] = (
+    # SK: "čo z toho vieš urobiť / čo chýba / kde potrebuješ nové capability"
+    re.compile(
+        r"\b(čo|co)\s+(z\s+toho\s+)?(vieš|viete|dokážeš)\s+.{0,20}(dnes|hneď|hned|teraz|urobiť|urobit)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(kde|čo|co)\s+(ešte\s+|este\s+)?(potrebuješ|potrebujes|chýba|chyba|treba)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(rozdeľ|rozdel|decompose|break\s+down)\s+.{0,20}(projekt|project|task|úlohu|ulohu)",
+        re.IGNORECASE,
+    ),
+    # EN: "what can you do today / what's missing / where do you need new capability"
+    re.compile(r"\bwhat\s+(can\s+you|do\s+you)\s+.{0,15}(today|now|already|currently)\b", re.IGNORECASE),
+    re.compile(r"\bwhat('s|\s+is)\s+(missing|needed|lacking|not\s+ready)\b", re.IGNORECASE),
+    re.compile(r"\bwhat\s+needs\s+(new\s+)?(capability|implementation|work)\b", re.IGNORECASE),
+    # Combined: "web monitoring plus scheduler plus ..." pattern
+    re.compile(
+        r"(web\s+monitor|scheduler|report|approval).{0,30}(čo|co|what).{0,20}(vieš|viete|can)",
+        re.IGNORECASE,
+    ),
+)
+
+# Soft web-access capability — "vieš sa dostať na X?", "vieš otvoriť tú URL?"
+# Distinguished from WEB_OPEN (execution) and WEB_MONITOR_CAPABILITY (monitoring).
+_WEB_ACCESS_CAPABILITY_REGEXES: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(vieš|viete|dokážeš|môžeš)\s+(sa\s+)?(dostať|dostat|prístupiť|pristup)\s+.{0,10}(na|k)\s+",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(vieš|viete|dokážeš|môžeš)\s+.{0,10}(otvoriť|otvorit|prečítať|precitat|čítať|citat)\s+.{0,10}"
+        r"(tú|tu|ten|danú|danu)\s+(stránku|stranku|web|url|sajt|page)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(dostaneš|dostanes|dostanete)\s+sa\s+na\s+.{0,10}(stránku|stranku|web|url|sajt)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(can\s+you|could\s+you)\s+(access|reach|get\s+to|open)\s+(that|the)\s+(page|site|url|web)",
+        re.IGNORECASE,
+    ),
+)
+
 
 # ─────────────────────────────────────────────
 # Detection
@@ -867,20 +949,32 @@ def detect_intent(text: str) -> IntentMatch | None:
     if _matches_any(stripped, _COMPLEX_TASK_REGEXES):
         return IntentMatch(intent=COMPLEX_TASK, payload={})
 
-    # 13.5. Project status / state questions — catch these before they
-    #    fall through to an expensive LLM call that times out.
+    # 13.5. Repo verification — factual codebase questions answered
+    #    from the local filesystem. Must run before PROJECT_STATUS
+    #    because both match "má repo tests?" patterns.
+    if _matches_any(stripped, _REPO_VERIFICATION_REGEXES):
+        return IntentMatch(intent=REPO_VERIFICATION, payload={})
+
+    # 13.6. Project status / state questions.
     if _matches_any(stripped, _PROJECT_STATUS_REGEXES):
         return IntentMatch(intent=PROJECT_STATUS, payload={})
 
-    # 13.6. Review request — catch "sprav review", "urob review" before
-    #    the LLM path that would time out trying to use tools.
+    # 13.7. Review request.
     if _matches_any(stripped, _REVIEW_REQUEST_REGEXES):
         return IntentMatch(intent=REVIEW_REQUEST, payload={})
 
-    # 13.7. Web monitoring capability questions — grounded answer
-    #    before generic capability or LLM path that would hallucinate.
+    # 13.8. Soft web-access capability — "vieš sa dostať na X?"
+    #    Must run before WEB_MONITOR_CAPABILITY which is broader.
+    if _matches_any(stripped, _WEB_ACCESS_CAPABILITY_REGEXES):
+        return IntentMatch(intent=WEB_ACCESS_CAPABILITY, payload={})
+
+    # 13.9. Web monitoring capability questions.
     if _matches_any(stripped, _WEB_MONITOR_CAPABILITY_REGEXES):
         return IntentMatch(intent=WEB_MONITOR_CAPABILITY, payload={})
+
+    # 13.10. Project capability decomposition — "čo vieš / čo chýba"
+    if _matches_any(stripped, _PROJECT_DECOMPOSITION_REGEXES):
+        return IntentMatch(intent=PROJECT_DECOMPOSITION, payload={})
 
     # 14. Skills query.
     if _matches_any(stripped, _SKILLS_REGEXES):
@@ -1447,6 +1541,130 @@ def handle_review_request() -> str:
     )
 
 
+def handle_repo_verification() -> str:
+    """Answer factual questions about the local codebase from the filesystem."""
+    from pathlib import Path
+
+    from agent.core.paths import get_project_root
+
+    root = Path(get_project_root())
+    parts: list[str] = []
+
+    # Tests
+    test_dir = root / "tests"
+    if test_dir.is_dir():
+        test_files = sorted(f.name for f in test_dir.glob("test_*.py"))
+        parts.append(f"Tests: **yes** — `tests/` directory with {len(test_files)} test files.")
+        if test_files:
+            examples = test_files[:3]
+            parts.append(f"  Examples: {', '.join(f'`{f}`' for f in examples)}")
+    else:
+        parts.append("Tests: **no** `tests/` directory found.")
+
+    # Key files
+    checks = [
+        ("README.md", "README"),
+        (".github/workflows", "CI (GitHub Actions)"),
+        ("Dockerfile", "Dockerfile"),
+        (".gitignore", ".gitignore"),
+        ("pyproject.toml", "pyproject.toml"),
+    ]
+    present = []
+    for path, label in checks:
+        if (root / path).exists():
+            present.append(label)
+    if present:
+        parts.append(f"Key files: {', '.join(present)}")
+
+    # Source structure
+    agent_dir = root / "agent"
+    if agent_dir.is_dir():
+        modules = sorted(d.name for d in agent_dir.iterdir() if d.is_dir() and not d.name.startswith("_"))
+        parts.append(f"Modules: {len(modules)} ({', '.join(modules[:6])}{'...' if len(modules) > 6 else ''})")
+
+    return "\n".join(parts) if parts else "Could not inspect the project root."
+
+
+def handle_project_decomposition(agent: Any) -> str:
+    """Grounded capability gap analysis for medium-project briefs."""
+    # Pull real status to ground the answer
+    try:
+        status = agent.get_status()
+    except Exception:
+        status = {}
+
+    existing: list[str] = []
+    missing: list[str] = []
+
+    # Check each major capability surface
+    if status.get("running"):
+        existing.append("Core runtime + agent loop")
+    if status.get("memory", {}).get("total", 0) >= 0:
+        existing.append("Memory store (persistent SQLite)")
+    if status.get("build", {}):
+        existing.append("Build pipeline (codegen → Docker → verify)")
+    if status.get("review", {}):
+        existing.append("Code review pipeline (structured findings)")
+
+    # Check via known attributes
+    try:
+        if hasattr(agent, "recurring_workflows") or hasattr(agent, "cron"):
+            existing.append("Recurring workflows / cron scheduler")
+    except Exception:
+        pass
+    try:
+        if hasattr(agent, "approval_queue"):
+            existing.append("Approval queue (propose → approve → complete)")
+    except Exception:
+        pass
+    try:
+        if hasattr(agent, "finance"):
+            existing.append("Finance ledger / budget tracking")
+    except Exception:
+        pass
+
+    existing.append("Web access (URL fetch, HTML scraping)")
+    existing.append("Self-update (git pull + systemd restart)")
+    existing.append("Telegram + Agent API channels")
+
+    # Known gaps
+    missing.append("Proactive notifications (Telegram alerts on events)")
+    missing.append("Web monitoring with snapshot + diff (item extraction)")
+    missing.append("Multi-session project state tracking")
+    missing.append("External API integrations (email, Slack, marketplace)")
+
+    parts = ["*Capability assessment*\n"]
+    parts.append(f"*Implemented ({len(existing)}):*")
+    for item in existing:
+        parts.append(f"  ✅ {item}")
+    parts.append(f"\n*Not yet implemented ({len(missing)}):*")
+    for item in missing:
+        parts.append(f"  ❌ {item}")
+    parts.append(
+        "\n*Needs operator action:*"
+        "\n  🔐 API keys / tokens for external services"
+        "\n  🔐 Budget approval for paid APIs"
+        "\n  👤 Explicit approval for any code merge or deployment"
+    )
+    return "\n".join(parts)
+
+
+def handle_web_access_capability() -> str:
+    """Grounded answer about web access — for soft phrasings like 'vieš sa dostať na X?'."""
+    return (
+        "*Web access capability*\n\n"
+        "Yes — I can access public web pages:\n"
+        "  • `otvor <url>` — fetch and display page content\n"
+        "  • `/web <url>` — same via command\n"
+        "  • Works for server-rendered HTML, JSON APIs, plain text\n\n"
+        "*Limitations:*\n"
+        "  • JS-heavy SPAs (React, Angular) — may get empty shell, not rendered content\n"
+        "  • Login-required / CAPTCHA-protected pages — no bypass\n"
+        "  • Rate-limited to 10 requests/minute\n\n"
+        "Try: `otvor <url>` with the specific URL you want to access."
+    )
+
+
 def handle_web_monitor_capability() -> str:
     """Grounded answer about web monitoring + scheduling capability."""
     return (
@@ -1674,7 +1892,9 @@ __all__ = [
     "MEMORY_LIST",
     "MEMORY_USAGE",
     "PRESENCE",
+    "PROJECT_DECOMPOSITION",
     "PROJECT_STATUS",
+    "REPO_VERIFICATION",
     "REVIEW_REQUEST",
     "SELF_DESCRIPTION",
     "SELF_UPDATE_IMPERATIVE",
@@ -1683,6 +1903,7 @@ __all__ = [
     "VERSION",
     "WEATHER_REPORT_CITY_REPLY",
     "WEATHER_REPORT_SETUP",
+    "WEB_ACCESS_CAPABILITY",
     "WEB_MONITOR_CAPABILITY",
     "WEB_OPEN",
     "IntentMatch",
@@ -1697,13 +1918,16 @@ __all__ = [
     "handle_memory_list",
     "handle_memory_usage",
     "handle_presence",
+    "handle_project_decomposition",
     "handle_project_status",
+    "handle_repo_verification",
     "handle_review_request",
     "handle_self_description",
     "handle_self_update_question",
     "handle_skills",
     "handle_version",
     "handle_weather_report_setup",
+    "handle_web_access_capability",
     "handle_web_monitor_capability",
     "handle_web_open",
 ]
