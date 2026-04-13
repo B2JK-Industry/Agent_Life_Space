@@ -769,7 +769,7 @@ class AgentOrchestrator:
             _proj_id = getattr(effective_intake, "project_id", "")
             if _proj_id:
                 try:
-                    self.projects.add_task(_proj_id, job.id)
+                    await self.projects.add_task(_proj_id, job.id)
                 except Exception:
                     pass
             result.update(
@@ -806,7 +806,7 @@ class AgentOrchestrator:
         _proj_id = getattr(effective_intake, "project_id", "")
         if _proj_id:
             try:
-                self.projects.add_task(_proj_id, job.id)
+                await self.projects.add_task(_proj_id, job.id)
             except Exception:
                 pass
         result.update(

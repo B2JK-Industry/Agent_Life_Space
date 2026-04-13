@@ -176,6 +176,138 @@ class TestWorkspaceManager:
         assert len(ws.commands_run) == 2
         assert ws.files_created == ["output.txt"]
 
+
+class TestProjectJobLinkagePersistence:
+    """Regression: add_task must persist through reload."""
+
+    @pytest.mark.asyncio
+    async def test_add_task_persists_after_reload(self, tmp_path: Path):
+        db = str(tmp_path / "projects.db")
+        pm = ProjectManager(db_path=db)
+        await pm.initialize()
+
+        p = await pm.create(name="Monitoring Project")
+        await pm.add_task(p.id, "build-job-001")
+        await pm.add_task(p.id, "review-job-002")
+        await pm.close()
+
+        # Reload from disk
+        pm2 = ProjectManager(db_path=db)
+        await pm2.initialize()
+        reloaded = await pm2.get(p.id)
+        assert reloaded is not None
+        assert "build-job-001" in reloaded.task_ids
+        assert "review-job-002" in reloaded.task_ids
+        await pm2.close()
+
+    @pytest.mark.asyncio
+    async def test_add_task_deduplicates(self, tmp_path: Path):
+        pm = ProjectManager(db_path=str(tmp_path / "projects.db"))
+        await pm.initialize()
+        p = await pm.create(name="Test")
+        await pm.add_task(p.id, "job-1")
+        await pm.add_task(p.id, "job-1")  # duplicate
+        p = await pm.get(p.id)
+        assert p.task_ids == ["job-1"]
+        await pm.close()
+
+
+class TestWorkspaceProjectLinkage:
+    """Workspace created with project_id can be filtered."""
+
+    def test_create_with_project_id(self, tmp_path: Path):
+        wm = WorkspaceManager(root=str(tmp_path / "ws"))
+        wm.initialize()
+        ws = wm.create(name="build-abc", project_id="proj-123")
+        assert ws.project_id == "proj-123"
+
+    def test_list_workspaces_by_project(self, tmp_path: Path):
+        wm = WorkspaceManager(root=str(tmp_path / "ws"))
+        wm.initialize()
+        wm.create(name="a", project_id="proj-1")
+        wm.create(name="b", project_id="proj-2")
+        wm.create(name="c", project_id="proj-1")
+
+        filtered = wm.list_workspaces(project_id="proj-1")
+        assert len(filtered) == 2
+        assert all(w.project_id == "proj-1" for w in filtered)
+
+
+class TestWorkspaceTTLCleanup:
+    """TTL cleanup removes old workspaces without breaking project records."""
+
+    def test_cleanup_expired_removes_old(self, tmp_path: Path):
+        wm = WorkspaceManager(root=str(tmp_path / "ws"), ttl_hours=0)
+        wm.initialize()
+        ws = wm.create(name="old-job", project_id="proj-1")
+        wm.activate(ws.id)
+        wm.complete(ws.id, output="done")
+
+        cleaned = wm.cleanup_expired()
+        assert cleaned == 1
+        assert wm.get(ws.id).status == WorkspaceStatus.CLEANED
+
+    def test_cleanup_does_not_touch_active(self, tmp_path: Path):
+        wm = WorkspaceManager(root=str(tmp_path / "ws"), ttl_hours=0)
+        wm.initialize()
+        ws = wm.create(name="active-job")
+        wm.activate(ws.id)
+
+        cleaned = wm.cleanup_expired()
+        assert cleaned == 0
+        assert wm.get(ws.id).status == WorkspaceStatus.ACTIVE
+
+    @pytest.mark.asyncio
+    async def test_cleanup_preserves_project_record(self, tmp_path: Path):
+        """After workspace cleanup, project still has the job linked."""
+        pm = ProjectManager(db_path=str(tmp_path / "projects.db"))
+        await pm.initialize()
+        p = await pm.create(name="Test Project")
+        await pm.add_task(p.id, "job-xyz")
+
+        wm = WorkspaceManager(root=str(tmp_path / "ws"), ttl_hours=0)
+        wm.initialize()
+        ws = wm.create(name="build-xyz", project_id=p.id, task_id="job-xyz")
+        wm.activate(ws.id)
+        wm.complete(ws.id)
+        wm.cleanup_expired()
+
+        # Project record must survive workspace cleanup
+        p2 = await pm.get(p.id)
+        assert "job-xyz" in p2.task_ids
+        await pm.close()
+
+
+class TestProjectLifecycleCommands:
+    """Regression: all /projects subcommands work."""
+
+    @pytest.mark.asyncio
+    async def test_full_lifecycle(self, tmp_path: Path):
+        pm = ProjectManager(db_path=str(tmp_path / "projects.db"))
+        await pm.initialize()
+
+        p = await pm.create(name="Lifecycle Test")
+        assert p.status == ProjectStatus.IDEA
+
+        await pm.start(p.id)
+        p = await pm.get(p.id)
+        assert p.status == ProjectStatus.ACTIVE
+
+        await pm.pause(p.id)
+        p = await pm.get(p.id)
+        assert p.status == ProjectStatus.PAUSED
+
+        await pm.start(p.id)  # resume
+        p = await pm.get(p.id)
+        assert p.status == ProjectStatus.ACTIVE
+
+        await pm.complete(p.id, result="All done")
+        p = await pm.get(p.id)
+        assert p.status == ProjectStatus.COMPLETED
+        assert p.result == "All done"
+
+        await pm.close()
+
     def test_cleanup(self, tmp_path: Path):
         wm = WorkspaceManager(root=str(tmp_path / "workspaces"))
         wm.initialize()
