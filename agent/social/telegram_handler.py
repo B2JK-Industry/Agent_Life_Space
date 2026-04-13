@@ -747,7 +747,7 @@ class TelegramHandler:
             await self._agent.projects.start(project.id)
             return (
                 f"Project created & started: *{project.name}* (`{project.id}`)\n"
-                f"Link jobs: `/projects link {project.id[:8]}... <job_id>`"
+                f"Link jobs: `/projects link {project.id} <job_id>`"
             )
 
         # /projects link <project_id> <job_id>

@@ -1588,3 +1588,74 @@ class TestReviewWorkspaceLifecycle:
         ))
         assert job.status.value == "completed"
         assert job.workspace_id == ""
+
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_closes_workspace(self, tmp_path: Path):
+        """Unexpected exception in review pipeline must close workspace."""
+        from unittest.mock import patch
+
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        from agent.work.workspace import WorkspaceManager, WorkspaceStatus
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "main.py").write_text("x = 1\n")
+
+        wm = WorkspaceManager(root=str(tmp_path / "ws"))
+        wm.initialize()
+
+        service = ReviewService(
+            storage=ReviewStorage(db_path=str(tmp_path / "reviews.db")),
+            workspace_manager=wm,
+        )
+
+        # Patch an analyzer to throw mid-pipeline
+        with patch.object(
+            service, "_run_repo_audit", side_effect=RuntimeError("boom"),
+        ), pytest.raises(RuntimeError, match="boom"):
+            await service.run_review(ReviewIntake(
+                repo_path=str(repo),
+                review_type=ReviewJobType.REPO_AUDIT,
+                requester="test",
+            ))
+
+        # Workspace must be closed despite the crash
+        workspaces = wm.list_workspaces()
+        assert len(workspaces) == 1
+        ws = workspaces[0]
+        assert ws.status == WorkspaceStatus.FAILED
+        assert ws.completed_at is not None
+
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_workspace_ttl_cleanup(self, tmp_path: Path):
+        """Workspace failed by crash is eligible for TTL cleanup."""
+        from unittest.mock import patch
+
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        from agent.work.workspace import WorkspaceManager
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "x.py").write_text("pass\n")
+
+        wm = WorkspaceManager(root=str(tmp_path / "ws"), ttl_hours=0)
+        wm.initialize()
+
+        service = ReviewService(
+            storage=ReviewStorage(db_path=str(tmp_path / "reviews.db")),
+            workspace_manager=wm,
+        )
+
+        with patch.object(
+            service, "_run_repo_audit", side_effect=RuntimeError("crash"),
+        ), pytest.raises(RuntimeError):
+            await service.run_review(ReviewIntake(
+                repo_path=str(repo),
+                review_type=ReviewJobType.REPO_AUDIT,
+                requester="test",
+            ))
+
+        cleaned = wm.cleanup_expired()
+        assert cleaned == 1

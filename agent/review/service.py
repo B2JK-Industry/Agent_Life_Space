@@ -160,6 +160,24 @@ class ReviewService:
                 t_ws.fail(str(e))
                 logger.warning("review_workspace_failed", error=str(e))
 
+        # Guard: if anything below raises unexpectedly, close workspace
+        try:
+            return await self._run_review_pipeline(job, intake)
+        except Exception:
+            # Unexpected crash — close workspace before propagating
+            if job.workspace_id and job.status not in (
+                JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.BLOCKED,
+            ):
+                job.status = JobStatus.FAILED
+                job.error = job.error or "review pipeline crashed unexpectedly"
+                self._save_job(job)
+            self._close_workspace(job)
+            raise
+
+    async def _run_review_pipeline(
+        self, job: ReviewJob, intake: ReviewIntake,
+    ) -> ReviewJob:
+        """Core review pipeline — extracted for exception-safe workspace guard."""
         # ── Step 1c: Execution policy audit (via unified boundary) ──
         from agent.control.policy import RuntimeActionRequest, evaluate_runtime_action
 
