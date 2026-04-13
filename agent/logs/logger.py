@@ -20,6 +20,7 @@ Security:
 from __future__ import annotations
 
 import logging
+import re as _re
 from datetime import UTC, datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -192,6 +193,7 @@ def setup_tiered_logging(
         processors=[
             structlog.stdlib.add_log_level,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
+            _structlog_secret_redactor,  # redact before serialization
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.processors.JSONRenderer(),
@@ -208,6 +210,35 @@ SECRET_PATTERNS = {
     "api_key", "api_secret", "password", "token", "secret",
     "private_key", "credential", "auth", "bearer",
 }
+
+# Regex patterns for secrets that may appear as free text in string values
+_FREE_TEXT_SECRET_PATTERNS = (
+    _re.compile(r"(Authorization:\s*Bearer\s+)\S+", _re.IGNORECASE),
+    _re.compile(r"([?&](?:api_key|token|key|secret|password)=)[^\s&]+", _re.IGNORECASE),
+    _re.compile(r"(sk-ant-[a-zA-Z0-9_-]{10})[a-zA-Z0-9_-]*"),
+    _re.compile(r"(sk-[a-zA-Z0-9_-]{10})[a-zA-Z0-9_-]*"),
+    _re.compile(r"(agent_api_[a-zA-Z0-9_-]{10})[a-zA-Z0-9_-]*"),
+)
+
+
+def _scrub_string_value(value: str) -> str:
+    """Scrub known secret patterns from a string value."""
+    for pattern in _FREE_TEXT_SECRET_PATTERNS:
+        value = pattern.sub(r"\g<1>***REDACTED***", value)
+    return value
+
+
+def _structlog_secret_redactor(
+    _logger: Any, _method: str, event_dict: dict[str, Any],
+) -> dict[str, Any]:
+    """structlog processor: redact secret keys and free-text secrets."""
+    for key in list(event_dict):
+        key_lower = key.lower()
+        if any(p in key_lower for p in SECRET_PATTERNS):
+            event_dict[key] = "***REDACTED***"
+        elif isinstance(event_dict[key], str):
+            event_dict[key] = _scrub_string_value(event_dict[key])
+    return event_dict
 
 
 def redact_secrets(data: dict[str, Any]) -> dict[str, Any]:

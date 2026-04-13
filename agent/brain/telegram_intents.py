@@ -1623,20 +1623,29 @@ def handle_project_decomposition(agent: Any) -> str:
     except Exception:
         pass
 
-    existing.append("Web access (URL fetch, HTML scraping)")
+    existing.append("Web access (URL fetch, HTML/JSON scraping)")
+    existing.append("Web monitoring (extraction, filtering, snapshot, diff, report)")
+    existing.append("Project tracking (create, lifecycle, job linkage)")
     existing.append("Self-update (git pull + systemd restart)")
     existing.append("Telegram + Agent API channels")
 
-    # Known gaps
-    missing.append("Proactive notifications (Telegram alerts on events)")
-    missing.append("Web monitoring with snapshot + diff (item extraction)")
-    missing.append("Multi-session project state tracking")
+    # Foundation exists but end-to-end flow not finished
+    partial: list[str] = []
+    partial.append("Proactive Telegram report delivery (cron foundation exists)")
+    partial.append("Auto-setup monitoring from natural language")
+
+    # Truly missing
+    missing: list[str] = []
     missing.append("External API integrations (email, Slack, marketplace)")
+    missing.append("Browser automation for JS-heavy pages")
 
     parts = ["*Capability assessment*\n"]
     parts.append(f"*Implemented ({len(existing)}):*")
     for item in existing:
         parts.append(f"  ✅ {item}")
+    parts.append(f"\n*Foundation exists, not end-to-end ({len(partial)}):*")
+    for item in partial:
+        parts.append(f"  🔧 {item}")
     parts.append(f"\n*Not yet implemented ({len(missing)}):*")
     for item in missing:
         parts.append(f"  ❌ {item}")
@@ -1669,23 +1678,23 @@ def handle_web_monitor_capability() -> str:
     """Grounded answer about web monitoring + scheduling capability."""
     return (
         "*Web monitoring & scheduling capability*\n\n"
-        "*What works today:*\n"
-        "  • One-shot URL fetch + text extraction (`otvor <url>` or `/web <url>`)\n"
-        "  • HTML content scraping for server-rendered pages\n"
-        "  • Web search via search tools\n"
-        "  • Recurring workflows (`/workflow`) — persisted across restarts via SQLite\n"
-        "  • Cron-like scheduling (hourly, daily, weekly)\n\n"
-        "*Not yet implemented (needs build):*\n"
-        "  • Automatic list-item extraction from HTML pages\n"
-        "  • Snapshot + diff (detect new/changed items between runs)\n"
-        "  • Filter-based alerting (price < X, location = Y)\n"
-        "  • Formatted Telegram reports from monitoring runs\n\n"
+        "*Implemented:*\n"
+        "  • URL fetch + text/JSON extraction (`otvor <url>` or `/web <url>`)\n"
+        "  • List-item extraction from server-rendered HTML and JSON APIs\n"
+        "  • Item filtering (price range, title keywords, location)\n"
+        "  • Snapshot persistence + diff (new/removed items between runs)\n"
+        "  • Formatted monitoring report rendering\n"
+        "  • Recurring workflows (`/workflow`) — persisted via SQLite\n"
+        "  • Cron scheduling (hourly, daily, weekly)\n\n"
+        "*Foundation exists, flow not yet end-to-end:*\n"
+        "  • Proactive Telegram delivery of monitoring reports\n"
+        "  • Auto-setup from natural language ('sleduj sreality.cz')\n\n"
         "*Hard limits:*\n"
         "  • JS-heavy SPA pages (React/Angular) — server-rendered only\n"
         "  • CAPTCHA / anti-bot protections — no bypass\n"
         "  • Login-required pages — no session management\n\n"
-        "To build a monitoring workflow, use `/build` with a description of what "
-        "you want to track. For scheduling, use `/workflow`."
+        "To set up monitoring, use `/monitor <url>` (coming soon) or "
+        "create a recurring workflow with `/workflow`."
     )
 
 
