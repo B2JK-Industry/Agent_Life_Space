@@ -734,10 +734,32 @@ class TelegramHandler:
         subcmd = parts[0].lower() if parts else ""
         subargs = parts[1].strip() if len(parts) > 1 else ""
 
-        # /projects create <name>
+        # /projects create <name> [--description ...]
         if subcmd == "create" and subargs:
-            project = await self._agent.projects.create(name=subargs)
-            return f"Project created: *{project.name}* (`{project.id}`)"
+            tokens = subargs.split("--description", 1)
+            name = tokens[0].strip()
+            description = tokens[1].strip() if len(tokens) > 1 else ""
+            if not name:
+                return "Usage: `/projects create <name> [--description ...]`"
+            project = await self._agent.projects.create(
+                name=name, description=description,
+            )
+            await self._agent.projects.start(project.id)
+            return (
+                f"Project created & started: *{project.name}* (`{project.id}`)\n"
+                f"Link jobs: `/projects link {project.id[:8]}... <job_id>`"
+            )
+
+        # /projects link <project_id> <job_id>
+        if subcmd == "link" and subargs:
+            link_parts = subargs.split()
+            if len(link_parts) < 2:
+                return "Usage: `/projects link <project_id> <job_id>`"
+            pid, jid = link_parts[0], link_parts[1]
+            result = await self._agent.projects.add_task(pid, jid)
+            if result:
+                return f"Job `{jid[:12]}` linked to project *{result.name}*."
+            return f"Project `{pid}` not found."
 
         # /projects start <id>
         if subcmd == "start" and subargs:
@@ -757,7 +779,7 @@ class TelegramHandler:
             return f"Project *{p.name}* → paused" if p else f"Project `{subargs}` not found."
 
         # /projects <id> — detail
-        if subcmd and subcmd not in ("create", "start", "complete", "pause"):
+        if subcmd and subcmd not in ("create", "start", "complete", "pause", "link"):
             p = await self._agent.projects.get(subcmd)
             if p:
                 _status_emoji = {
@@ -777,18 +799,16 @@ class TelegramHandler:
                 if p.created_at:
                     lines.append(f"Created: {p.created_at[:10]}")
                 return "\n".join(lines)
-            # Fallback: treat as project name to create
-            project = await self._agent.projects.create(name=args.strip())
-            return f"Project created: *{project.name}* (`{project.id}`)"
+            return f"Project `{subcmd}` not found. Use `/projects create <name>` to create one."
 
         # /projects — list all
         projects = await self._agent.projects.list_projects()
         if not projects:
             return (
-                "No projects. Use:\n"
+                "No projects yet. Use:\n"
                 "  `/projects create <name>` — create a new project\n"
-                "  `/projects <id>` — show project detail\n"
-                "  `/projects start <id>` — activate a project"
+                "  `/projects link <project_id> <job_id>` — link existing job\n"
+                "  `/projects <id>` — show project detail"
             )
 
         lines = [f"*Projects* ({len(projects)} total):"]

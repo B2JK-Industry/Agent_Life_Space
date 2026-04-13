@@ -565,6 +565,22 @@ class AgentOrchestrator:
             await self.initialize()
         return await self.review.run_review(intake)
 
+    async def _link_jobs_to_project(self, intake: Any, job: Any) -> None:
+        """Link a completed job (and its post-build review, if any) to a project."""
+        _proj_id = getattr(intake, "project_id", "")
+        if not _proj_id:
+            return
+        try:
+            await self.projects.add_task(_proj_id, job.id)
+        except Exception:
+            pass
+        pbr_id = getattr(job, "post_build_review_job_id", "")
+        if pbr_id:
+            try:
+                await self.projects.add_task(_proj_id, pbr_id)
+            except Exception:
+                pass
+
     async def resume_build_job(self, job_id: str) -> Any:
         """Resume a previously interrupted build job."""
         if not self._initialized:
@@ -765,13 +781,7 @@ class AgentOrchestrator:
                 workspace_id=job.workspace_id,
                 metadata={"job_status": job.status.value},
             )
-            # Link job to project if project_id was specified
-            _proj_id = getattr(effective_intake, "project_id", "")
-            if _proj_id:
-                try:
-                    await self.projects.add_task(_proj_id, job.id)
-                except Exception:
-                    pass
+            await self._link_jobs_to_project(effective_intake, job)
             result.update(
                 {
                     "status": plan_status,
@@ -802,13 +812,7 @@ class AgentOrchestrator:
             workspace_id=job.workspace_id,
             metadata={"job_status": job.status.value, "verdict": job.report.verdict},
         )
-        # Link job to project if project_id was specified
-        _proj_id = getattr(effective_intake, "project_id", "")
-        if _proj_id:
-            try:
-                await self.projects.add_task(_proj_id, job.id)
-            except Exception:
-                pass
+        await self._link_jobs_to_project(effective_intake, job)
         result.update(
             {
                 "status": plan_status,

@@ -3434,6 +3434,7 @@ class BuildService:
             include_patterns=job.intake.target_files,
             requester=job.requester,
             context=f"Post-build review for build {job.id}: {job.intake.description}",
+            project_id=getattr(job.intake, "project_id", ""),
         )
         return await self._review_service.run_review(review_intake)
 

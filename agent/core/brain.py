@@ -955,6 +955,9 @@ class AgentBrain:
             if intent == telegram_intents.PROJECT_STATUS:
                 return await telegram_intents.handle_project_status(self._agent)
 
+            if intent == telegram_intents.RECURRING_CAPABILITY:
+                return telegram_intents.handle_recurring_capability()
+
             if intent == telegram_intents.WEB_MONITOR_CAPABILITY:
                 return telegram_intents.handle_web_monitor_capability()
 

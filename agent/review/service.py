@@ -86,6 +86,22 @@ class ReviewService:
         self._storage.initialize()
         self._initialized = True
 
+    def _close_workspace(self, job: Any) -> None:
+        """Transition workspace to COMPLETED or FAILED matching job status."""
+        if not self._workspace_manager or not job.workspace_id:
+            return
+        try:
+            if job.status == JobStatus.COMPLETED:
+                self._workspace_manager.complete(
+                    job.workspace_id, output=f"Review {job.id} completed",
+                )
+            else:
+                self._workspace_manager.fail(
+                    job.workspace_id, error=job.error or "review failed/blocked",
+                )
+        except Exception:
+            logger.warning("review_workspace_close_failed", workspace_id=job.workspace_id)
+
     async def run_review(self, intake: ReviewIntake) -> ReviewJob:
         """Run a complete review job. Returns the finished job with report."""
         self.initialize()
@@ -179,6 +195,7 @@ class ReviewService:
                 allowed=False,
             )
             self._save_job(job)
+            self._close_workspace(job)
             return job
         if intake.diff_spec and not review_policy.allow_git_subprocess:
             denial = make_denial(
@@ -203,6 +220,7 @@ class ReviewService:
                 allowed=False,
             )
             self._save_job(job)
+            self._close_workspace(job)
             return job
         t_policy.complete(
             f"mode={job.execution_mode.value}, "
@@ -338,6 +356,7 @@ class ReviewService:
         job.phase = ReviewPhase.COMPLETED
         job.timing.mark_completed()
         self._save_job(job)
+        self._close_workspace(job)
 
         logger.info(
             "review_completed",

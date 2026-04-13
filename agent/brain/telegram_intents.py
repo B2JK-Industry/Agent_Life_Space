@@ -72,6 +72,7 @@ REVIEW_REQUEST = "review_request"  # "sprav review", "urob code review"
 REPO_VERIFICATION = "repo_verification"  # "má repo tests?", "uveď 2 test súbory"
 PROJECT_DECOMPOSITION = "project_decomposition"  # "čo z toho vieš dnes / čo chýba?"
 WEB_ACCESS_CAPABILITY = "web_access_capability"  # "vieš sa dostať na X?"
+RECURRING_CAPABILITY = "recurring_capability"  # "vieš niečo spúšťať periodicky?"
 WEATHER_REPORT_SETUP = "weather_report_setup"  # "every morning send me weather in X"
 WEATHER_REPORT_CITY_REPLY = "weather_report_city_reply"  # plain city after follow-up
 
@@ -722,7 +723,10 @@ _WEB_MONITOR_CAPABILITY_REGEXES: tuple[re.Pattern[str], ...] = (
         r"\b(vieš|viete)\s+.{0,20}(hlásiť|hlasit|posielať|posielat)\s+.{0,20}(nové|nove)\s+polož",
         re.IGNORECASE,
     ),
-    # Recurring / scheduling questions
+)
+
+# Recurring / scheduling capability questions
+_RECURRING_CAPABILITY_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"\b(vieš|viete|dokážeš|môžeš)\s+.{0,20}(periodick|opakuj|cron|schedule|recurring|pravidelne)",
         re.IGNORECASE,
@@ -968,7 +972,11 @@ def detect_intent(text: str) -> IntentMatch | None:
     if _matches_any(stripped, _WEB_ACCESS_CAPABILITY_REGEXES):
         return IntentMatch(intent=WEB_ACCESS_CAPABILITY, payload={})
 
-    # 13.9. Web monitoring capability questions.
+    # 13.9a. Recurring / scheduling capability questions.
+    if _matches_any(stripped, _RECURRING_CAPABILITY_REGEXES):
+        return IntentMatch(intent=RECURRING_CAPABILITY, payload={})
+
+    # 13.9b. Web monitoring capability questions.
     if _matches_any(stripped, _WEB_MONITOR_CAPABILITY_REGEXES):
         return IntentMatch(intent=WEB_MONITOR_CAPABILITY, payload={})
 
@@ -1097,13 +1105,15 @@ def handle_capability() -> str:
     """
     return (
         "I'm an autonomous agent (Agent Life Space). Quick capability overview:\n"
-        "  • Conversation + memory (per-chat history, persistent SQLite, RAG over the knowledge base)\n"
-        "  • Code review (`/review <path>`) — job-centric pipeline with artifacts\n"
+        "  • Conversation + memory (per-chat history, persistent SQLite, RAG)\n"
+        "  • Code review (`/review <path>`) — deterministic pipeline with artifacts\n"
         "  • Build pipeline (`/build <task>`) — codegen → Docker sandbox → verification\n"
-        "  • Web read (`/web <url>` or natural language: \"open X\")\n"
+        "  • Web read (`/web <url>` or natural language)\n"
+        "  • Project tracking (`/projects`) — link jobs to long-running initiatives\n"
+        "  • Recurring workflows (`/workflow`) — scheduled review/build jobs\n"
         "  • Finance ledger (proposals → approvals → cost ledger)\n"
         "  • Tasks queue, watchdog, health, cron loops\n"
-        "  • Self-update from public GitHub repo (owner-only, fast-forward, fail-closed)\n"
+        "  • Self-update from GitHub repo (owner-only, fail-closed)\n"
         "  • LLM runtime control (CLI ↔ API), tiered logging, vault\n\n"
         "For the per-skill breakdown ask: _what skills do you have?_"
     )
@@ -1522,10 +1532,55 @@ async def handle_project_status(agent: Any) -> str:
     except Exception:
         pass
 
+    # Projects (async — call manager directly)
+    try:
+        if hasattr(agent, "projects"):
+            proj_stats = await agent.projects.get_stats()
+            total_projects = proj_stats.get("total_projects", 0)
+            if total_projects:
+                active_names = proj_stats.get("active", [])
+                parts.append(
+                    f"Projects: {total_projects} total"
+                    + (f" ({len(active_names)} active)" if active_names else "")
+                )
+            else:
+                parts.append("Projects: none yet (`/projects create <name>`)")
+    except Exception:
+        pass
+
+    # Recurring workflows
+    try:
+        if hasattr(agent, "recurring_workflows"):
+            workflows = agent.recurring_workflows.list_workflows()
+            if workflows:
+                active_wf = sum(1 for w in workflows if w.status == "active")
+                parts.append(f"Recurring workflows: {len(workflows)} ({active_wf} active)")
+            else:
+                parts.append("Recurring workflows: none (`/workflow create`)")
+    except Exception:
+        pass
+
     parts.append(
         "\nFor detailed reports use `/status`, `/health`, `/jobs`, or `/skills`."
     )
     return "\n".join(parts)
+
+
+def handle_recurring_capability() -> str:
+    """Grounded answer for recurring/scheduling capability questions."""
+    return (
+        "Yes — I have a built-in recurring workflow system.\n\n"
+        "*Create a recurring job:*\n"
+        "  `/workflow create <name> --schedule daily --type review --repo .`\n\n"
+        "*Schedules:* `hourly`, `daily`, `weekly`, `monthly`\n"
+        "*Types:* `review` (repo audit), `build` (implementation)\n\n"
+        "*Manage:*\n"
+        "  `/workflow` — list all workflows\n"
+        "  `/workflow pause <id>` — pause\n"
+        "  `/workflow activate <id>` — resume\n\n"
+        "The cron loop checks every 60 seconds and executes due workflows "
+        "automatically. Results are persisted as regular jobs visible in `/jobs`."
+    )
 
 
 def handle_review_request() -> str:
@@ -1903,6 +1958,7 @@ __all__ = [
     "PRESENCE",
     "PROJECT_DECOMPOSITION",
     "PROJECT_STATUS",
+    "RECURRING_CAPABILITY",
     "REPO_VERIFICATION",
     "REVIEW_REQUEST",
     "SELF_DESCRIPTION",
@@ -1929,6 +1985,7 @@ __all__ = [
     "handle_presence",
     "handle_project_decomposition",
     "handle_project_status",
+    "handle_recurring_capability",
     "handle_repo_verification",
     "handle_review_request",
     "handle_self_description",

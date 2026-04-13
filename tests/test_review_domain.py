@@ -1462,3 +1462,129 @@ class TestLegacyDeprecation:
                 prog.review_file("nonexistent.py")
             except Exception:
                 pass
+
+
+# ─────────────────────────────────────────────
+# Review Workspace Lifecycle (regression for drift fix)
+# ─────────────────────────────────────────────
+
+
+class TestReviewWorkspaceLifecycle:
+    """Review jobs must properly close workspaces so TTL cleanup works."""
+
+    @pytest.mark.asyncio
+    async def test_successful_review_completes_workspace(self, tmp_path: Path):
+        """Completed review marks workspace COMPLETED with completed_at."""
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        from agent.work.workspace import WorkspaceManager, WorkspaceStatus
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "main.py").write_text("x = 1\n")
+
+        wm = WorkspaceManager(root=str(tmp_path / "ws"))
+        wm.initialize()
+
+        service = ReviewService(
+            storage=ReviewStorage(db_path=str(tmp_path / "reviews.db")),
+            workspace_manager=wm,
+        )
+        intake = ReviewIntake(
+            repo_path=str(repo),
+            review_type=ReviewJobType.REPO_AUDIT,
+            requester="test",
+        )
+        job = await service.run_review(intake)
+
+        assert job.workspace_id != ""
+        ws = wm.get(job.workspace_id)
+        assert ws is not None
+        assert ws.status == WorkspaceStatus.COMPLETED
+        assert ws.completed_at is not None
+
+    @pytest.mark.asyncio
+    async def test_successful_review_workspace_has_completed_at(self, tmp_path: Path):
+        """completed_at is a valid ISO timestamp, not empty."""
+        from datetime import datetime
+
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        from agent.work.workspace import WorkspaceManager
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "app.py").write_text("y = 2\n")
+
+        wm = WorkspaceManager(root=str(tmp_path / "ws"))
+        wm.initialize()
+
+        service = ReviewService(
+            storage=ReviewStorage(db_path=str(tmp_path / "reviews.db")),
+            workspace_manager=wm,
+        )
+        job = await service.run_review(ReviewIntake(
+            repo_path=str(repo),
+            review_type=ReviewJobType.REPO_AUDIT,
+            requester="test",
+        ))
+
+        ws = wm.get(job.workspace_id)
+        # Must parse as valid ISO datetime
+        parsed = datetime.fromisoformat(ws.completed_at)
+        assert parsed.year >= 2024
+
+    @pytest.mark.asyncio
+    async def test_completed_review_workspace_ttl_cleanup(self, tmp_path: Path):
+        """TTL cleanup removes completed review workspaces."""
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+        from agent.work.workspace import WorkspaceManager, WorkspaceStatus
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "z.py").write_text("z = 3\n")
+
+        wm = WorkspaceManager(root=str(tmp_path / "ws"), ttl_hours=0)
+        wm.initialize()
+
+        service = ReviewService(
+            storage=ReviewStorage(db_path=str(tmp_path / "reviews.db")),
+            workspace_manager=wm,
+        )
+        job = await service.run_review(ReviewIntake(
+            repo_path=str(repo),
+            review_type=ReviewJobType.REPO_AUDIT,
+            requester="test",
+        ))
+
+        # Before cleanup: workspace exists and is completed
+        ws = wm.get(job.workspace_id)
+        assert ws.status == WorkspaceStatus.COMPLETED
+
+        # TTL=0 means immediately eligible
+        cleaned = wm.cleanup_expired()
+        assert cleaned == 1
+        assert wm.get(job.workspace_id).status == WorkspaceStatus.CLEANED
+
+    @pytest.mark.asyncio
+    async def test_review_without_workspace_manager_still_works(self, tmp_path: Path):
+        """Review without workspace manager completes without error."""
+        from agent.review.service import ReviewService
+        from agent.review.storage import ReviewStorage
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "a.py").write_text("a = 1\n")
+
+        service = ReviewService(
+            storage=ReviewStorage(db_path=str(tmp_path / "reviews.db")),
+            # No workspace_manager
+        )
+        job = await service.run_review(ReviewIntake(
+            repo_path=str(repo),
+            review_type=ReviewJobType.REPO_AUDIT,
+            requester="test",
+        ))
+        assert job.status.value == "completed"
+        assert job.workspace_id == ""
