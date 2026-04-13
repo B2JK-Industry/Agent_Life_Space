@@ -132,6 +132,7 @@ class ReviewService:
                 ws = self._workspace_manager.create(
                     name=f"review-{job.id[:8]}",
                     task_id=job.id,
+                    project_id=getattr(job.intake, "project_id", ""),
                 )
                 self._workspace_manager.activate(ws.id)
                 job.workspace_id = ws.id

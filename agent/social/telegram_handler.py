@@ -729,28 +729,76 @@ class TelegramHandler:
         return text
 
     async def _cmd_projects(self, args: str) -> str:
-        """Show projects or create new one."""
-        args = args.strip()
+        """Project management: list, create, start, complete, detail."""
+        parts = args.strip().split(None, 1)
+        subcmd = parts[0].lower() if parts else ""
+        subargs = parts[1].strip() if len(parts) > 1 else ""
 
-        if args:
-            # Vytvor nový projekt
-            project = await self._agent.projects.create(name=args)
-            return f"Projekt vytvorený: *{project.name}* (id: `{project.id}`)"
+        # /projects create <name>
+        if subcmd == "create" and subargs:
+            project = await self._agent.projects.create(name=subargs)
+            return f"Project created: *{project.name}* (`{project.id}`)"
 
-        # List projektov
+        # /projects start <id>
+        if subcmd == "start" and subargs:
+            p = await self._agent.projects.start(subargs.split()[0])
+            return f"Project *{p.name}* → active" if p else f"Project `{subargs}` not found."
+
+        # /projects complete <id>
+        if subcmd == "complete" and subargs:
+            pid = subargs.split()[0]
+            result_text = subargs[len(pid):].strip() or "Completed."
+            p = await self._agent.projects.complete(pid, result=result_text)
+            return f"Project *{p.name}* → completed" if p else f"Project `{pid}` not found."
+
+        # /projects pause <id>
+        if subcmd == "pause" and subargs:
+            p = await self._agent.projects.pause(subargs.split()[0])
+            return f"Project *{p.name}* → paused" if p else f"Project `{subargs}` not found."
+
+        # /projects <id> — detail
+        if subcmd and subcmd not in ("create", "start", "complete", "pause"):
+            p = await self._agent.projects.get(subcmd)
+            if p:
+                _status_emoji = {
+                    "idea": "💡", "planning": "📝", "active": "🔨",
+                    "paused": "⏸", "completed": "✅", "abandoned": "❌",
+                }
+                lines = [
+                    f"{_status_emoji.get(p.status.value, '❓')} *{p.name}* ({p.status.value})",
+                    f"ID: `{p.id}`",
+                ]
+                if p.description:
+                    lines.append(f"Description: {p.description[:200]}")
+                if p.task_ids:
+                    lines.append(f"Linked jobs: {len(p.task_ids)}")
+                    for tid in p.task_ids[-5:]:
+                        lines.append(f"  • `{tid[:12]}`")
+                if p.created_at:
+                    lines.append(f"Created: {p.created_at[:10]}")
+                return "\n".join(lines)
+            # Fallback: treat as project name to create
+            project = await self._agent.projects.create(name=args.strip())
+            return f"Project created: *{project.name}* (`{project.id}`)"
+
+        # /projects — list all
         projects = await self._agent.projects.list_projects()
         if not projects:
-            return "Žiadne projekty. Použi /projects [názov] na vytvorenie."
+            return (
+                "No projects. Use:\n"
+                "  `/projects create <name>` — create a new project\n"
+                "  `/projects <id>` — show project detail\n"
+                "  `/projects start <id>` — activate a project"
+            )
 
-        lines = [f"*Projekty* ({len(projects)} celkom):"]
+        lines = [f"*Projects* ({len(projects)} total):"]
         for p in projects:
-            status_emoji = {
-                "idea": "💡", "planning": "📝", "active": "🔨",
-                "paused": "⏸", "completed": "✅", "abandoned": "❌",
-            }
-            emoji = status_emoji.get(p.status.value, "❓")
-            tasks_count = len(p.task_ids)
-            lines.append(f"{emoji} *{p.name}* ({p.status.value}, {tasks_count} taskov)")
+            _emoji = {"idea": "💡", "planning": "📝", "active": "🔨",
+                      "paused": "⏸", "completed": "✅", "abandoned": "❌"}
+            emoji = _emoji.get(p.status.value, "❓")
+            tasks = len(p.task_ids)
+            lines.append(f"{emoji} `{p.id[:8]}` *{p.name}* — {p.status.value} ({tasks} jobs)")
+        lines.append("\n`/projects <id>` for detail")
         return "\n".join(lines)
 
     # --- Free text — Claude thinks, agent acts ---

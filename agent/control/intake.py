@@ -83,6 +83,7 @@ class OperatorIntake:
     )
     run_post_build_review: bool = True
     max_files: int = 100
+    project_id: str = ""  # Link this work to a Project for tracking
 
     def validate(self) -> list[str]:
         errors: list[str] = []
@@ -132,6 +133,7 @@ class OperatorIntake:
             ],
             "run_post_build_review": self.run_post_build_review,
             "max_files": self.max_files,
+            "project_id": self.project_id,
         }
 
     def normalized_acceptance_criteria(self) -> list[AcceptanceCriterion]:
@@ -431,6 +433,7 @@ class OperatorIntakeService:
             requester=intake.requester,
             context=intake.context or intake.description,
             source="operator",
+            project_id=intake.project_id,
         )
 
     def to_build_intake(self, intake: OperatorIntake) -> BuildIntake:
@@ -460,6 +463,7 @@ class OperatorIntakeService:
             source="operator",
             requester=intake.requester,
             context=intake.context,
+            project_id=intake.project_id,
         )
 
     def create_plan(

@@ -102,6 +102,7 @@ class ReviewIntake:
     requester: str = ""                        # Who requested this review
     context: str = ""                          # Free-text context for the reviewer
     source: str = "manual"                     # Channel/runtime source for this intake
+    project_id: str = ""                       # Link to Project for tracking
 
     def validate(self) -> list[str]:
         """Return list of validation errors. Empty = valid."""

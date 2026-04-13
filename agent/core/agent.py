@@ -765,6 +765,13 @@ class AgentOrchestrator:
                 workspace_id=job.workspace_id,
                 metadata={"job_status": job.status.value},
             )
+            # Link job to project if project_id was specified
+            _proj_id = getattr(effective_intake, "project_id", "")
+            if _proj_id:
+                try:
+                    self.projects.add_task(_proj_id, job.id)
+                except Exception:
+                    pass
             result.update(
                 {
                     "status": plan_status,
@@ -795,6 +802,13 @@ class AgentOrchestrator:
             workspace_id=job.workspace_id,
             metadata={"job_status": job.status.value, "verdict": job.report.verdict},
         )
+        # Link job to project if project_id was specified
+        _proj_id = getattr(effective_intake, "project_id", "")
+        if _proj_id:
+            try:
+                self.projects.add_task(_proj_id, job.id)
+            except Exception:
+                pass
         result.update(
             {
                 "status": plan_status,

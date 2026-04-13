@@ -257,6 +257,7 @@ class BuildService:
             ws = self._workspace_manager.create(
                 name=f"build-{job.id[:8]}",
                 task_id=job.id,
+                project_id=getattr(job.intake, "project_id", ""),
             )
             self._workspace_manager.activate(ws.id)
             job.workspace_id = ws.id
@@ -401,6 +402,7 @@ class BuildService:
             ws = self._workspace_manager.create(
                 name=f"build-{job.id[:8]}",
                 task_id=job.id,
+                project_id=getattr(job.intake, "project_id", ""),
             )
             self._workspace_manager.activate(ws.id)
             job.workspace_id = ws.id

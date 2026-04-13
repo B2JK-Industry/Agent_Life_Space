@@ -603,6 +603,7 @@ class BuildIntake:
     source: str = "manual"
     requester: str = ""
     context: str = ""
+    project_id: str = ""
 
     def validate(self) -> list[str]:
         """Validate intake. Returns list of errors (empty = valid)."""
@@ -634,6 +635,7 @@ class BuildIntake:
             "source": self.source,
             "requester": self.requester,
             "context": self.context,
+            "project_id": self.project_id,
         }
 
     @classmethod
@@ -660,6 +662,7 @@ class BuildIntake:
             source=d.get("source", "manual"),
             requester=d.get("requester", ""),
             context=d.get("context", ""),
+            project_id=d.get("project_id", ""),
         )
 
 

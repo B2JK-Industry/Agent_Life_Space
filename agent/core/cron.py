@@ -439,6 +439,14 @@ class AgentCron:
         except Exception:
             logger.exception("cron_data_cleanup_error")
 
+        # Workspace cleanup — delete completed/failed workspaces older than TTL
+        try:
+            cleaned = self._agent.workspaces.cleanup_expired()
+            if cleaned:
+                logger.info("cron_workspace_cleanup", cleaned=cleaned)
+        except Exception:
+            logger.exception("cron_workspace_cleanup_error")
+
     # --- Recurring Workflows (every 60s check) ---
 
     async def _recurring_workflow_loop(self) -> None:
