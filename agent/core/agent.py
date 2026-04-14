@@ -220,6 +220,16 @@ class AgentOrchestrator:
             control_plane_state=self.control_plane,
         )
         self.pipeline_orchestrator = PipelineOrchestrator(agent=self)
+        # Marketplace earning engine
+        from agent.marketplace.obolos import ObolosConnector
+        from agent.marketplace.service import MarketplaceService
+        self.marketplace = MarketplaceService(
+            gateway=self.gateway,
+            projects=self.projects,
+            approval_queue=self.approval_queue,
+            db_path=str(self._data_dir / "marketplace.db"),
+        )
+        self.marketplace.registry.register(ObolosConnector())
         self.settlement = PaymentSettlementService(
             gateway=self.gateway,
             control_plane=self.control_plane,
@@ -263,6 +273,7 @@ class AgentOrchestrator:
         await self.tasks.initialize()
         await self.finance.initialize()
         await self.projects.initialize()
+        await self.marketplace.initialize()
         self.workspaces.initialize()
         self.build.initialize()
         self.review.initialize()
@@ -358,6 +369,7 @@ class AgentOrchestrator:
         await self.tasks.close()
         await self.finance.close()
         await self.projects.close()
+        await self.marketplace.close()
         self.workspaces.close()
         self.review._storage.close()
         self.build._storage.close()

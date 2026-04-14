@@ -239,6 +239,7 @@ class TelegramHandler:
             "/workflow": self._cmd_workflow,
             "/pipeline": self._cmd_pipeline,
             "/settlement": self._cmd_settlement,
+            "/marketplace": self._cmd_marketplace,
             "/help": self._cmd_help,
         }
 
@@ -1991,6 +1992,109 @@ class TelegramHandler:
         return (
             "*Použitie:* `/settlement` | `/settlement approve <id>` | "
             "`/settlement deny <id>` | `/settlement execute <id>`"
+        )
+
+    async def _cmd_marketplace(self, args: str) -> str:
+        """Marketplace earning engine: discover, evaluate, bid, engage."""
+        if not hasattr(self._agent, "marketplace"):
+            return "Marketplace service not initialized."
+
+        mkt = self._agent.marketplace
+        parts = args.strip().split(None, 1)
+        action = parts[0].lower() if parts else ""
+        subargs = parts[1].strip() if len(parts) > 1 else ""
+
+        # /marketplace discover [platform] [--category X]
+        if action == "discover":
+            platform = ""
+            category = ""
+            tokens = subargs.split()
+            i = 0
+            while i < len(tokens):
+                if tokens[i] == "--category" and i + 1 < len(tokens):
+                    category = tokens[i + 1]
+                    i += 2
+                elif not platform:
+                    platform = tokens[i]
+                    i += 1
+                else:
+                    i += 1
+            opps = await mkt.discover(platform=platform, category=category, limit=10)
+            if not opps:
+                return "No opportunities found. Check platform connectivity."
+            lines = [f"*Discovered {len(opps)} opportunities:*\n"]
+            for opp in opps[:10]:
+                budget = f" ({opp.budget_max} {opp.currency})" if opp.budget_max else ""
+                lines.append(f"  • `{opp.id[:8]}` *{opp.title[:60]}*{budget}")
+            lines.append("\n`/marketplace eval <id>` to assess feasibility")
+            return "\n".join(lines)
+
+        # /marketplace eval <opportunity_id>
+        if action == "eval" and subargs:
+            opp = await mkt.get_opportunity(subargs.split()[0])
+            if not opp:
+                return f"Opportunity `{subargs}` not found. Run `/marketplace discover` first."
+            ev = mkt.evaluate(opp)
+            from agent.marketplace.models import FeasibilityVerdict
+            emoji = {"feasible": "✅", "partial": "🔧", "infeasible": "❌"}.get(ev.verdict.value, "❓")
+            lines = [
+                f"{emoji} *{opp.title[:60]}*",
+                f"Platform: {opp.platform}",
+                f"Verdict: *{ev.verdict.value}* ({ev.confidence:.0%} confidence)",
+                f"Reasoning: {ev.reasoning}",
+            ]
+            if ev.matched_skills:
+                lines.append(f"Matched: {', '.join(ev.matched_skills[:5])}")
+            if ev.missing_skills:
+                lines.append(f"Missing: {', '.join(ev.missing_skills[:5])}")
+            if ev.verdict != FeasibilityVerdict.INFEASIBLE:
+                lines.append(f"\n`/marketplace bid {opp.id}` to prepare a bid")
+            return "\n".join(lines)
+
+        # /marketplace bid <opportunity_id>
+        if action == "bid" and subargs:
+            opp = await mkt.get_opportunity(subargs.split()[0])
+            if not opp:
+                return f"Opportunity `{subargs}` not found."
+            ev = mkt.evaluate(opp)
+            if ev.verdict.value == "infeasible":
+                return f"Opportunity is infeasible: {ev.reasoning}"
+            bid = mkt.prepare_bid(opp, ev)
+            lines = [
+                f"*Bid draft:* {bid.title}",
+                f"Price: ${bid.price_usd:.2f}",
+                f"Status: {bid.status.value}",
+                f"\n{bid.proposal_text}",
+                f"\n`/marketplace submit {bid.id}` to send (requires approval)",
+            ]
+            # Persist draft
+            await mkt._persist_bid(bid)
+            return "\n".join(lines)
+
+        # /marketplace list
+        if action == "list" or not action:
+            stats = await mkt.get_stats()
+            platforms = stats.get("platforms", [])
+            lines = [
+                "*Marketplace*",
+                f"Platforms: {', '.join(platforms) or 'none registered'}",
+                f"Opportunities: {stats.get('opportunities', 0)} stored",
+                f"Bids: {stats.get('bids', 0)} stored",
+                "",
+                "*Commands:*",
+                "  `/marketplace discover [platform]` — fetch opportunities",
+                "  `/marketplace eval <id>` — assess feasibility",
+                "  `/marketplace bid <id>` — prepare bid",
+                "  `/marketplace list` — this view",
+            ]
+            return "\n".join(lines)
+
+        return (
+            "*Marketplace commands:*\n"
+            "  `/marketplace discover` — fetch opportunities\n"
+            "  `/marketplace eval <id>` — assess feasibility\n"
+            "  `/marketplace bid <id>` — prepare bid\n"
+            "  `/marketplace list` — overview"
         )
 
     async def _cmd_telemetry(self, args: str) -> str:
