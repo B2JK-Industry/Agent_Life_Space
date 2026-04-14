@@ -409,6 +409,39 @@ class MarketplaceService:
             return None
         return await connector.get_job(self._gateway, job_id)
 
+    # ─── Job linkage ───
+
+    async def link_job(self, bid_id: str, external_job_id: str) -> dict[str, Any]:
+        """Link an external job ID to a bid (after platform acceptance)."""
+        bid = await self.get_bid(bid_id)
+        if not bid:
+            return {"ok": False, "error": f"Bid {bid_id} not found."}
+        if bid.external_job_id and bid.external_job_id != external_job_id:
+            return {"ok": False, "error": f"Bid already linked to job {bid.external_job_id}."}
+        bid.external_job_id = external_job_id
+        if bid.status == BidStatus.SUBMITTED:
+            bid.status = BidStatus.ACCEPTED
+        await self._persist_bid(bid)
+        # Also update opportunity status
+        opp = await self.get_opportunity(bid.opportunity_id)
+        if opp:
+            opp.status = OpportunityStatus.ENGAGED
+            await self._persist_opportunity(opp)
+        logger.info("marketplace_job_linked", bid_id=bid_id, job_id=external_job_id)
+        return {"ok": True, "bid_id": bid_id, "external_job_id": external_job_id}
+
+    async def _find_linkage_for_job(self, job_id: str) -> dict[str, str]:
+        """Find bid/opportunity/project linked to an external job ID."""
+        bids = await self.list_bids(limit=100)
+        for bid in bids:
+            if bid.external_job_id == job_id:
+                return {
+                    "bid_id": bid.id,
+                    "opportunity_id": bid.opportunity_id,
+                    "project_id": bid.project_id,
+                }
+        return {}
+
     # ─── Job lifecycle ───
 
     async def submit_job_work(
@@ -425,21 +458,25 @@ class MarketplaceService:
 
     async def complete_job(
         self, platform: str, job_id: str, *, notes: str = "",
-        opportunity_id: str = "", bid_id: str = "", project_id: str = "",
     ) -> dict[str, Any]:
-        """Mark job as completed and record outcome."""
+        """Mark job as completed and record outcome with auto-resolved linkage."""
         connector = self._registry.get(platform)
         if not connector or not hasattr(connector, "complete_job"):
             return {"ok": False, "error": f"No job-complete support for {platform}"}
+        # Check for duplicate
+        existing = [o for o in await self.list_outcomes(limit=100) if o.external_job_id == job_id and o.status == JobOutcomeStatus.COMPLETED]
+        if existing:
+            return {"ok": False, "error": f"Job {job_id} already marked as completed."}
         result = await connector.complete_job(self._gateway, job_id, notes=notes)
         if result.get("ok"):
+            linkage = await self._find_linkage_for_job(job_id)
             normalized = result.get("normalized_response", {})
             outcome = JobOutcome(
                 platform=platform,
                 external_job_id=job_id,
-                opportunity_id=opportunity_id,
-                bid_id=bid_id,
-                project_id=project_id,
+                opportunity_id=linkage.get("opportunity_id", ""),
+                bid_id=linkage.get("bid_id", ""),
+                project_id=linkage.get("project_id", ""),
                 status=JobOutcomeStatus.COMPLETED,
                 revenue_amount=normalized.get("revenue"),
                 revenue_currency=normalized.get("currency", ""),
@@ -449,24 +486,28 @@ class MarketplaceService:
             )
             await self._persist_outcome(outcome)
             result["outcome_id"] = outcome.id
+            result["linkage"] = linkage
         return result
 
     async def reject_job(
         self, platform: str, job_id: str, *, reason: str = "",
-        opportunity_id: str = "", bid_id: str = "", project_id: str = "",
     ) -> dict[str, Any]:
-        """Reject/decline a job and record outcome."""
+        """Reject/decline a job and record outcome with auto-resolved linkage."""
         connector = self._registry.get(platform)
         if not connector or not hasattr(connector, "reject_job"):
             return {"ok": False, "error": f"No job-reject support for {platform}"}
+        existing = [o for o in await self.list_outcomes(limit=100) if o.external_job_id == job_id and o.status == JobOutcomeStatus.REJECTED]
+        if existing:
+            return {"ok": False, "error": f"Job {job_id} already marked as rejected."}
         result = await connector.reject_job(self._gateway, job_id, reason=reason)
         if result.get("ok"):
+            linkage = await self._find_linkage_for_job(job_id)
             outcome = JobOutcome(
                 platform=platform,
                 external_job_id=job_id,
-                opportunity_id=opportunity_id,
-                bid_id=bid_id,
-                project_id=project_id,
+                opportunity_id=linkage.get("opportunity_id", ""),
+                bid_id=linkage.get("bid_id", ""),
+                project_id=linkage.get("project_id", ""),
                 status=JobOutcomeStatus.REJECTED,
                 completed_at=datetime.now(UTC).isoformat(),
                 notes=reason,

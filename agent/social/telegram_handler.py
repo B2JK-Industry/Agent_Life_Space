@@ -2054,6 +2054,15 @@ class TelegramHandler:
             if opp.url:
                 lines.append(f"URL: {opp.url}")
             lines.append(f"ID: `{opp.id}`")
+            # Show linked bids/jobs
+            all_bids = await mkt.list_bids(limit=50)
+            related = [b for b in all_bids if b.opportunity_id == opp.id]
+            if related:
+                lines.append("\n*Linked bids:*")
+                for b in related[:5]:
+                    job_link = f" → job `{b.external_job_id[:10]}`" if b.external_job_id else ""
+                    proj_link = f" → project `{b.project_id[:8]}`" if b.project_id else ""
+                    lines.append(f"  `{b.id[:8]}` {b.status.value} ${b.price_usd:.2f}{job_link}{proj_link}")
             lines.append(
                 f"\n`/marketplace eval {opp.id}` | "
                 f"`/marketplace bid {opp.id}` | "
@@ -2137,14 +2146,29 @@ class TelegramHandler:
             bids = await mkt.list_bids(limit=10)
             if not bids:
                 return "No bid drafts stored."
-            lines = ["*Bid drafts:*\n"]
+            lines = ["*Bids:*\n"]
             for b in bids:
-                proj = f" → project `{b.project_id[:8]}`" if b.project_id else ""
-                lines.append(
-                    f"  • `{b.id[:8]}` {b.title[:50]} "
-                    f"(${b.price_usd:.2f}, {b.status.value}){proj}"
-                )
+                parts = [f"`{b.id[:8]}` {b.title[:40]} (${b.price_usd:.2f}, {b.status.value})"]
+                if b.project_id:
+                    parts.append(f"project `{b.project_id[:8]}`")
+                if b.external_job_id:
+                    parts.append(f"job `{b.external_job_id[:10]}`")
+                lines.append(f"  • {' → '.join(parts)}")
             return "\n".join(lines)
+
+        # /marketplace link-job <bid_id> <external_job_id>
+        if action == "link-job" and subargs:
+            tokens = subargs.split()
+            if len(tokens) < 2:
+                return "Usage: `/marketplace link-job <bid_id> <external_job_id>`"
+            bid_id, ext_job_id = tokens[0], tokens[1]
+            result = await mkt.link_job(bid_id, ext_job_id)
+            if result.get("ok"):
+                return (
+                    f"Job `{ext_job_id}` linked to bid `{bid_id[:8]}`.\n"
+                    f"_This records the association. It does not imply on-chain confirmation._"
+                )
+            return f"Link failed: {result.get('error', 'unknown')}"
 
         # /marketplace track <opportunity_id> — create ALS project to track this
         if action == "track" and subargs:
@@ -2266,15 +2290,54 @@ class TelegramHandler:
             ]
             return "\n".join(lines)
 
-        # /marketplace report — summary of outcomes
+        # /marketplace report — lifecycle summary
         if action == "report":
-            outcomes = await mkt.list_outcomes(limit=10)
-            if not outcomes:
-                return "No job outcomes recorded yet."
-            lines = ["*Marketplace outcomes:*\n"]
+            stats = await mkt.get_stats()
+            bids = await mkt.list_bids(limit=100)
+            outcomes = await mkt.list_outcomes(limit=50)
+
+            # Bid status breakdown
+            bid_by_status: dict[str, int] = {}
+            bids_with_jobs = 0
+            bids_with_projects = 0
+            for b in bids:
+                bid_by_status[b.status.value] = bid_by_status.get(b.status.value, 0) + 1
+                if b.external_job_id:
+                    bids_with_jobs += 1
+                if b.project_id:
+                    bids_with_projects += 1
+
+            # Revenue summary
+            total_revenue = 0.0
+            revenue_known = 0
+            completed_count = sum(1 for o in outcomes if o.status.value == "completed")
+            rejected_count = sum(1 for o in outcomes if o.status.value == "rejected")
             for o in outcomes:
-                rev = f" — {o.revenue_amount} {o.revenue_currency}" if o.revenue_amount is not None else ""
-                lines.append(f"  `{o.external_job_id[:10]}` {o.status.value}{rev} ({o.completed_at[:10] if o.completed_at else '?'})")
+                if o.revenue_amount is not None:
+                    total_revenue += o.revenue_amount
+                    revenue_known += 1
+
+            lines = [
+                "*Marketplace Report*\n",
+                f"Platforms: {', '.join(stats.get('platforms', []))}",
+                f"Opportunities: {stats.get('opportunities', 0)} stored",
+                f"Bids: {len(bids)} total",
+            ]
+            if bid_by_status:
+                status_parts = [f"{v} {k}" for k, v in sorted(bid_by_status.items())]
+                lines.append(f"  → {', '.join(status_parts)}")
+            lines.append(f"  → {bids_with_projects} linked to projects, {bids_with_jobs} linked to jobs")
+            lines.append(f"\nOutcomes: {len(outcomes)} recorded")
+            if outcomes:
+                lines.append(f"  → {completed_count} completed, {rejected_count} rejected")
+                if revenue_known:
+                    lines.append(f"  → Revenue: {total_revenue:.2f} ({revenue_known} confirmed)")
+                else:
+                    lines.append("  → Revenue: none confirmed by platform")
+
+            if not bids and not outcomes:
+                lines.append("\n_No marketplace activity yet._")
+
             return "\n".join(lines)
 
         # /marketplace list (default)
@@ -2336,8 +2399,9 @@ class TelegramHandler:
             "  `/marketplace job-reject <id>` — reject/decline\n"
             "*Tracking:*\n"
             "  `/marketplace track <id>` — track as ALS project\n"
+            "  `/marketplace link-job <bid_id> <job_id>` — link job to bid\n"
             "  `/marketplace reputation <agent>` — trust check\n"
-            "  `/marketplace report` — outcomes summary\n"
+            "  `/marketplace report` — lifecycle summary\n"
             "  `/marketplace list` — overview"
         )
 

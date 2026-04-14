@@ -183,7 +183,8 @@ class Bid:
     price_usd: float = 0.0
     delivery_days: int = 0
     status: BidStatus = BidStatus.DRAFT
-    project_id: str = ""            # Linked ALS project, if created
+    project_id: str = ""            # Linked ALS project
+    external_job_id: str = ""       # Linked platform job ID (after acceptance)
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     submitted_at: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -199,6 +200,7 @@ class Bid:
             "delivery_days": self.delivery_days,
             "status": self.status.value,
             "project_id": self.project_id,
+            "external_job_id": self.external_job_id,
             "created_at": self.created_at,
             "submitted_at": self.submitted_at,
             "metadata": self.metadata,
@@ -216,6 +218,7 @@ class Bid:
             delivery_days=d.get("delivery_days", 0),
             status=BidStatus(d.get("status", "draft")),
             project_id=d.get("project_id", ""),
+            external_job_id=d.get("external_job_id", ""),
             created_at=d.get("created_at", ""),
             submitted_at=d.get("submitted_at", ""),
             metadata=d.get("metadata", {}),

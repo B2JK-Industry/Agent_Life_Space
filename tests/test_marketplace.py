@@ -1708,7 +1708,7 @@ class TestTelegramJobLifecycle:
         await svc.initialize()
         handler = self._make_handler(svc)
         result = await handler._cmd_marketplace("report")
-        assert "no job outcomes" in result.lower()
+        assert "no marketplace activity" in result.lower()
         await svc.close()
 
     @pytest.mark.asyncio
@@ -1724,8 +1724,8 @@ class TestTelegramJobLifecycle:
         await svc.complete_job("obolos.tech", "J1")
         handler = self._make_handler(svc)
         result = await handler._cmd_marketplace("report")
-        assert "completed" in result.lower()
-        assert "J1" in result
+        assert "1 completed" in result
+        assert "100" in result  # revenue
         await svc.close()
 
     @pytest.mark.asyncio
@@ -1739,4 +1739,248 @@ class TestTelegramJobLifecycle:
         assert "job-reject" in result
         assert "reputation" in result
         assert "report" in result
+        assert "link-job" in result
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Final stretch: linkage, reporting, edge cases, reload
+# ─────────────────────────────────────────────
+
+
+class TestBidJobLinkage:
+    """Linking external job IDs to bids."""
+
+    @pytest.mark.asyncio
+    async def test_link_job_to_bid(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Link Test", platform="obolos.tech", url="https://obolos.tech/api/listings/L1")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", status=BidStatus.SUBMITTED)
+        await svc._persist_bid(bid)
+
+        result = await svc.link_job(bid.id, "EXT-J1")
+        assert result["ok"] is True
+
+        reloaded = await svc.get_bid(bid.id)
+        assert reloaded.external_job_id == "EXT-J1"
+        assert reloaded.status == BidStatus.ACCEPTED
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_link_job_duplicate_rejected(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        bid = Bid(opportunity_id="opp", platform="test", external_job_id="J1")
+        await svc._persist_bid(bid)
+        result = await svc.link_job(bid.id, "J2")
+        assert result["ok"] is False
+        assert "already linked" in result["error"].lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_link_job_same_id_ok(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        bid = Bid(opportunity_id="opp", platform="test", external_job_id="J1")
+        await svc._persist_bid(bid)
+        result = await svc.link_job(bid.id, "J1")
+        assert result["ok"] is True  # idempotent
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_find_linkage_for_job(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        bid = Bid(
+            opportunity_id="opp-1", platform="test",
+            external_job_id="J1", project_id="proj-1",
+        )
+        await svc._persist_bid(bid)
+        linkage = await svc._find_linkage_for_job("J1")
+        assert linkage["bid_id"] == bid.id
+        assert linkage["project_id"] == "proj-1"
+        await svc.close()
+
+
+class TestDuplicateLifecycleTransitions:
+    """Edge: repeated complete/reject should be rejected cleanly."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_complete_rejected(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.complete_job("obolos.tech", "J1")
+        result2 = await svc.complete_job("obolos.tech", "J1")
+        assert result2["ok"] is False
+        assert "already" in result2["error"].lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_duplicate_reject_rejected(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.reject_job("obolos.tech", "J1")
+        result2 = await svc.reject_job("obolos.tech", "J1")
+        assert result2["ok"] is False
+        assert "already" in result2["error"].lower()
+        await svc.close()
+
+
+class TestPersistenceReload:
+    """Lifecycle data survives DB close/reopen."""
+
+    @pytest.mark.asyncio
+    async def test_bid_with_job_id_survives_reload(self, tmp_path: Path):
+        db = str(tmp_path / "mkt.db")
+        svc = MarketplaceService(db_path=db)
+        await svc.initialize()
+        bid = Bid(
+            opportunity_id="opp-1", platform="test",
+            external_job_id="EXT-J1", project_id="proj-1",
+            status=BidStatus.ACCEPTED,
+        )
+        await svc._persist_bid(bid)
+        await svc.close()
+
+        svc2 = MarketplaceService(db_path=db)
+        await svc2.initialize()
+        reloaded = await svc2.get_bid(bid.id)
+        assert reloaded.external_job_id == "EXT-J1"
+        assert reloaded.project_id == "proj-1"
+        assert reloaded.status == BidStatus.ACCEPTED
+        await svc2.close()
+
+    @pytest.mark.asyncio
+    async def test_outcome_survives_reload(self, tmp_path: Path):
+        from agent.marketplace.models import JobOutcome, JobOutcomeStatus
+        db = str(tmp_path / "mkt.db")
+        svc = MarketplaceService(db_path=db)
+        await svc.initialize()
+        outcome = JobOutcome(
+            external_job_id="J1", status=JobOutcomeStatus.COMPLETED,
+            revenue_amount=100.0, revenue_currency="USD", platform="obolos.tech",
+        )
+        await svc._persist_outcome(outcome)
+        await svc.close()
+
+        svc2 = MarketplaceService(db_path=db)
+        await svc2.initialize()
+        outcomes = await svc2.list_outcomes()
+        assert len(outcomes) == 1
+        assert outcomes[0].revenue_amount == 100.0
+        assert outcomes[0].status == JobOutcomeStatus.COMPLETED
+        await svc2.close()
+
+
+class TestEnrichedReporting:
+    """Report and show commands reflect real linkage."""
+
+    def _make_handler(self, marketplace_svc):
+        from unittest.mock import MagicMock
+
+        from agent.social.telegram_handler import TelegramHandler
+        agent = MagicMock()
+        agent.marketplace = marketplace_svc
+        handler = TelegramHandler.__new__(TelegramHandler)
+        handler._agent = agent
+        return handler
+
+    @pytest.mark.asyncio
+    async def test_show_displays_linked_bids(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+
+        opp = Opportunity(title="Linked Show", platform="obolos.tech",
+                          url="https://obolos.tech/api/listings/LS1")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech",
+                  status=BidStatus.SUBMITTED, external_job_id="J99", project_id="P1")
+        await svc._persist_bid(bid)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"show {opp.id}")
+        assert "Linked bids" in result
+        assert "submitted" in result.lower()
+        assert "J99" in result
+        assert "P1" in result[:200] or "project" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_bids_shows_job_linkage(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+
+        bid = Bid(opportunity_id="opp", platform="test", title="Linked Bid",
+                  external_job_id="J42", project_id="P2", price_usd=30.0)
+        await svc._persist_bid(bid)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("bids")
+        assert "J42" in result
+        assert "P2" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_report_lifecycle_summary(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {"revenue": 75}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        # Create data
+        opp = Opportunity(title="Report Test", platform="obolos.tech",
+                          url="https://obolos.tech/api/listings/R1")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech",
+                  status=BidStatus.SUBMITTED, project_id="P1")
+        await svc._persist_bid(bid)
+        await svc.complete_job("obolos.tech", "J1")
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("report")
+        assert "1 total" in result  # 1 bid
+        assert "1 submitted" in result.lower() or "submitted" in result.lower()
+        assert "1 completed" in result
+        assert "75" in result  # revenue
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_link_job_telegram(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        bid = Bid(opportunity_id="opp", platform="test", status=BidStatus.SUBMITTED)
+        await svc._persist_bid(bid)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"link-job {bid.id} EXT-J5")
+        assert "linked" in result.lower()
+        assert "EXT-J5" in result
+        assert "does not imply" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_link_job_missing_bid(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("link-job nonexistent J1")
+        assert "not found" in result.lower()
         await svc.close()
