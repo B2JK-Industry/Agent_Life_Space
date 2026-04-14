@@ -57,6 +57,11 @@ class Opportunity:
     discovered_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = ""
 
+    @property
+    def is_listing(self) -> bool:
+        """True if this is a work listing (biddable), not a generic API entry."""
+        return "/listings/" in (self.url or "") or self.category == "listing"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,

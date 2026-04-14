@@ -653,7 +653,7 @@ class TestMarketplaceServiceSubmit:
         svc.registry.register(ObolosConnector())
         await svc.initialize()
 
-        opp = Opportunity(title="Submit Test", platform="obolos.tech", platform_id="slug-1")
+        opp = Opportunity(title="Submit Test", platform="obolos.tech", platform_id="slug-1", url="https://obolos.tech/api/listings/slug-1")
         await svc._persist_opportunity(opp)
         bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=20.0, title="Bid X")
         await svc._persist_bid(bid)
@@ -861,6 +861,7 @@ class TestMarketplaceTelegramBehavior:
         opp = Opportunity(
             title="Bid Test", platform="obolos.tech",
             skills_required=["python"],
+            url="https://obolos.tech/api/listings/bid-test",
         )
         await svc._persist_opportunity(opp)
 
@@ -924,7 +925,7 @@ class TestMarketplaceTelegramBehavior:
         svc.registry.register(ObolosConnector())
         await svc.initialize()
 
-        opp = Opportunity(title="Live", platform="obolos.tech", platform_id="live-slug")
+        opp = Opportunity(title="Live", platform="obolos.tech", platform_id="live-slug", url="https://obolos.tech/api/listings/live-slug")
         await svc._persist_opportunity(opp)
         bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=30.0)
         await svc._persist_bid(bid)
@@ -941,7 +942,7 @@ class TestMarketplaceTelegramBehavior:
         svc.registry.register(ObolosConnector())
         await svc.initialize()
 
-        opp = Opportunity(title="Bid Hint", platform="obolos.tech", skills_required=["python"])
+        opp = Opportunity(title="Bid Hint", platform="obolos.tech", skills_required=["python"], url="https://obolos.tech/api/listings/bid-hint")
         await svc._persist_opportunity(opp)
 
         handler = self._make_handler(svc)
@@ -981,7 +982,7 @@ class TestApprovalExecuteGap:
         svc.registry.register(ObolosConnector())
         await svc.initialize()
 
-        opp = Opportunity(title="E2E", platform="obolos.tech", platform_id="slug-e2e")
+        opp = Opportunity(title="E2E", platform="obolos.tech", platform_id="slug-e2e", url="https://obolos.tech/api/listings/slug-e2e")
         await svc._persist_opportunity(opp)
         bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=25.0, title="E2E Bid")
         await svc._persist_bid(bid)
@@ -1117,7 +1118,7 @@ class TestApprovalExecuteGap:
         svc.registry.register(ObolosConnector())
         await svc.initialize()
 
-        opp = Opportunity(title="Direct", platform="obolos.tech", platform_id="slug-dir")
+        opp = Opportunity(title="Direct", platform="obolos.tech", platform_id="slug-dir", url="https://obolos.tech/api/listings/slug-dir")
         await svc._persist_opportunity(opp)
         bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=10.0)
         await svc._persist_bid(bid)
@@ -1352,4 +1353,135 @@ class TestMarketplaceTelegramListingsJobs:
         handler = self._make_handler(svc)
         result = await handler._cmd_marketplace("jobs")
         assert "no jobs" in result.lower()
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Listings-first bid eligibility
+# ─────────────────────────────────────────────
+
+
+class TestBidEligibility:
+    """Only work listings are biddable, not generic API marketplace items."""
+
+    def test_listing_opportunity_is_listing(self):
+        opp = Opportunity(
+            title="Work", platform="obolos.tech",
+            url="https://obolos.tech/api/listings/L1", category="listing",
+        )
+        assert opp.is_listing is True
+
+    def test_api_marketplace_opportunity_is_not_listing(self):
+        opp = Opportunity(
+            title="API", platform="obolos.tech",
+            url="https://obolos.tech/api/some-slug", category="api",
+        )
+        assert opp.is_listing is False
+
+    def test_empty_url_not_listing(self):
+        opp = Opportunity(title="Bare", platform="obolos.tech")
+        assert opp.is_listing is False
+
+    def test_category_listing_is_listing(self):
+        opp = Opportunity(title="Cat", platform="obolos.tech", category="listing")
+        assert opp.is_listing is True
+
+    @pytest.mark.asyncio
+    async def test_service_submit_rejects_non_listing(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="API Item", platform="obolos.tech", platform_id="slug",
+            url="https://obolos.tech/api/slug",
+        )
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=10.0)
+        await svc._persist_bid(bid)
+
+        result = await svc.submit_bid(bid)
+        assert result["ok"] is False
+        assert "not a work listing" in result["error"].lower()
+        gateway.call_api_via_capability.assert_not_called()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_service_submit_allows_listing(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"bid_id": "B1", "status": "pending"},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="Work Listing", platform="obolos.tech", platform_id="L1",
+            url="https://obolos.tech/api/listings/L1",
+        )
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=50.0)
+        await svc._persist_bid(bid)
+
+        result = await svc.submit_bid(bid)
+        assert result["ok"] is True
+        gateway.call_api_via_capability.assert_called_once()
+        await svc.close()
+
+
+class TestTelegramBidEligibility:
+    """Telegram /marketplace bid rejects non-listing opportunities."""
+
+    def _make_handler(self, marketplace_svc):
+        from unittest.mock import MagicMock
+
+        from agent.social.telegram_handler import TelegramHandler
+        agent = MagicMock()
+        agent.marketplace = marketplace_svc
+        handler = TelegramHandler.__new__(TelegramHandler)
+        handler._agent = agent
+        return handler
+
+    @pytest.mark.asyncio
+    async def test_bid_on_api_item_rejected(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="Some API", platform="obolos.tech",
+            url="https://obolos.tech/api/some-api", category="api",
+        )
+        await svc._persist_opportunity(opp)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"bid {opp.id}")
+        assert "not a work listing" in result.lower()
+        assert "/marketplace listings" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_bid_on_listing_allowed(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="Real Work", platform="obolos.tech",
+            url="https://obolos.tech/api/listings/W1",
+            skills_required=["python"],
+        )
+        await svc._persist_opportunity(opp)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"bid {opp.id}")
+        assert "bid draft created" in result.lower()
+        assert "/marketplace submit" in result
         await svc.close()

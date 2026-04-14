@@ -2088,6 +2088,13 @@ class TelegramHandler:
             opp = await mkt.get_opportunity(subargs.split()[0])
             if not opp:
                 return f"Opportunity `{subargs}` not found."
+            if not opp.is_listing:
+                return (
+                    f"Opportunity `{opp.id[:8]}` is an API marketplace item, "
+                    f"not a work listing.\n"
+                    f"Provider bids are only supported for work listings.\n"
+                    f"Use `/marketplace listings` to browse biddable work."
+                )
             ev = mkt.evaluate(opp)
             if ev.verdict.value == "infeasible":
                 return f"Opportunity is infeasible: {ev.reasoning}"
