@@ -9,18 +9,17 @@ All HTTP calls go through the existing ExternalGatewayService
 which handles auth (AGENT_OBOLOS_WALLET_ADDRESS), rate limiting,
 retries, and 402 payment flows.
 
-Phase 1 scope:
+Scope:
 - Discovery (catalog → slugs → detail for each)
 - Evaluation (deterministic feasibility)
-- Bid preparation (draft only)
-- Bid submission is NOT supported in Phase 1:
-  seller_publish_v1 registers seller APIs, it does not submit
-  bids to opportunities. A dedicated bid/apply capability would
-  need to be added to the obolos.tech gateway routes first.
+- Bid preparation (draft)
+- Bid submission via marketplace_api_call_v1 POST to opportunity slug
+  (seller_publish_v1 is for registering your own APIs, NOT for bidding)
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -176,22 +175,48 @@ class ObolosConnector:
         )
 
     async def submit_bid(
-        self, gateway: Any, bid: Bid,
+        self, gateway: Any, bid: Bid, opportunity: Opportunity | None = None,
     ) -> dict[str, Any]:
-        """NOT SUPPORTED in Phase 1.
+        """Submit bid via marketplace_api_call_v1 POST to opportunity slug.
 
-        seller_publish_v1 registers seller APIs on the marketplace.
-        It does not submit bids/applications to existing opportunities.
-        A dedicated bid capability route would need to be added first.
+        Uses the generic marketplace API call capability which POSTs to
+        the opportunity's slug endpoint. This is the correct route —
+        seller_publish_v1 is for registering YOUR OWN APIs, not for
+        applying to existing opportunities.
+
+        Requires: opportunity.platform_id (the slug to POST to).
         """
-        return {
-            "ok": False,
-            "error": (
-                "Bid submission is not yet supported for obolos.tech. "
-                "The existing seller_publish_v1 capability registers seller APIs, "
-                "not opportunity bids. A dedicated bid/apply route is needed."
-            ),
-        }
+        if not opportunity or not opportunity.platform_id:
+            return {
+                "ok": False,
+                "error": "Cannot submit: opportunity platform_id (slug) is required.",
+            }
+
+        result = await gateway.call_api_via_capability(
+            capability_id="marketplace_api_call_v1",
+            provider_id="obolos.tech",
+            resource=opportunity.platform_id,
+            method="POST",
+            json_payload={
+                "action": "bid",
+                "title": bid.title,
+                "description": bid.proposal_text,
+                "price": bid.price_usd,
+                "delivery_days": bid.delivery_days,
+            },
+        )
+        if result.get("ok"):
+            bid.status = BidStatus.SUBMITTED
+            bid.submitted_at = datetime.now(UTC).isoformat()
+            logger.info("obolos_bid_submitted", bid_id=bid.id, slug=opportunity.platform_id)
+        else:
+            logger.warning(
+                "obolos_bid_submit_failed",
+                bid_id=bid.id,
+                error=result.get("error", ""),
+            )
+
+        return result
 
     # ─── Internal normalization ───
 

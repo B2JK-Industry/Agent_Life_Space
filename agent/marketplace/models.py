@@ -158,11 +158,12 @@ class Evaluation:
 
 
 class BidStatus(str, Enum):
-    DRAFT = "draft"
-    READY = "ready"
-    SUBMITTED = "submitted"
-    ACCEPTED = "accepted"
-    REJECTED = "rejected"
+    DRAFT = "draft"                  # Prepared, not yet submitted
+    READY = "ready"                  # Awaiting approval before submission
+    SUBMITTED = "submitted"          # Sent to platform
+    ACCEPTED = "accepted"            # Platform accepted
+    REJECTED = "rejected"            # Platform rejected
+    FAILED = "failed"                # Submission failed (gateway error)
 
 
 @dataclass

@@ -2098,11 +2098,32 @@ class TelegramHandler:
                 f"Title: {bid.title}",
                 f"Price: ${bid.price_usd:.2f}",
                 f"\n{bid.proposal_text}",
-                "\n_Bid submission is not yet supported — "
-                "a dedicated bid/apply capability route is needed._",
-                f"\n`/marketplace track {opp.id}` to track as ALS project",
+                f"\n`/marketplace submit {bid.id}` to send (approval-gated)",
+                f"`/marketplace track {opp.id}` to track as ALS project",
             ]
             return "\n".join(lines)
+
+        # /marketplace submit <bid_id>
+        if action == "submit" and subargs:
+            bid = await mkt.get_bid(subargs.split()[0])
+            if not bid:
+                return f"Bid `{subargs}` not found. Use `/marketplace bids` to list drafts."
+            if bid.status.value == "submitted":
+                return f"Bid `{bid.id[:8]}` was already submitted."
+            result = await mkt.submit_bid(bid)
+            if result.get("pending_approval"):
+                return (
+                    f"Bid `{bid.id[:8]}` requires approval before submission.\n"
+                    f"Approval ID: `{result.get('approval_id', '?')}`\n"
+                    f"Use `/queue approve {result.get('approval_id', '')}` to approve."
+                )
+            if result.get("ok"):
+                return (
+                    f"Bid `{bid.id[:8]}` submitted to {bid.platform}.\n"
+                    f"Status: *submitted*\n"
+                    f"_Platform response pending. This does not guarantee acceptance._"
+                )
+            return f"Bid submission failed: {result.get('error', 'unknown')}"
 
         # /marketplace bids — list stored bid drafts
         if action == "bids":
@@ -2166,6 +2187,7 @@ class TelegramHandler:
                 "  `/marketplace eval <id>` — feasibility\n"
                 "  `/marketplace bid <id>` — draft bid\n"
                 "  `/marketplace bids` — list drafts\n"
+                "  `/marketplace submit <bid_id>` — send bid (approval-gated)\n"
                 "  `/marketplace track <id>` — track as project"
             )
             return "\n".join(lines)
@@ -2176,6 +2198,7 @@ class TelegramHandler:
             "  `/marketplace show <id>` — opportunity detail\n"
             "  `/marketplace eval <id>` — assess feasibility\n"
             "  `/marketplace bid <id>` — prepare bid draft\n"
+            "  `/marketplace submit <bid_id>` — send bid (approval-gated)\n"
             "  `/marketplace bids` — list bid drafts\n"
             "  `/marketplace track <id>` — track as ALS project\n"
             "  `/marketplace list` — overview"

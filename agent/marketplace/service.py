@@ -176,22 +176,32 @@ class MarketplaceService:
         return bid
 
     async def submit_bid(self, bid: Bid) -> dict[str, Any]:
-        """Submit bid to platform (requires approval if queue configured)."""
+        """Submit bid to platform. Approval-gated, persisted, audited."""
         connector = self._registry.get(bid.platform)
         if not connector:
             return {"ok": False, "error": f"No connector for {bid.platform}"}
 
+        if bid.status == BidStatus.SUBMITTED:
+            return {"ok": False, "error": "Bid already submitted."}
+
+        # Resolve the opportunity (needed for platform_id / slug)
+        opportunity = await self.get_opportunity(bid.opportunity_id)
+        if not opportunity:
+            return {"ok": False, "error": f"Opportunity {bid.opportunity_id} not found."}
+
         # Gate through approval queue if available
-        if self._approval_queue and bid.price_usd > 0:
+        if self._approval_queue:
             from agent.core.approval import ApprovalCategory
             proposal = self._approval_queue.propose(
                 category=ApprovalCategory.EXTERNAL,
                 description=f"Submit bid: {bid.title} (${bid.price_usd:.2f})",
                 risk_level="medium",
-                reason=f"Marketplace bid on {bid.platform}",
+                reason=f"Marketplace bid on {bid.platform} for {opportunity.title[:50]}",
                 proposed_by="marketplace_service",
                 context={"bid_id": bid.id, "opportunity_id": bid.opportunity_id},
             )
+            bid.status = BidStatus.READY
+            await self._persist_bid(bid)
             return {
                 "ok": False,
                 "pending_approval": True,
@@ -199,10 +209,10 @@ class MarketplaceService:
                 "message": f"Bid requires approval. Use `/queue approve {proposal.id}`",
             }
 
-        result = await connector.submit_bid(self._gateway, bid)
+        result = await connector.submit_bid(self._gateway, bid, opportunity)
         if result.get("ok"):
             bid.status = BidStatus.SUBMITTED
-            await self._persist_bid(bid)
+        await self._persist_bid(bid)
         return result
 
     # ─── Bid queries ───

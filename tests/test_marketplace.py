@@ -407,19 +407,56 @@ class TestObolosConnectorGatewayContract:
         assert opp.skills_required == ["python"]
 
     @pytest.mark.asyncio
-    async def test_submit_bid_returns_not_supported(self):
-        """Phase 1: submit_bid must honestly refuse."""
+    async def test_submit_bid_uses_marketplace_api_call(self):
+        """submit_bid must POST to marketplace_api_call_v1 with opportunity slug."""
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "status_code": 200}
+
+        c = ObolosConnector()
+        opp = Opportunity(platform="obolos.tech", platform_id="test-slug", title="Test")
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=10.0, title="My Bid")
+
+        result = await c.submit_bid(gateway, bid, opp)
+        assert result["ok"] is True
+        assert bid.status == BidStatus.SUBMITTED
+
+        call_kwargs = gateway.call_api_via_capability.call_args.kwargs
+        assert call_kwargs["capability_id"] == "marketplace_api_call_v1"
+        assert call_kwargs["resource"] == "test-slug"
+        assert call_kwargs["method"] == "POST"
+        assert "json_payload" in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_submit_bid_without_opportunity_fails(self):
+        """submit_bid without opportunity must fail cleanly."""
         from unittest.mock import AsyncMock
 
         gateway = AsyncMock()
         c = ObolosConnector()
-        bid = Bid(opportunity_id="opp-1", platform="obolos.tech", price_usd=10.0)
+        bid = Bid(opportunity_id="opp-1", platform="obolos.tech")
 
-        result = await c.submit_bid(gateway, bid)
+        result = await c.submit_bid(gateway, bid, None)
         assert result["ok"] is False
-        assert "not yet supported" in result["error"].lower()
-        # Gateway must NOT be called
+        assert "required" in result["error"].lower()
         gateway.call_api_via_capability.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_submit_bid_gateway_failure(self):
+        """Gateway failure must be returned cleanly."""
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": False, "error": "timeout"}
+
+        c = ObolosConnector()
+        opp = Opportunity(platform="obolos.tech", platform_id="slug", title="X")
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech")
+
+        result = await c.submit_bid(gateway, bid, opp)
+        assert result["ok"] is False
+        assert bid.status != BidStatus.SUBMITTED
 
 
 class TestDiscoveryTwoStepFlow:
@@ -602,6 +639,93 @@ class TestMarketplaceTrack:
         await svc.close()
 
 
+class TestMarketplaceServiceSubmit:
+    """Service-level submit flow tests."""
+
+    @pytest.mark.asyncio
+    async def test_submit_resolves_opportunity_and_calls_connector(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True}
+
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Submit Test", platform="obolos.tech", platform_id="slug-1")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=20.0, title="Bid X")
+        await svc._persist_bid(bid)
+
+        result = await svc.submit_bid(bid)
+        assert result["ok"] is True
+
+        reloaded = await svc.get_bid(bid.id)
+        assert reloaded.status == BidStatus.SUBMITTED
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_already_submitted_fails(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        bid = Bid(
+            opportunity_id="opp-1", platform="obolos.tech",
+            status=BidStatus.SUBMITTED,
+        )
+        await svc._persist_bid(bid)
+
+        result = await svc.submit_bid(bid)
+        assert result["ok"] is False
+        assert "already submitted" in result["error"].lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_missing_opportunity_fails(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        bid = Bid(opportunity_id="nonexistent", platform="obolos.tech")
+        await svc._persist_bid(bid)
+
+        result = await svc.submit_bid(bid)
+        assert result["ok"] is False
+        assert "not found" in result["error"].lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_with_approval_queue(self, tmp_path: Path):
+        from unittest.mock import MagicMock
+
+        approval = MagicMock()
+        proposal = MagicMock()
+        proposal.id = "approval-123"
+        approval.propose.return_value = proposal
+
+        svc = MarketplaceService(
+            approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Gated", platform="obolos.tech", platform_id="gated-slug")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=50.0)
+        await svc._persist_bid(bid)
+
+        result = await svc.submit_bid(bid)
+        assert result["pending_approval"] is True
+        assert "approval-123" in result["approval_id"]
+
+        reloaded = await svc.get_bid(bid.id)
+        assert reloaded.status == BidStatus.READY
+        await svc.close()
+
+
 class TestMarketplaceTelegramBehavior:
     """Real output behavior tests for /marketplace commands."""
 
@@ -729,7 +853,7 @@ class TestMarketplaceTelegramBehavior:
         await svc.close()
 
     @pytest.mark.asyncio
-    async def test_bid_includes_not_supported_note(self, tmp_path: Path):
+    async def test_bid_includes_submit_link(self, tmp_path: Path):
         svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
         svc.registry.register(ObolosConnector())
         await svc.initialize()
@@ -742,8 +866,8 @@ class TestMarketplaceTelegramBehavior:
 
         handler = self._make_handler(svc)
         result = await handler._cmd_marketplace(f"bid {opp.id}")
-        assert "not yet supported" in result.lower()
-        assert "/marketplace submit" not in result
+        assert "/marketplace submit" in result
+        assert "approval-gated" in result.lower()
         await svc.close()
 
     @pytest.mark.asyncio
@@ -756,7 +880,71 @@ class TestMarketplaceTelegramBehavior:
         assert "/marketplace show" in result
         assert "/marketplace eval" in result
         assert "/marketplace bid" in result
+        assert "/marketplace submit" in result
         assert "/marketplace bids" in result
         assert "/marketplace track" in result
-        assert "/marketplace submit" not in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_missing_bid(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("submit nonexistent")
+        assert "not found" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_already_submitted(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Done", platform="obolos.tech", platform_id="s")
+        await svc._persist_opportunity(opp)
+        bid = Bid(
+            opportunity_id=opp.id, platform="obolos.tech",
+            status=BidStatus.SUBMITTED,
+        )
+        await svc._persist_bid(bid)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"submit {bid.id}")
+        assert "already submitted" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_success_via_gateway(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True}
+
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Live", platform="obolos.tech", platform_id="live-slug")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=30.0)
+        await svc._persist_bid(bid)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"submit {bid.id}")
+        assert "submitted" in result.lower()
+        assert "does not guarantee acceptance" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_bid_output_includes_submit_hint(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Bid Hint", platform="obolos.tech", skills_required=["python"])
+        await svc._persist_opportunity(opp)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"bid {opp.id}")
+        assert "/marketplace submit" in result
         await svc.close()
