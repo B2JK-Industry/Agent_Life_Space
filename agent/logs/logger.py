@@ -215,9 +215,9 @@ SECRET_PATTERNS = {
 _FREE_TEXT_SECRET_PATTERNS = (
     _re.compile(r"(Authorization:\s*Bearer\s+)\S+", _re.IGNORECASE),
     _re.compile(r"([?&](?:api_key|token|key|secret|password)=)[^\s&]+", _re.IGNORECASE),
-    _re.compile(r"(sk-ant-[a-zA-Z0-9_-]{10})[a-zA-Z0-9_-]*"),
-    _re.compile(r"(sk-[a-zA-Z0-9_-]{10})[a-zA-Z0-9_-]*"),
-    _re.compile(r"(agent_api_[a-zA-Z0-9_-]{10})[a-zA-Z0-9_-]*"),
+    _re.compile(r"(sk-ant-)[a-zA-Z0-9_-]{10,}"),
+    _re.compile(r"(sk-)[a-zA-Z0-9_-]{10,}"),
+    _re.compile(r"(agent_api_)[a-zA-Z0-9_-]{10,}"),
 )
 
 

@@ -573,13 +573,13 @@ class AgentOrchestrator:
         try:
             await self.projects.add_task(_proj_id, job.id)
         except Exception:
-            pass
+            logger.warning("project_link_failed", project_id=_proj_id, job_id=job.id)
         pbr_id = getattr(job, "post_build_review_job_id", "")
         if pbr_id:
             try:
                 await self.projects.add_task(_proj_id, pbr_id)
             except Exception:
-                pass
+                logger.warning("project_link_failed", project_id=_proj_id, job_id=pbr_id)
 
     async def resume_build_job(self, job_id: str) -> Any:
         """Resume a previously interrupted build job."""
@@ -1892,6 +1892,7 @@ class AgentOrchestrator:
                     vault_dir=str(self._data_dir / "vault"),
                 )
             except Exception:
+                logger.warning("secrets_manager_init_failed", vault_dir=str(self._data_dir / "vault"))
                 self._secrets_lookup_disabled = True
                 return ""
         return str(self._secrets_manager.get_secret(name) or "")

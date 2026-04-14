@@ -323,8 +323,9 @@ class ClaudeCliProvider(LLMProvider):
                 model=request.model,
             )
         except Exception as e:
+            from agent.logs.logger import _scrub_string_value
             return GenerateResponse(
-                error=str(e),
+                error=_scrub_string_value(str(e)),
                 latency_ms=int((time.monotonic() - start) * 1000),
                 success=False,
                 model=request.model,
@@ -486,8 +487,9 @@ class AnthropicProvider(LLMProvider):
                 model=model,
             )
         except Exception as e:
+            from agent.logs.logger import _scrub_string_value
             return GenerateResponse(
-                error=str(e),
+                error=_scrub_string_value(str(e)),
                 latency_ms=int((time.monotonic() - start) * 1000),
                 success=False,
                 model=model,
@@ -603,8 +605,9 @@ class OpenAiProvider(LLMProvider):
                 model=model,
             )
         except Exception as e:
+            from agent.logs.logger import _scrub_string_value
             return GenerateResponse(
-                error=str(e),
+                error=_scrub_string_value(str(e)),
                 latency_ms=int((time.monotonic() - start) * 1000),
                 success=False,
                 model=model,

@@ -431,7 +431,7 @@ class OperatorIntakeService:
             max_files=intake.max_files,
             include_patterns=list(intake.target_files),
             requester=intake.requester,
-            context=intake.context or intake.description,
+            context=intake.context or intake.description or "",
             source="operator",
             project_id=intake.project_id,
         )

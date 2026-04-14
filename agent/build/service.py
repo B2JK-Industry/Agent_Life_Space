@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import re
 import shlex
 import shutil
@@ -649,11 +650,12 @@ class BuildService:
                 workspace_id=job.workspace_id,
                 metadata=verification_plan,
             )
+            _verify_timeout = int(os.environ.get("AGENT_VERIFY_TIMEOUT", "120"))
             results = run_verification_suite(
                 workspace_path=workspace_path,
                 steps=verification_steps,
                 custom_commands=verification_commands,
-                timeout_seconds=120,
+                timeout_seconds=_verify_timeout,
             )
             job.verification_results = results
 

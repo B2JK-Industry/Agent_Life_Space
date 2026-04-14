@@ -21,6 +21,7 @@ Port: 8420 (default)
 
 from __future__ import annotations
 
+import os
 import time
 from collections import defaultdict
 from typing import Any
@@ -138,6 +139,9 @@ class AgentAPI:
         self._runner: web.AppRunner | None = None
         # API key autentifikácia — len autorizovaní agenti
         self._api_keys: set[str] = set(api_keys or [])
+        # Owner key — if set, only this key gets owner=True on localhost.
+        # If unset, any valid API key on localhost gets owner (legacy mode).
+        self._owner_api_key: str = os.environ.get("AGENT_OWNER_API_KEY", "")
         # Rate limiting
         self._request_times: dict[str, list[float]] = defaultdict(list)
         # Audit + telemetry
@@ -153,6 +157,17 @@ class AgentAPI:
     def add_api_key(self, key: str) -> None:
         """Pridaj autorizovaný API kľúč."""
         self._api_keys.add(key)
+
+    def _is_owner_key(self, request: web.Request) -> bool:
+        """Check whether the request uses the designated owner key."""
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return False
+        key = auth[7:].strip()
+        if self._owner_api_key:
+            return key == self._owner_api_key
+        # Legacy: no owner key configured → any valid key is owner on localhost
+        return key in self._api_keys
 
     def _check_auth(self, request: web.Request) -> str | None:
         """
@@ -363,7 +378,7 @@ class AgentAPI:
                     # Remote authenticated callers get restricted trust.
                     is_local = ip in _LOCAL_IPS
                     channel = "terminal" if (is_authenticated and is_local) else "agent_api"
-                    is_owner_caller = is_authenticated and is_local
+                    is_owner_caller = is_authenticated and is_local and self._is_owner_key(request)
                     response = await _aio.wait_for(
                         self._handler(
                             text, 0, 0,
