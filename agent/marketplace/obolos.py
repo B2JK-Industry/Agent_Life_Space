@@ -318,6 +318,76 @@ class ObolosConnector:
             return None
         return result.get("normalized_response", {}).get("job", {})
 
+    async def submit_job_work(
+        self, gateway: Any, job_id: str, *,
+        summary: str = "", proof: str = "", artifact_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """POST /api/jobs/{id}/submit — submit completed work."""
+        payload: dict[str, Any] = {}
+        if summary:
+            payload["result"] = summary
+        if proof:
+            payload["proof"] = proof
+        if artifact_ids:
+            payload["artifact_ids"] = artifact_ids
+
+        result = await gateway.call_api_via_capability(
+            capability_id="jobs_submit_v1",
+            provider_id="obolos.tech",
+            resource=job_id,
+            method="POST",
+            json_payload=payload,
+        )
+        if result.get("ok"):
+            logger.info("obolos_job_work_submitted", job_id=job_id)
+        else:
+            logger.warning("obolos_job_submit_failed", job_id=job_id, error=result.get("error", ""))
+        return result
+
+    async def complete_job(
+        self, gateway: Any, job_id: str, *, notes: str = "",
+    ) -> dict[str, Any]:
+        """POST /api/jobs/{id}/complete — mark job as completed."""
+        result = await gateway.call_api_via_capability(
+            capability_id="jobs_complete_v1",
+            provider_id="obolos.tech",
+            resource=job_id,
+            method="POST",
+            json_payload={"notes": notes} if notes else None,
+        )
+        if result.get("ok"):
+            logger.info("obolos_job_completed", job_id=job_id)
+        return result
+
+    async def reject_job(
+        self, gateway: Any, job_id: str, *, reason: str = "",
+    ) -> dict[str, Any]:
+        """POST /api/jobs/{id}/reject — reject/decline a job."""
+        result = await gateway.call_api_via_capability(
+            capability_id="jobs_reject_v1",
+            provider_id="obolos.tech",
+            resource=job_id,
+            method="POST",
+            json_payload={"reason": reason} if reason else None,
+        )
+        if result.get("ok"):
+            logger.info("obolos_job_rejected", job_id=job_id, reason=reason[:50])
+        return result
+
+    async def get_reputation(
+        self, gateway: Any, agent_id: str,
+    ) -> dict[str, Any] | None:
+        """GET /api/anp/reputation/{agentId} — trust/reputation check."""
+        result = await gateway.call_api_via_capability(
+            capability_id="anp_reputation_v1",
+            provider_id="obolos.tech",
+            resource=agent_id,
+            method="GET",
+        )
+        if not result.get("ok"):
+            return None
+        return result.get("normalized_response", {})
+
     # ─── Internal normalization ───
 
     def _normalize_listing_to_opportunity(

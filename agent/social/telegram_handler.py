@@ -2214,6 +2214,69 @@ class TelegramHandler:
                 lines.append(f"From listing: `{detail['listing_id']}`")
             return "\n".join(lines)
 
+        # /marketplace job-submit <job_id> [--summary "..."]
+        if action == "job-submit" and subargs:
+            tokens = subargs.split()
+            job_id = tokens[0]
+            summary = ""
+            if "--summary" in subargs:
+                summary = subargs.split("--summary", 1)[1].strip().strip('"').strip("'")
+            result = await mkt.submit_job_work("obolos.tech", job_id, summary=summary)
+            if result.get("ok"):
+                return f"Work submitted for job `{job_id}`.\n_Platform confirmation pending._"
+            return f"Job work submission failed: {result.get('error', 'unknown')}"
+
+        # /marketplace job-complete <job_id> [notes]
+        if action == "job-complete" and subargs:
+            tokens = subargs.split(None, 1)
+            job_id = tokens[0]
+            notes = tokens[1] if len(tokens) > 1 else ""
+            result = await mkt.complete_job("obolos.tech", job_id, notes=notes)
+            if result.get("ok"):
+                normalized = result.get("normalized_response", {})
+                revenue = normalized.get("revenue")
+                rev_text = f"\nRevenue: {revenue} {normalized.get('currency', '')}" if revenue else "\n_Revenue not confirmed by platform._"
+                return (
+                    f"Job `{job_id}` marked as completed.{rev_text}\n"
+                    f"Outcome ID: `{result.get('outcome_id', '?')}`"
+                )
+            return f"Job completion failed: {result.get('error', 'unknown')}"
+
+        # /marketplace job-reject <job_id> [reason]
+        if action == "job-reject" and subargs:
+            tokens = subargs.split(None, 1)
+            job_id = tokens[0]
+            reason = tokens[1] if len(tokens) > 1 else ""
+            result = await mkt.reject_job("obolos.tech", job_id, reason=reason)
+            if result.get("ok"):
+                return f"Job `{job_id}` rejected.\nOutcome ID: `{result.get('outcome_id', '?')}`"
+            return f"Job rejection failed: {result.get('error', 'unknown')}"
+
+        # /marketplace reputation <agent_id>
+        if action == "reputation" and subargs:
+            agent_id = subargs.split()[0]
+            rep = await mkt.get_reputation("obolos.tech", agent_id)
+            if not rep:
+                return f"Could not fetch reputation for `{agent_id}`."
+            lines = [
+                f"*Reputation:* `{rep.get('agent_id', agent_id)}`",
+                f"Score: {rep.get('score', 'unknown')}",
+                f"Jobs completed: {rep.get('jobs_completed', 0)}",
+                f"Jobs failed: {rep.get('jobs_failed', 0)}",
+            ]
+            return "\n".join(lines)
+
+        # /marketplace report — summary of outcomes
+        if action == "report":
+            outcomes = await mkt.list_outcomes(limit=10)
+            if not outcomes:
+                return "No job outcomes recorded yet."
+            lines = ["*Marketplace outcomes:*\n"]
+            for o in outcomes:
+                rev = f" — {o.revenue_amount} {o.revenue_currency}" if o.revenue_amount is not None else ""
+                lines.append(f"  `{o.external_job_id[:10]}` {o.status.value}{rev} ({o.completed_at[:10] if o.completed_at else '?'})")
+            return "\n".join(lines)
+
         # /marketplace list (default)
         if action == "list" or not action:
             opps = await mkt.list_opportunities(limit=8)
@@ -2245,22 +2308,36 @@ class TelegramHandler:
                 "  `/marketplace submit <bid_id>` — send bid (approval-gated)\n"
                 "  `/marketplace listings` — browse work listings\n"
                 "  `/marketplace jobs` — list accepted jobs\n"
+                "  `/marketplace job-submit <id>` — submit work\n"
+                "  `/marketplace job-complete <id>` — mark completed\n"
+                "  `/marketplace job-reject <id>` — reject/decline\n"
+                "  `/marketplace reputation <agent>` — trust check\n"
+                "  `/marketplace report` — outcomes summary\n"
                 "  `/marketplace track <id>` — track as project"
             )
             return "\n".join(lines)
 
         return (
             "*Marketplace commands:*\n"
+            "*Scouting:*\n"
             "  `/marketplace discover` — API marketplace\n"
             "  `/marketplace listings` — work listings\n"
             "  `/marketplace show <id>` — opportunity detail\n"
             "  `/marketplace eval <id>` — assess feasibility\n"
+            "*Bidding:*\n"
             "  `/marketplace bid <id>` — prepare bid draft\n"
             "  `/marketplace submit <bid_id>` — send bid (approval-gated)\n"
             "  `/marketplace bids` — list bid drafts\n"
+            "*Jobs:*\n"
             "  `/marketplace jobs` — accepted jobs\n"
             "  `/marketplace job <id>` — job detail\n"
+            "  `/marketplace job-submit <id>` — submit work\n"
+            "  `/marketplace job-complete <id>` — mark completed\n"
+            "  `/marketplace job-reject <id>` — reject/decline\n"
+            "*Tracking:*\n"
             "  `/marketplace track <id>` — track as ALS project\n"
+            "  `/marketplace reputation <agent>` — trust check\n"
+            "  `/marketplace report` — outcomes summary\n"
             "  `/marketplace list` — overview"
         )
 

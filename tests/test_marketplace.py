@@ -1485,3 +1485,258 @@ class TestTelegramBidEligibility:
         assert "bid draft created" in result.lower()
         assert "/marketplace submit" in result
         await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Provider lifecycle: complete, reject, reputation, outcomes
+# ─────────────────────────────────────────────
+
+
+class TestJobLifecycleRoutes:
+    """Routes exist for job complete/reject/reputation."""
+
+    def test_jobs_complete_route(self):
+        from agent.control.policy import get_external_capability_route
+        route = get_external_capability_route("obolos_jobs_complete_primary")
+        assert route is not None
+        assert route.capability_id == "jobs_complete_v1"
+
+    def test_jobs_reject_route(self):
+        from agent.control.policy import get_external_capability_route
+        route = get_external_capability_route("obolos_jobs_reject_primary")
+        assert route is not None
+        assert route.capability_id == "jobs_reject_v1"
+
+    def test_anp_reputation_route(self):
+        from agent.control.policy import get_external_capability_route
+        route = get_external_capability_route("obolos_anp_reputation_primary")
+        assert route is not None
+        assert route.capability_id == "anp_reputation_v1"
+
+
+class TestObolosConnectorLifecycle:
+    """Connector lifecycle methods use correct capabilities."""
+
+    @pytest.mark.asyncio
+    async def test_submit_job_work(self):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        c = ObolosConnector()
+        result = await c.submit_job_work(gateway, "J1", summary="Done", proof="hash123")
+        assert result["ok"] is True
+        kw = gateway.call_api_via_capability.call_args.kwargs
+        assert kw["capability_id"] == "jobs_submit_v1"
+        assert kw["resource"] == "J1"
+        assert kw["json_payload"]["result"] == "Done"
+
+    @pytest.mark.asyncio
+    async def test_complete_job(self):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {"revenue": 50, "currency": "USD"}}
+        c = ObolosConnector()
+        result = await c.complete_job(gateway, "J1", notes="All good")
+        assert result["ok"] is True
+        kw = gateway.call_api_via_capability.call_args.kwargs
+        assert kw["capability_id"] == "jobs_complete_v1"
+
+    @pytest.mark.asyncio
+    async def test_reject_job(self):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        c = ObolosConnector()
+        result = await c.reject_job(gateway, "J1", reason="Cannot deliver")
+        assert result["ok"] is True
+        kw = gateway.call_api_via_capability.call_args.kwargs
+        assert kw["capability_id"] == "jobs_reject_v1"
+
+    @pytest.mark.asyncio
+    async def test_get_reputation(self):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"agent_id": "ag1", "score": 85, "jobs_completed": 10},
+        }
+        c = ObolosConnector()
+        rep = await c.get_reputation(gateway, "ag1")
+        assert rep is not None
+        assert rep["score"] == 85
+
+
+class TestJobOutcomeModel:
+    """JobOutcome model serialization."""
+
+    def test_defaults(self):
+        from agent.marketplace.models import JobOutcome, JobOutcomeStatus
+        o = JobOutcome(external_job_id="J1")
+        assert o.status == JobOutcomeStatus.UNKNOWN
+        assert o.revenue_amount is None
+
+    def test_roundtrip(self):
+        from agent.marketplace.models import JobOutcome, JobOutcomeStatus
+        o = JobOutcome(
+            external_job_id="J1", status=JobOutcomeStatus.COMPLETED,
+            revenue_amount=100.0, revenue_currency="USD",
+        )
+        d = o.to_dict()
+        o2 = JobOutcome.from_dict(d)
+        assert o2.status == JobOutcomeStatus.COMPLETED
+        assert o2.revenue_amount == 100.0
+
+
+class TestServiceJobLifecycle:
+    """Service-level job lifecycle with outcome recording."""
+
+    @pytest.mark.asyncio
+    async def test_complete_job_records_outcome(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True, "normalized_response": {"revenue": 75, "currency": "USD"},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        result = await svc.complete_job("obolos.tech", "J1", notes="Done")
+        assert result["ok"] is True
+        assert result.get("outcome_id")
+
+        outcomes = await svc.list_outcomes()
+        assert len(outcomes) == 1
+        assert outcomes[0].external_job_id == "J1"
+        assert outcomes[0].status.value == "completed"
+        assert outcomes[0].revenue_amount == 75
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_reject_job_records_outcome(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        result = await svc.reject_job("obolos.tech", "J1", reason="Cannot do")
+        assert result["ok"] is True
+        outcomes = await svc.list_outcomes()
+        assert outcomes[0].status.value == "rejected"
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_stats_includes_outcomes(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True, "normalized_response": {},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        await svc.complete_job("obolos.tech", "J1")
+        stats = await svc.get_stats()
+        assert stats["outcomes"] == 1
+        await svc.close()
+
+
+class TestTelegramJobLifecycle:
+    """Telegram commands for job lifecycle."""
+
+    def _make_handler(self, marketplace_svc):
+        from unittest.mock import MagicMock
+
+        from agent.social.telegram_handler import TelegramHandler
+        agent = MagicMock()
+        agent.marketplace = marketplace_svc
+        handler = TelegramHandler.__new__(TelegramHandler)
+        handler._agent = agent
+        return handler
+
+    @pytest.mark.asyncio
+    async def test_job_complete_success(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True, "normalized_response": {"revenue": 50, "currency": "USD"},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("job-complete J1 Great work")
+        assert "completed" in result.lower()
+        assert "50" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_job_reject_success(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("job-reject J1 Cannot deliver")
+        assert "rejected" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_reputation_success(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"agent_id": "ag1", "score": 90, "jobs_completed": 5, "jobs_failed": 0},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("reputation ag1")
+        assert "90" in result
+        assert "ag1" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_report_empty(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("report")
+        assert "no job outcomes" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_report_with_data(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True, "normalized_response": {"revenue": 100, "currency": "USD"},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        await svc.complete_job("obolos.tech", "J1")
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("report")
+        assert "completed" in result.lower()
+        assert "J1" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_help_includes_lifecycle_commands(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("unknowncmd")
+        assert "job-submit" in result
+        assert "job-complete" in result
+        assert "job-reject" in result
+        assert "reputation" in result
+        assert "report" in result
+        await svc.close()

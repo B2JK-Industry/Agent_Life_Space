@@ -1534,6 +1534,39 @@ class ExternalGatewayService:
                 "query_params": {},
                 "json_payload": dict(json_payload),
             }
+        if route.request_mode == "obolos_jobs_complete_v1":
+            job_id = str(resource or "").strip().strip("/")
+            if not job_id:
+                raise ValueError("Job complete requires a job ID.")
+            return {
+                "resource": job_id,
+                "method": "POST",
+                "target_url": f"{target_url.rstrip('/')}/jobs/{job_id}/complete",
+                "query_params": {},
+                "json_payload": dict(json_payload),
+            }
+        if route.request_mode == "obolos_jobs_reject_v1":
+            job_id = str(resource or "").strip().strip("/")
+            if not job_id:
+                raise ValueError("Job reject requires a job ID.")
+            return {
+                "resource": job_id,
+                "method": "POST",
+                "target_url": f"{target_url.rstrip('/')}/jobs/{job_id}/reject",
+                "query_params": {},
+                "json_payload": dict(json_payload),
+            }
+        if route.request_mode == "obolos_anp_reputation_v1":
+            agent_id = str(resource or "").strip().strip("/")
+            if not agent_id:
+                raise ValueError("Reputation check requires an agent ID.")
+            return {
+                "resource": agent_id,
+                "method": "GET",
+                "target_url": f"{target_url.rstrip('/')}/anp/reputation/{agent_id}",
+                "query_params": {},
+                "json_payload": {},
+            }
         # Default: pass through form_data if provided
         spec = {
             "method": normalized_method or ("POST" if json_payload or form_data else "GET"),
@@ -1651,6 +1684,31 @@ class ExternalGatewayService:
                 "provider_status": "ok",
                 "status": str(payload.get("status", "")),
                 "submission_id": str(payload.get("id", payload.get("submission_id", ""))),
+            }
+        if route.response_mode == "obolos_jobs_complete_v1":
+            return {
+                "kind": "jobs_complete",
+                "provider_status": "ok",
+                "status": str(payload.get("status", "")),
+                "revenue": payload.get("revenue", payload.get("amount", payload.get("payout", None))),
+                "currency": str(payload.get("currency", "")),
+            }
+        if route.response_mode == "obolos_jobs_reject_v1":
+            return {
+                "kind": "jobs_reject",
+                "provider_status": "ok",
+                "status": str(payload.get("status", "")),
+                "reason": str(payload.get("reason", "")),
+            }
+        if route.response_mode == "obolos_anp_reputation_v1":
+            return {
+                "kind": "anp_reputation",
+                "provider_status": "ok",
+                "agent_id": str(payload.get("agentId", payload.get("agent_id", ""))),
+                "score": payload.get("score", payload.get("reputation", None)),
+                "jobs_completed": payload.get("jobsCompleted", payload.get("jobs_completed", 0)),
+                "jobs_failed": payload.get("jobsFailed", payload.get("jobs_failed", 0)),
+                "raw": payload,
             }
         return {
             "kind": "external_api_call",

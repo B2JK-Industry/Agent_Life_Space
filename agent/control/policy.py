@@ -542,6 +542,9 @@ _EXTERNAL_CAPABILITY_PROVIDERS: dict[str, ExternalCapabilityProvider] = {
             "jobs_list_v1",
             "jobs_detail_v1",
             "jobs_submit_v1",
+            "jobs_complete_v1",
+            "jobs_reject_v1",
+            "anp_reputation_v1",
         ),
         notes=(
             "Provider routes must resolve target URL and auth from runtime "
@@ -914,6 +917,66 @@ _EXTERNAL_CAPABILITY_ROUTES: dict[str, ExternalCapabilityRoute] = {
             "Documented endpoint: POST /api/jobs/{id}/submit",
             "Payload: {result, proof}",
         ),
+    ),
+    "obolos_jobs_complete_primary": ExternalCapabilityRoute(
+        route_id="obolos_jobs_complete_primary",
+        provider_id="obolos.tech",
+        capability_id="jobs_complete_v1",
+        label="obolos.tech job completion",
+        description="POST /api/jobs/{id}/complete — mark job as completed.",
+        target_kind="http_api",
+        target_env_var="AGENT_OBOLOS_API_BASE_URL",
+        default_target_url="https://obolos.tech/api",
+        auth_token_env_var="AGENT_OBOLOS_WALLET_ADDRESS",  # noqa: S106
+        auth_token_secret_name="obolos.tech.wallet_address",  # noqa: S106
+        allowed_job_kinds=(JobKind.OPERATE,),
+        allowed_export_modes=("internal",),
+        gateway_contract_id="external_api_call_v1",
+        gateway_policy_id="owner_api_call",
+        request_mode="obolos_jobs_complete_v1",
+        response_mode="obolos_jobs_complete_v1",
+        estimated_cost_usd=0.0,
+        priority=10,
+    ),
+    "obolos_jobs_reject_primary": ExternalCapabilityRoute(
+        route_id="obolos_jobs_reject_primary",
+        provider_id="obolos.tech",
+        capability_id="jobs_reject_v1",
+        label="obolos.tech job rejection",
+        description="POST /api/jobs/{id}/reject — reject/decline a job.",
+        target_kind="http_api",
+        target_env_var="AGENT_OBOLOS_API_BASE_URL",
+        default_target_url="https://obolos.tech/api",
+        auth_token_env_var="AGENT_OBOLOS_WALLET_ADDRESS",  # noqa: S106
+        auth_token_secret_name="obolos.tech.wallet_address",  # noqa: S106
+        allowed_job_kinds=(JobKind.OPERATE,),
+        allowed_export_modes=("internal",),
+        gateway_contract_id="external_api_call_v1",
+        gateway_policy_id="owner_api_call",
+        request_mode="obolos_jobs_reject_v1",
+        response_mode="obolos_jobs_reject_v1",
+        estimated_cost_usd=0.0,
+        priority=10,
+    ),
+    "obolos_anp_reputation_primary": ExternalCapabilityRoute(
+        route_id="obolos_anp_reputation_primary",
+        provider_id="obolos.tech",
+        capability_id="anp_reputation_v1",
+        label="obolos.tech ANP reputation",
+        description="GET /api/anp/reputation/{agentId} — agent trust/reputation.",
+        target_kind="http_api",
+        target_env_var="AGENT_OBOLOS_API_BASE_URL",
+        default_target_url="https://obolos.tech/api",
+        auth_token_env_var="AGENT_OBOLOS_WALLET_ADDRESS",  # noqa: S106
+        auth_token_secret_name="obolos.tech.wallet_address",  # noqa: S106
+        allowed_job_kinds=(JobKind.OPERATE,),
+        allowed_export_modes=("internal",),
+        gateway_contract_id="external_api_call_v1",
+        gateway_policy_id="owner_api_call_optional_auth",
+        request_mode="obolos_anp_reputation_v1",
+        response_mode="obolos_anp_reputation_v1",
+        estimated_cost_usd=0.0,
+        priority=10,
     ),
 }
 

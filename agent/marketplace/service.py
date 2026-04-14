@@ -14,6 +14,7 @@ Reuses existing ALS infrastructure:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import aiosqlite
@@ -26,6 +27,8 @@ from agent.marketplace.models import (
     BidStatus,
     Evaluation,
     FeasibilityVerdict,
+    JobOutcome,
+    JobOutcomeStatus,
     Opportunity,
     OpportunityStatus,
 )
@@ -70,6 +73,15 @@ class MarketplaceService:
                     id TEXT PRIMARY KEY,
                     data TEXT NOT NULL,
                     opportunity_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            await self._db.execute("""
+                CREATE TABLE IF NOT EXISTS job_outcomes (
+                    id TEXT PRIMARY KEY,
+                    data TEXT NOT NULL,
+                    external_job_id TEXT NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 )
@@ -397,6 +409,90 @@ class MarketplaceService:
             return None
         return await connector.get_job(self._gateway, job_id)
 
+    # ─── Job lifecycle ───
+
+    async def submit_job_work(
+        self, platform: str, job_id: str, *,
+        summary: str = "", proof: str = "", artifact_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Submit completed work to a job."""
+        connector = self._registry.get(platform)
+        if not connector or not hasattr(connector, "submit_job_work"):
+            return {"ok": False, "error": f"No job-submit support for {platform}"}
+        return await connector.submit_job_work(
+            self._gateway, job_id, summary=summary, proof=proof, artifact_ids=artifact_ids,
+        )
+
+    async def complete_job(
+        self, platform: str, job_id: str, *, notes: str = "",
+        opportunity_id: str = "", bid_id: str = "", project_id: str = "",
+    ) -> dict[str, Any]:
+        """Mark job as completed and record outcome."""
+        connector = self._registry.get(platform)
+        if not connector or not hasattr(connector, "complete_job"):
+            return {"ok": False, "error": f"No job-complete support for {platform}"}
+        result = await connector.complete_job(self._gateway, job_id, notes=notes)
+        if result.get("ok"):
+            normalized = result.get("normalized_response", {})
+            outcome = JobOutcome(
+                platform=platform,
+                external_job_id=job_id,
+                opportunity_id=opportunity_id,
+                bid_id=bid_id,
+                project_id=project_id,
+                status=JobOutcomeStatus.COMPLETED,
+                revenue_amount=normalized.get("revenue"),
+                revenue_currency=normalized.get("currency", ""),
+                completed_at=datetime.now(UTC).isoformat(),
+                platform_response=normalized,
+                notes=notes,
+            )
+            await self._persist_outcome(outcome)
+            result["outcome_id"] = outcome.id
+        return result
+
+    async def reject_job(
+        self, platform: str, job_id: str, *, reason: str = "",
+        opportunity_id: str = "", bid_id: str = "", project_id: str = "",
+    ) -> dict[str, Any]:
+        """Reject/decline a job and record outcome."""
+        connector = self._registry.get(platform)
+        if not connector or not hasattr(connector, "reject_job"):
+            return {"ok": False, "error": f"No job-reject support for {platform}"}
+        result = await connector.reject_job(self._gateway, job_id, reason=reason)
+        if result.get("ok"):
+            outcome = JobOutcome(
+                platform=platform,
+                external_job_id=job_id,
+                opportunity_id=opportunity_id,
+                bid_id=bid_id,
+                project_id=project_id,
+                status=JobOutcomeStatus.REJECTED,
+                completed_at=datetime.now(UTC).isoformat(),
+                notes=reason,
+            )
+            await self._persist_outcome(outcome)
+            result["outcome_id"] = outcome.id
+        return result
+
+    async def get_reputation(self, platform: str, agent_id: str) -> dict[str, Any] | None:
+        """Get reputation/trust data for an agent."""
+        connector = self._registry.get(platform)
+        if not connector or not hasattr(connector, "get_reputation"):
+            return None
+        return await connector.get_reputation(self._gateway, agent_id)
+
+    # ─── Outcome queries ───
+
+    async def list_outcomes(self, *, limit: int = 20) -> list[JobOutcome]:
+        if not self._db:
+            return []
+        async with self._db.execute(
+            "SELECT data FROM job_outcomes ORDER BY rowid DESC LIMIT ?", (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [JobOutcome.from_dict(orjson.loads(r[0])) for r in rows]
+
     # ─── Stats ───
 
     async def get_stats(self) -> dict[str, Any]:
@@ -413,10 +509,16 @@ class MarketplaceService:
             row = await cur.fetchone()
             bid_count = row[0] if row else 0
 
+        outcome_count = 0
+        async with self._db.execute("SELECT COUNT(*) FROM job_outcomes") as cur:
+            row = await cur.fetchone()
+            outcome_count = row[0] if row else 0
+
         return {
             "platforms": self._registry.list_platforms(),
             "opportunities": opp_count,
             "bids": bid_count,
+            "outcomes": outcome_count,
         }
 
     # ─── Persistence ───
@@ -438,5 +540,15 @@ class MarketplaceService:
         await self._db.execute(
             "INSERT OR REPLACE INTO bids (id, data, opportunity_id, status, created_at) VALUES (?, ?, ?, ?, ?)",
             (bid.id, data, bid.opportunity_id, bid.status.value, bid.created_at),
+        )
+        await self._db.commit()
+
+    async def _persist_outcome(self, outcome: JobOutcome) -> None:
+        if not self._db:
+            return
+        data = orjson.dumps(outcome.to_dict()).decode()
+        await self._db.execute(
+            "INSERT OR REPLACE INTO job_outcomes (id, data, external_job_id, status, created_at) VALUES (?, ?, ?, ?, ?)",
+            (outcome.id, data, outcome.external_job_id, outcome.status.value, outcome.created_at),
         )
         await self._db.commit()
