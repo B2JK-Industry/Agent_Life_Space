@@ -1995,7 +1995,7 @@ class TelegramHandler:
         )
 
     async def _cmd_marketplace(self, args: str) -> str:
-        """Marketplace earning engine: discover, evaluate, bid, engage."""
+        """Marketplace scouting tool: discover, show, evaluate, bid, track."""
         if not hasattr(self._agent, "marketplace"):
             return "Marketplace service not initialized."
 
@@ -2026,7 +2026,39 @@ class TelegramHandler:
             for opp in opps[:10]:
                 budget = f" ({opp.budget_max} {opp.currency})" if opp.budget_max else ""
                 lines.append(f"  • `{opp.id[:8]}` *{opp.title[:60]}*{budget}")
-            lines.append("\n`/marketplace eval <id>` to assess feasibility")
+            lines.append("\n`/marketplace show <id>` | `/marketplace eval <id>`")
+            return "\n".join(lines)
+
+        # /marketplace show <opportunity_id>
+        if action == "show" and subargs:
+            opp = await mkt.get_opportunity(subargs.split()[0])
+            if not opp:
+                return f"Opportunity `{subargs}` not found."
+            _status_emoji = {
+                "discovered": "🔍", "evaluated": "📊", "bid_ready": "📝",
+                "tracking": "📌", "engaged": "🔨", "completed": "✅",
+                "skipped": "⏭", "lost": "❌",
+            }
+            emoji = _status_emoji.get(opp.status.value, "❓")
+            lines = [
+                f"{emoji} *{opp.title}*",
+                f"Platform: {opp.platform} (`{opp.platform_id}`)",
+                f"Status: {opp.status.value}",
+            ]
+            if opp.budget_max:
+                lines.append(f"Budget: {opp.budget_max} {opp.currency}")
+            if opp.skills_required:
+                lines.append(f"Skills: {', '.join(opp.skills_required[:8])}")
+            if opp.description:
+                lines.append(f"Description: {opp.description[:200]}")
+            if opp.url:
+                lines.append(f"URL: {opp.url}")
+            lines.append(f"ID: `{opp.id}`")
+            lines.append(
+                f"\n`/marketplace eval {opp.id}` | "
+                f"`/marketplace bid {opp.id}` | "
+                f"`/marketplace track {opp.id}`"
+            )
             return "\n".join(lines)
 
         # /marketplace eval <opportunity_id>
@@ -2048,7 +2080,7 @@ class TelegramHandler:
             if ev.missing_skills:
                 lines.append(f"Missing: {', '.join(ev.missing_skills[:5])}")
             if ev.verdict != FeasibilityVerdict.INFEASIBLE:
-                lines.append(f"\n`/marketplace bid {opp.id}` to prepare a bid")
+                lines.append(f"\n`/marketplace bid {opp.id}` to prepare a bid draft")
             return "\n".join(lines)
 
         # /marketplace bid <opportunity_id>
@@ -2062,38 +2094,90 @@ class TelegramHandler:
             bid = mkt.prepare_bid(opp, ev)
             await mkt._persist_bid(bid)
             lines = [
-                f"*Bid draft:* {bid.title}",
+                f"*Bid draft created:* `{bid.id[:8]}`",
+                f"Title: {bid.title}",
                 f"Price: ${bid.price_usd:.2f}",
-                f"Status: {bid.status.value}",
                 f"\n{bid.proposal_text}",
                 "\n_Bid submission is not yet supported — "
-                "a dedicated bid/apply capability route is needed on the platform side._",
+                "a dedicated bid/apply capability route is needed._",
+                f"\n`/marketplace track {opp.id}` to track as ALS project",
             ]
             return "\n".join(lines)
 
-        # /marketplace list
+        # /marketplace bids — list stored bid drafts
+        if action == "bids":
+            bids = await mkt.list_bids(limit=10)
+            if not bids:
+                return "No bid drafts stored."
+            lines = ["*Bid drafts:*\n"]
+            for b in bids:
+                proj = f" → project `{b.project_id[:8]}`" if b.project_id else ""
+                lines.append(
+                    f"  • `{b.id[:8]}` {b.title[:50]} "
+                    f"(${b.price_usd:.2f}, {b.status.value}){proj}"
+                )
+            return "\n".join(lines)
+
+        # /marketplace track <opportunity_id> — create ALS project to track this
+        if action == "track" and subargs:
+            opp = await mkt.get_opportunity(subargs.split()[0])
+            if not opp:
+                return f"Opportunity `{subargs}` not found."
+            # Find latest bid for this opportunity if any
+            bids = await mkt.list_bids(limit=50)
+            bid = next((b for b in bids if b.opportunity_id == opp.id), None)
+            result = await mkt.track(opp, bid)
+            if not result.get("ok"):
+                return f"Failed to track: {result.get('error', 'unknown')}"
+            return (
+                f"Opportunity tracked as ALS project:\n"
+                f"  Project: *{result['project_name']}*\n"
+                f"  ID: `{result['project_id']}`\n"
+                f"  Status: active\n\n"
+                f"_This does not imply platform-side acceptance._\n"
+                f"`/projects {result['project_id']}` for detail"
+            )
+
+        # /marketplace list (default)
         if action == "list" or not action:
+            opps = await mkt.list_opportunities(limit=8)
+            bids = await mkt.list_bids(limit=5)
             stats = await mkt.get_stats()
             platforms = stats.get("platforms", [])
+
             lines = [
-                "*Marketplace*",
-                f"Platforms: {', '.join(platforms) or 'none registered'}",
-                f"Opportunities: {stats.get('opportunities', 0)} stored",
-                f"Bids: {stats.get('bids', 0)} stored",
-                "",
-                "*Commands:*",
-                "  `/marketplace discover [platform]` — fetch opportunities",
-                "  `/marketplace eval <id>` — assess feasibility",
-                "  `/marketplace bid <id>` — prepare bid",
-                "  `/marketplace list` — this view",
+                f"*Marketplace* ({', '.join(platforms) or 'no platforms'})",
+                f"Stored: {stats.get('opportunities', 0)} opportunities, "
+                f"{stats.get('bids', 0)} bid drafts\n",
             ]
+            if opps:
+                lines.append("*Recent opportunities:*")
+                for opp in opps[:8]:
+                    budget = f" {opp.budget_max}{opp.currency}" if opp.budget_max else ""
+                    lines.append(f"  `{opp.id[:8]}` {opp.title[:45]} [{opp.status.value}]{budget}")
+            if bids:
+                lines.append("\n*Recent bid drafts:*")
+                for b in bids[:5]:
+                    lines.append(f"  `{b.id[:8]}` {b.title[:45]} (${b.price_usd:.2f}, {b.status.value})")
+            lines.append(
+                "\n*Commands:*\n"
+                "  `/marketplace discover` — fetch new\n"
+                "  `/marketplace show <id>` — opportunity detail\n"
+                "  `/marketplace eval <id>` — feasibility\n"
+                "  `/marketplace bid <id>` — draft bid\n"
+                "  `/marketplace bids` — list drafts\n"
+                "  `/marketplace track <id>` — track as project"
+            )
             return "\n".join(lines)
 
         return (
             "*Marketplace commands:*\n"
             "  `/marketplace discover` — fetch opportunities\n"
+            "  `/marketplace show <id>` — opportunity detail\n"
             "  `/marketplace eval <id>` — assess feasibility\n"
-            "  `/marketplace bid <id>` — prepare bid\n"
+            "  `/marketplace bid <id>` — prepare bid draft\n"
+            "  `/marketplace bids` — list bid drafts\n"
+            "  `/marketplace track <id>` — track as ALS project\n"
             "  `/marketplace list` — overview"
         )
 

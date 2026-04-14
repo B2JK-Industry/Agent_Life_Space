@@ -497,33 +497,266 @@ class TestDiscoveryTwoStepFlow:
         assert opps[0].platform_id == "good"
 
 
-class TestMarketplaceUXTruth:
-    """Telegram surface must not advertise commands that do not exist."""
+class TestMarketplaceServiceBidQueries:
+    """Bid query methods: get_bid, list_bids."""
 
-    def test_bid_handler_does_not_advertise_submit(self):
-        """The bid output must not reference /marketplace submit."""
-        import inspect
+    @pytest.mark.asyncio
+    async def test_list_bids_empty(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        assert await svc.list_bids() == []
+        await svc.close()
 
+    @pytest.mark.asyncio
+    async def test_persist_and_list_bids(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        bid = Bid(opportunity_id="opp-1", platform="test", price_usd=10.0, title="Test Bid")
+        await svc._persist_bid(bid)
+        bids = await svc.list_bids()
+        assert len(bids) == 1
+        assert bids[0].title == "Test Bid"
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_get_bid_by_id(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        bid = Bid(opportunity_id="opp-1", platform="test")
+        await svc._persist_bid(bid)
+        fetched = await svc.get_bid(bid.id)
+        assert fetched is not None
+        assert fetched.id == bid.id
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_get_bid_missing(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        assert await svc.get_bid("nonexistent") is None
+        await svc.close()
+
+
+class TestMarketplaceTrack:
+    """Track (project linkage) behavior."""
+
+    @pytest.mark.asyncio
+    async def test_track_creates_project(self, tmp_path: Path):
+        from agent.projects.manager import ProjectManager
+
+        pm = ProjectManager(db_path=str(tmp_path / "projects.db"))
+        await pm.initialize()
+        svc = MarketplaceService(projects=pm, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Track Test", platform="obolos.tech", platform_id="t1")
+        await svc._persist_opportunity(opp)
+
+        result = await svc.track(opp)
+        assert result["ok"] is True
+        project = await pm.get(result["project_id"])
+        assert project is not None
+        assert project.status.value == "active"
+        assert "marketplace" in project.tags
+
+        # Opportunity status must be TRACKING, not ENGAGED
+        reloaded = await svc.get_opportunity(opp.id)
+        assert reloaded.status == OpportunityStatus.TRACKING
+
+        await svc.close()
+        await pm.close()
+
+    @pytest.mark.asyncio
+    async def test_track_with_bid_links_project(self, tmp_path: Path):
+        from agent.projects.manager import ProjectManager
+
+        pm = ProjectManager(db_path=str(tmp_path / "projects.db"))
+        await pm.initialize()
+        svc = MarketplaceService(projects=pm, db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+
+        opp = Opportunity(title="With Bid", platform="test", budget_max=50.0)
+        bid = Bid(opportunity_id=opp.id, platform="test", price_usd=40.0)
+        await svc._persist_opportunity(opp)
+        await svc._persist_bid(bid)
+
+        result = await svc.track(opp, bid)
+        assert result["ok"] is True
+
+        # Bid should have project_id set
+        reloaded_bid = await svc.get_bid(bid.id)
+        assert reloaded_bid.project_id == result["project_id"]
+
+        await svc.close()
+        await pm.close()
+
+    @pytest.mark.asyncio
+    async def test_track_without_projects_manager(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        opp = Opportunity(title="No PM", platform="test")
+        result = await svc.track(opp)
+        assert result["ok"] is False
+        assert "not available" in result["error"].lower()
+        await svc.close()
+
+
+class TestMarketplaceTelegramBehavior:
+    """Real output behavior tests for /marketplace commands."""
+
+    def _make_handler(self, marketplace_svc):
+        """Create a minimal TelegramHandler mock with marketplace wired."""
+        from unittest.mock import MagicMock
+        agent = MagicMock()
+        agent.marketplace = marketplace_svc
         from agent.social.telegram_handler import TelegramHandler
-        source = inspect.getsource(TelegramHandler._cmd_marketplace)
-        # Must NOT contain submit as a command hint
-        assert "/marketplace submit" not in source
+        handler = TelegramHandler.__new__(TelegramHandler)
+        handler._agent = agent
+        return handler
 
-    def test_list_handler_does_not_advertise_submit(self):
-        """The list/help output must not reference /marketplace submit."""
-        import inspect
+    @pytest.mark.asyncio
+    async def test_list_empty(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
 
-        from agent.social.telegram_handler import TelegramHandler
-        source = inspect.getsource(TelegramHandler._cmd_marketplace)
-        # Count how many times "submit" appears as a command
-        lines = source.split("\n")
-        submit_commands = [line for line in lines if "/marketplace submit" in line]
-        assert len(submit_commands) == 0
+        result = await handler._cmd_marketplace("")
+        assert "0 opportunities" in result
+        assert "0 bid drafts" in result
+        assert "/marketplace discover" in result
+        await svc.close()
 
-    def test_bid_output_mentions_not_supported(self):
-        """Bid output must clearly state submission is not yet supported."""
-        import inspect
+    @pytest.mark.asyncio
+    async def test_list_with_data(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
 
-        from agent.social.telegram_handler import TelegramHandler
-        source = inspect.getsource(TelegramHandler._cmd_marketplace)
-        assert "not yet supported" in source.lower()
+        opp = Opportunity(title="Listed Opp", platform="obolos.tech", budget_max=20.0, currency="credits")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=15.0, title="My Bid")
+        await svc._persist_bid(bid)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("")
+        assert "Listed Opp" in result
+        assert "My Bid" in result
+        assert "1 opportunities" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_show_existing(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        opp = Opportunity(
+            title="Detailed Opp", platform="obolos.tech",
+            platform_id="slug-x", budget_max=100.0, currency="credits",
+            skills_required=["python", "api"], description="A test listing.",
+        )
+        await svc._persist_opportunity(opp)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"show {opp.id}")
+        assert "Detailed Opp" in result
+        assert "obolos.tech" in result
+        assert "slug-x" in result
+        assert "100.0" in result
+        assert "python" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_show_missing(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("show nonexistent")
+        assert "not found" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_bids_empty(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("bids")
+        assert "no bid drafts" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_bids_with_data(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        bid = Bid(opportunity_id="opp-1", platform="test", price_usd=25.0, title="Draft Bid")
+        await svc._persist_bid(bid)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("bids")
+        assert "Draft Bid" in result
+        assert "$25.00" in result
+        assert "draft" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_track_creates_project(self, tmp_path: Path):
+        from agent.projects.manager import ProjectManager
+
+        pm = ProjectManager(db_path=str(tmp_path / "projects.db"))
+        await pm.initialize()
+        svc = MarketplaceService(projects=pm, db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+
+        opp = Opportunity(title="Track via TG", platform="obolos.tech")
+        await svc._persist_opportunity(opp)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"track {opp.id}")
+        assert "tracked as als project" in result.lower()
+        assert "does not imply platform-side acceptance" in result.lower()
+        assert "/projects" in result
+
+        await svc.close()
+        await pm.close()
+
+    @pytest.mark.asyncio
+    async def test_track_missing_opportunity(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("track nonexistent")
+        assert "not found" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_bid_includes_not_supported_note(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="Bid Test", platform="obolos.tech",
+            skills_required=["python"],
+        )
+        await svc._persist_opportunity(opp)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"bid {opp.id}")
+        assert "not yet supported" in result.lower()
+        assert "/marketplace submit" not in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_help_lists_all_real_commands(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("unknowncmd")
+        assert "/marketplace discover" in result
+        assert "/marketplace show" in result
+        assert "/marketplace eval" in result
+        assert "/marketplace bid" in result
+        assert "/marketplace bids" in result
+        assert "/marketplace track" in result
+        assert "/marketplace submit" not in result
+        await svc.close()

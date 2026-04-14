@@ -205,39 +205,79 @@ class MarketplaceService:
             await self._persist_bid(bid)
         return result
 
-    # ─── Engagement — convert opportunity to tracked project ───
+    # ─── Bid queries ───
 
-    async def engage(self, opportunity: Opportunity, bid: Bid) -> dict[str, Any]:
-        """Convert a won opportunity into an ALS project."""
+    async def get_bid(self, bid_id: str) -> Bid | None:
+        """Get a persisted bid by ID."""
+        if not self._db:
+            return None
+        async with self._db.execute(
+            "SELECT data FROM bids WHERE id = ?", (bid_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                return Bid.from_dict(orjson.loads(row[0]))
+        return None
+
+    async def list_bids(self, *, limit: int = 20) -> list[Bid]:
+        """List persisted bid drafts, most recent first."""
+        if not self._db:
+            return []
+        async with self._db.execute(
+            "SELECT data FROM bids ORDER BY rowid DESC LIMIT ?", (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [Bid.from_dict(orjson.loads(r[0])) for r in rows]
+
+    # ─── Tracking — convert opportunity to tracked ALS project ───
+
+    async def track(self, opportunity: Opportunity, bid: Bid | None = None) -> dict[str, Any]:
+        """Create an ALS project to track work on this opportunity.
+
+        This does NOT imply platform-side acceptance or winning a bid.
+        It means the operator decided this opportunity is worth tracking
+        as a local project for planning and execution.
+        """
         if not self._projects:
             return {"ok": False, "error": "ProjectManager not available"}
 
+        desc_parts = [
+            f"Marketplace opportunity from {opportunity.platform}.",
+            f"Platform ID: {opportunity.platform_id}",
+        ]
+        if opportunity.budget_max:
+            desc_parts.append(f"Budget: {opportunity.budget_max} {opportunity.currency}")
+        if opportunity.description:
+            desc_parts.append(f"Description: {opportunity.description[:200]}")
+        if bid:
+            desc_parts.append(f"Bid draft: ${bid.price_usd:.2f}")
+
         project = await self._projects.create(
             name=f"[{opportunity.platform}] {opportunity.title[:60]}",
-            description=(
-                f"Marketplace engagement from {opportunity.platform}.\n"
-                f"Opportunity: {opportunity.platform_id}\n"
-                f"Budget: {opportunity.budget_max} {opportunity.currency}\n"
-                f"Bid: ${bid.price_usd:.2f}"
-            ),
+            description="\n".join(desc_parts),
             tags=["marketplace", opportunity.platform],
         )
         await self._projects.start(project.id)
 
-        bid.project_id = project.id
-        bid.status = BidStatus.ACCEPTED
-        await self._persist_bid(bid)
+        if bid:
+            bid.project_id = project.id
+            await self._persist_bid(bid)
 
-        opportunity.status = OpportunityStatus.ENGAGED
+        opportunity.status = OpportunityStatus.TRACKING
         await self._persist_opportunity(opportunity)
 
         logger.info(
-            "marketplace_engaged",
+            "marketplace_tracking",
             project_id=project.id,
             opportunity=opportunity.platform_id,
             platform=opportunity.platform,
         )
         return {"ok": True, "project_id": project.id, "project_name": project.name}
+
+    # Legacy alias
+    async def engage(self, opportunity: Opportunity, bid: Bid) -> dict[str, Any]:
+        """Legacy alias for track()."""
+        return await self.track(opportunity, bid)
 
     # ─── Stats ───
 

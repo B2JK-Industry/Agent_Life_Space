@@ -29,6 +29,7 @@ class OpportunityStatus(str, Enum):
     EVALUATED = "evaluated"        # Feasibility assessed
     BID_READY = "bid_ready"        # Bid/response prepared
     SUBMITTED = "submitted"        # Bid sent to platform
+    TRACKING = "tracking"          # Tracked as ALS project (no platform acceptance implied)
     ENGAGED = "engaged"            # Won / accepted, work started
     COMPLETED = "completed"        # Delivered
     SKIPPED = "skipped"            # Not feasible / not worth it
