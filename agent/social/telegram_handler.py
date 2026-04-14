@@ -2063,11 +2063,18 @@ class TelegramHandler:
                     job_link = f" → job `{b.external_job_id[:10]}`" if b.external_job_id else ""
                     proj_link = f" → project `{b.project_id[:8]}`" if b.project_id else ""
                     lines.append(f"  `{b.id[:8]}` {b.status.value} ${b.price_usd:.2f}{job_link}{proj_link}")
-            lines.append(
-                f"\n`/marketplace eval {opp.id}` | "
-                f"`/marketplace bid {opp.id}` | "
-                f"`/marketplace track {opp.id}`"
-            )
+            if opp.is_listing:
+                lines.append(
+                    f"\n`/marketplace eval {opp.id}` | "
+                    f"`/marketplace bid {opp.id}` | "
+                    f"`/marketplace track {opp.id}`"
+                )
+            else:
+                lines.append(
+                    f"\n`/marketplace eval {opp.id}` | "
+                    f"`/marketplace track {opp.id}`\n"
+                    f"_API marketplace item — use `/marketplace listings` for biddable work._"
+                )
             return "\n".join(lines)
 
         # /marketplace eval <opportunity_id>
@@ -2088,8 +2095,10 @@ class TelegramHandler:
                 lines.append(f"Matched: {', '.join(ev.matched_skills[:5])}")
             if ev.missing_skills:
                 lines.append(f"Missing: {', '.join(ev.missing_skills[:5])}")
-            if ev.verdict != FeasibilityVerdict.INFEASIBLE:
+            if ev.verdict != FeasibilityVerdict.INFEASIBLE and opp.is_listing:
                 lines.append(f"\n`/marketplace bid {opp.id}` to prepare a bid draft")
+            elif ev.verdict != FeasibilityVerdict.INFEASIBLE:
+                lines.append("\n_API marketplace item — bidding available for work listings only._")
             return "\n".join(lines)
 
         # /marketplace bid <opportunity_id>
@@ -2310,6 +2319,7 @@ class TelegramHandler:
             # Revenue summary
             total_revenue = 0.0
             revenue_known = 0
+            submitted_count = sum(1 for o in outcomes if o.status.value == "submitted")
             completed_count = sum(1 for o in outcomes if o.status.value == "completed")
             rejected_count = sum(1 for o in outcomes if o.status.value == "rejected")
             for o in outcomes:
@@ -2329,7 +2339,7 @@ class TelegramHandler:
             lines.append(f"  → {bids_with_projects} linked to projects, {bids_with_jobs} linked to jobs")
             lines.append(f"\nOutcomes: {len(outcomes)} recorded")
             if outcomes:
-                lines.append(f"  → {completed_count} completed, {rejected_count} rejected")
+                lines.append(f"  → {submitted_count} submitted, {completed_count} completed, {rejected_count} rejected")
                 if revenue_known:
                     lines.append(f"  → Revenue: {total_revenue:.2f} ({revenue_known} confirmed)")
                 else:

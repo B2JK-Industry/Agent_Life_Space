@@ -1984,3 +1984,165 @@ class TestEnrichedReporting:
         result = await handler._cmd_marketplace("link-job nonexistent J1")
         assert "not found" in result.lower()
         await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Final hardening: hints, job-submit persistence, terminal guards
+# ─────────────────────────────────────────────
+
+
+class TestNonListingHints:
+    """API marketplace items must not suggest bidding."""
+
+    def _make_handler(self, marketplace_svc):
+        from unittest.mock import MagicMock
+
+        from agent.social.telegram_handler import TelegramHandler
+        agent = MagicMock()
+        agent.marketplace = marketplace_svc
+        handler = TelegramHandler.__new__(TelegramHandler)
+        handler._agent = agent
+        return handler
+
+    @pytest.mark.asyncio
+    async def test_show_api_item_no_bid_hint(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        opp = Opportunity(title="API Item", platform="obolos.tech",
+                          url="https://obolos.tech/api/some-slug", category="api")
+        await svc._persist_opportunity(opp)
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"show {opp.id}")
+        assert "/marketplace bid" not in result
+        assert "listings" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_show_listing_has_bid_hint(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        opp = Opportunity(title="Listing", platform="obolos.tech",
+                          url="https://obolos.tech/api/listings/L1")
+        await svc._persist_opportunity(opp)
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"show {opp.id}")
+        assert "/marketplace bid" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_eval_api_item_no_bid_hint(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        opp = Opportunity(title="API Eval", platform="obolos.tech",
+                          url="https://obolos.tech/api/slug", skills_required=["python"])
+        await svc._persist_opportunity(opp)
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"eval {opp.id}")
+        assert "/marketplace bid" not in result
+        assert "listings only" in result.lower() or "listings" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_eval_listing_has_bid_hint(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        opp = Opportunity(title="Listing Eval", platform="obolos.tech",
+                          url="https://obolos.tech/api/listings/L1", skills_required=["python"])
+        await svc._persist_opportunity(opp)
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"eval {opp.id}")
+        assert "/marketplace bid" in result
+        await svc.close()
+
+
+class TestJobSubmitPersistence:
+    """submit_job_work must persist a SUBMITTED outcome."""
+
+    @pytest.mark.asyncio
+    async def test_submit_persists_outcome(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        result = await svc.submit_job_work("obolos.tech", "J1", summary="Done")
+        assert result["ok"] is True
+        assert result.get("outcome_id")
+
+        outcomes = await svc.list_outcomes()
+        assert len(outcomes) == 1
+        assert outcomes[0].status.value == "submitted"
+        assert outcomes[0].external_job_id == "J1"
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_after_terminal_blocked(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.complete_job("obolos.tech", "J1")
+        result = await svc.submit_job_work("obolos.tech", "J1", summary="Late")
+        assert result["ok"] is False
+        assert "finalized" in result["error"].lower()
+        await svc.close()
+
+
+class TestContradictoryTerminalGuard:
+    """Cannot complete after reject, or reject after complete."""
+
+    @pytest.mark.asyncio
+    async def test_complete_then_reject_blocked(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        r1 = await svc.complete_job("obolos.tech", "J1")
+        assert r1["ok"] is True
+        r2 = await svc.reject_job("obolos.tech", "J1", reason="changed mind")
+        assert r2["ok"] is False
+        assert "finalized" in r2["error"].lower()
+        assert "completed" in r2["error"].lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_reject_then_complete_blocked(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        r1 = await svc.reject_job("obolos.tech", "J1")
+        assert r1["ok"] is True
+        r2 = await svc.complete_job("obolos.tech", "J1")
+        assert r2["ok"] is False
+        assert "finalized" in r2["error"].lower()
+        assert "rejected" in r2["error"].lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_then_complete_allowed(self, tmp_path: Path):
+        """Submit is not terminal — complete should still work after it."""
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.submit_job_work("obolos.tech", "J1", summary="Work done")
+        r2 = await svc.complete_job("obolos.tech", "J1")
+        assert r2["ok"] is True
+        await svc.close()

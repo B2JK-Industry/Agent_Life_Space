@@ -442,19 +442,48 @@ class MarketplaceService:
                 }
         return {}
 
+    _TERMINAL_STATUSES = frozenset({"completed", "rejected", "cancelled"})
+
+    async def _get_terminal_outcome(self, job_id: str) -> JobOutcome | None:
+        """Return a terminal outcome for this job, or None."""
+        for o in await self.list_outcomes(limit=200):
+            if o.external_job_id == job_id and o.status.value in self._TERMINAL_STATUSES:
+                return o
+        return None
+
     # ─── Job lifecycle ───
 
     async def submit_job_work(
         self, platform: str, job_id: str, *,
         summary: str = "", proof: str = "", artifact_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Submit completed work to a job."""
+        """Submit completed work to a job and record as lifecycle event."""
         connector = self._registry.get(platform)
         if not connector or not hasattr(connector, "submit_job_work"):
             return {"ok": False, "error": f"No job-submit support for {platform}"}
-        return await connector.submit_job_work(
+        # Block if job already has a terminal outcome
+        terminal = await self._get_terminal_outcome(job_id)
+        if terminal:
+            return {"ok": False, "error": f"Job {job_id} already finalized ({terminal.status.value})."}
+        result = await connector.submit_job_work(
             self._gateway, job_id, summary=summary, proof=proof, artifact_ids=artifact_ids,
         )
+        if result.get("ok"):
+            linkage = await self._find_linkage_for_job(job_id)
+            outcome = JobOutcome(
+                platform=platform,
+                external_job_id=job_id,
+                opportunity_id=linkage.get("opportunity_id", ""),
+                bid_id=linkage.get("bid_id", ""),
+                project_id=linkage.get("project_id", ""),
+                status=JobOutcomeStatus.SUBMITTED,
+                completed_at=datetime.now(UTC).isoformat(),
+                platform_response=result.get("normalized_response", {}),
+                notes=summary,
+            )
+            await self._persist_outcome(outcome)
+            result["outcome_id"] = outcome.id
+        return result
 
     async def complete_job(
         self, platform: str, job_id: str, *, notes: str = "",
@@ -463,10 +492,9 @@ class MarketplaceService:
         connector = self._registry.get(platform)
         if not connector or not hasattr(connector, "complete_job"):
             return {"ok": False, "error": f"No job-complete support for {platform}"}
-        # Check for duplicate
-        existing = [o for o in await self.list_outcomes(limit=100) if o.external_job_id == job_id and o.status == JobOutcomeStatus.COMPLETED]
-        if existing:
-            return {"ok": False, "error": f"Job {job_id} already marked as completed."}
+        terminal = await self._get_terminal_outcome(job_id)
+        if terminal:
+            return {"ok": False, "error": f"Job {job_id} already finalized ({terminal.status.value})."}
         result = await connector.complete_job(self._gateway, job_id, notes=notes)
         if result.get("ok"):
             linkage = await self._find_linkage_for_job(job_id)
@@ -496,9 +524,9 @@ class MarketplaceService:
         connector = self._registry.get(platform)
         if not connector or not hasattr(connector, "reject_job"):
             return {"ok": False, "error": f"No job-reject support for {platform}"}
-        existing = [o for o in await self.list_outcomes(limit=100) if o.external_job_id == job_id and o.status == JobOutcomeStatus.REJECTED]
-        if existing:
-            return {"ok": False, "error": f"Job {job_id} already marked as rejected."}
+        terminal = await self._get_terminal_outcome(job_id)
+        if terminal:
+            return {"ok": False, "error": f"Job {job_id} already finalized ({terminal.status.value})."}
         result = await connector.reject_job(self._gateway, job_id, reason=reason)
         if result.get("ok"):
             linkage = await self._find_linkage_for_job(job_id)
