@@ -2,12 +2,21 @@
 Agent Life Space — Obolos.tech Marketplace Connector
 
 First concrete connector. Normalizes the obolos.tech API
-(marketplace catalog, API details, seller publish) into the
-common Opportunity/Bid models.
+(marketplace catalog, API details) into the common
+Opportunity/Bid models.
 
 All HTTP calls go through the existing ExternalGatewayService
 which handles auth (AGENT_OBOLOS_WALLET_ADDRESS), rate limiting,
 retries, and 402 payment flows.
+
+Phase 1 scope:
+- Discovery (catalog → slugs → detail for each)
+- Evaluation (deterministic feasibility)
+- Bid preparation (draft only)
+- Bid submission is NOT supported in Phase 1:
+  seller_publish_v1 registers seller APIs, it does not submit
+  bids to opportunities. A dedicated bid/apply capability would
+  need to be added to the obolos.tech gateway routes first.
 """
 
 from __future__ import annotations
@@ -49,27 +58,35 @@ class ObolosConnector:
     async def fetch_opportunities(
         self, gateway: Any, *, category: str = "", limit: int = 20,
     ) -> list[Opportunity]:
-        """Fetch marketplace catalog via gateway capability route."""
-        result = await gateway.call_api_via_capability(
+        """Fetch marketplace catalog, then detail for each slug.
+
+        Two-step flow:
+        1. marketplace_catalog_v1 → normalized_response.slugs (list of IDs)
+        2. For each slug: marketplace_api_call_v1 GET → response_json (full listing)
+        """
+        catalog = await gateway.call_api_via_capability(
             capability_id="marketplace_catalog_v1",
             provider_id="obolos.tech",
             resource="",
             method="GET",
-            params={"category": category} if category else {},
+            query_params={"category": category} if category else None,
         )
-        if not result.get("ok"):
+        if not catalog.get("ok"):
             logger.warning(
                 "obolos_catalog_fetch_failed",
-                error=result.get("error", "unknown"),
+                error=catalog.get("error", "unknown"),
             )
             return []
 
-        normalized = result.get("normalized_response", {})
-        apis = normalized.get("apis", [])
+        normalized = catalog.get("normalized_response", {})
+        slugs = normalized.get("slugs", [])
+        if not slugs:
+            logger.info("obolos_catalog_empty")
+            return []
 
         opportunities: list[Opportunity] = []
-        for api in apis[:limit]:
-            opp = self._normalize_api_to_opportunity(api)
+        for slug in slugs[:limit]:
+            opp = await self.fetch_opportunity_detail(gateway, slug)
             if opp:
                 opportunities.append(opp)
 
@@ -79,7 +96,12 @@ class ObolosConnector:
     async def fetch_opportunity_detail(
         self, gateway: Any, platform_id: str,
     ) -> Opportunity | None:
-        """Fetch single API detail via marketplace_api_call capability."""
+        """Fetch single API detail via marketplace_api_call capability.
+
+        Uses response_json (raw provider payload) because the gateway
+        normalizer for this route only returns top_level_keys, not the
+        full listing object.
+        """
         result = await gateway.call_api_via_capability(
             capability_id="marketplace_api_call_v1",
             provider_id="obolos.tech",
@@ -89,8 +111,9 @@ class ObolosConnector:
         if not result.get("ok"):
             return None
 
-        normalized = result.get("normalized_response", {})
-        return self._normalize_api_to_opportunity(normalized, platform_id=platform_id)
+        # Use raw response_json — normalized_response only has top_level_keys
+        raw = result.get("response_json", {})
+        return self._normalize_api_to_opportunity(raw, platform_id=platform_id)
 
     def evaluate_opportunity(
         self, opportunity: Opportunity, agent_capabilities: list[str],
@@ -102,9 +125,7 @@ class ObolosConnector:
         matched = required & caps
         missing = required - caps
 
-        # Heuristic: if most required skills match, it's feasible
         if not required:
-            # No explicit requirements — check category
             verdict = FeasibilityVerdict.PARTIAL
             confidence = 0.5
             reasoning = "No explicit skill requirements listed; manual review recommended."
@@ -136,7 +157,6 @@ class ObolosConnector:
         """Draft a bid for a feasible opportunity."""
         price = opportunity.budget_min or 0.0
         if opportunity.budget_max > 0:
-            # Bid at 80% of max to be competitive
             price = round(opportunity.budget_max * 0.8, 2)
 
         proposal = (
@@ -158,26 +178,20 @@ class ObolosConnector:
     async def submit_bid(
         self, gateway: Any, bid: Bid,
     ) -> dict[str, Any]:
-        """Submit bid via seller_publish capability."""
-        result = await gateway.call_api_via_capability(
-            capability_id="seller_publish_v1",
-            provider_id="obolos.tech",
-            resource="",
-            method="POST",
-            payload={
-                "name": bid.title,
-                "description": bid.proposal_text,
-                "price": bid.price_usd,
-                "opportunity_id": bid.opportunity_id,
-            },
-        )
-        if result.get("ok"):
-            bid.status = BidStatus.SUBMITTED
-            logger.info("obolos_bid_submitted", bid_id=bid.id, opportunity=bid.opportunity_id)
-        else:
-            logger.warning("obolos_bid_submit_failed", error=result.get("error", ""))
+        """NOT SUPPORTED in Phase 1.
 
-        return result
+        seller_publish_v1 registers seller APIs on the marketplace.
+        It does not submit bids/applications to existing opportunities.
+        A dedicated bid capability route would need to be added first.
+        """
+        return {
+            "ok": False,
+            "error": (
+                "Bid submission is not yet supported for obolos.tech. "
+                "The existing seller_publish_v1 capability registers seller APIs, "
+                "not opportunity bids. A dedicated bid/apply route is needed."
+            ),
+        }
 
     # ─── Internal normalization ───
 
@@ -192,13 +206,11 @@ class ObolosConnector:
         title = api.get("name") or api.get("title") or slug
         description = api.get("description", "")
 
-        # Extract pricing
         price = api.get("price", 0)
         price_obj = api.get("pricing", {})
         if isinstance(price_obj, dict):
             price = price_obj.get("per_call", price_obj.get("price", price))
 
-        # Extract tags/skills
         tags = api.get("tags", []) or api.get("categories", [])
         if isinstance(tags, str):
             tags = [t.strip() for t in tags.split(",") if t.strip()]

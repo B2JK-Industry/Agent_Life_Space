@@ -2060,15 +2060,15 @@ class TelegramHandler:
             if ev.verdict.value == "infeasible":
                 return f"Opportunity is infeasible: {ev.reasoning}"
             bid = mkt.prepare_bid(opp, ev)
+            await mkt._persist_bid(bid)
             lines = [
                 f"*Bid draft:* {bid.title}",
                 f"Price: ${bid.price_usd:.2f}",
                 f"Status: {bid.status.value}",
                 f"\n{bid.proposal_text}",
-                f"\n`/marketplace submit {bid.id}` to send (requires approval)",
+                "\n_Bid submission is not yet supported — "
+                "a dedicated bid/apply capability route is needed on the platform side._",
             ]
-            # Persist draft
-            await mkt._persist_bid(bid)
             return "\n".join(lines)
 
         # /marketplace list

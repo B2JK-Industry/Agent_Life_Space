@@ -334,3 +334,196 @@ class TestMarketplaceService:
         assert fetched is not None
         assert fetched.title == "Persist Test"
         await svc2.close()
+
+
+# ─────────────────────────────────────────────
+# Gateway contract behavior tests
+# ─────────────────────────────────────────────
+
+
+class TestObolosConnectorGatewayContract:
+    """Verify connector uses correct gateway keyword arguments."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_opportunities_uses_query_params(self):
+        """fetch_opportunities must pass query_params, not params."""
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"slugs": ["slug-1"]},
+            "response_json": {},
+        }
+        # Detail call for slug-1
+        gateway.call_api_via_capability.side_effect = [
+            # First call: catalog
+            {
+                "ok": True,
+                "normalized_response": {"slugs": ["slug-1"]},
+            },
+            # Second call: detail for slug-1
+            {
+                "ok": True,
+                "response_json": {"slug": "slug-1", "name": "Test API", "tags": ["api"]},
+            },
+        ]
+
+        c = ObolosConnector()
+        await c.fetch_opportunities(gateway, category="test", limit=5)
+
+        # First call: catalog
+        first_call = gateway.call_api_via_capability.call_args_list[0]
+        assert "query_params" in first_call.kwargs
+        assert "params" not in first_call.kwargs
+
+    @pytest.mark.asyncio
+    async def test_fetch_opportunity_detail_reads_response_json(self):
+        """Detail fetch must use response_json, not normalized_response."""
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "response_json": {
+                "slug": "my-api",
+                "name": "My API",
+                "description": "Does things",
+                "price": 25,
+                "tags": ["python"],
+            },
+            "normalized_response": {
+                "kind": "marketplace_api_call",
+                "top_level_keys": ["slug", "name"],
+            },
+        }
+
+        c = ObolosConnector()
+        opp = await c.fetch_opportunity_detail(gateway, "my-api")
+
+        assert opp is not None
+        assert opp.title == "My API"
+        assert opp.budget_min == 25.0
+        assert opp.skills_required == ["python"]
+
+    @pytest.mark.asyncio
+    async def test_submit_bid_returns_not_supported(self):
+        """Phase 1: submit_bid must honestly refuse."""
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        c = ObolosConnector()
+        bid = Bid(opportunity_id="opp-1", platform="obolos.tech", price_usd=10.0)
+
+        result = await c.submit_bid(gateway, bid)
+        assert result["ok"] is False
+        assert "not yet supported" in result["error"].lower()
+        # Gateway must NOT be called
+        gateway.call_api_via_capability.assert_not_called()
+
+
+class TestDiscoveryTwoStepFlow:
+    """Discovery must: catalog → slugs → detail for each."""
+
+    @pytest.mark.asyncio
+    async def test_catalog_slugs_then_detail(self):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.side_effect = [
+            # Catalog returns slugs
+            {"ok": True, "normalized_response": {"slugs": ["a", "b"]}},
+            # Detail for "a"
+            {"ok": True, "response_json": {"slug": "a", "name": "API A", "tags": ["python"]}},
+            # Detail for "b"
+            {"ok": True, "response_json": {"slug": "b", "name": "API B", "price": 10}},
+        ]
+
+        c = ObolosConnector()
+        opps = await c.fetch_opportunities(gateway, limit=10)
+
+        assert len(opps) == 2
+        assert opps[0].title == "API A"
+        assert opps[0].platform_id == "a"
+        assert opps[1].title == "API B"
+        assert opps[1].budget_min == 10.0
+
+        # 3 calls: 1 catalog + 2 details
+        assert gateway.call_api_via_capability.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_empty_catalog_returns_empty(self):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"slugs": []},
+        }
+
+        c = ObolosConnector()
+        opps = await c.fetch_opportunities(gateway)
+        assert opps == []
+        assert gateway.call_api_via_capability.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_catalog_failure_returns_empty(self):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": False,
+            "error": "network timeout",
+        }
+
+        c = ObolosConnector()
+        opps = await c.fetch_opportunities(gateway)
+        assert opps == []
+
+    @pytest.mark.asyncio
+    async def test_detail_failure_skips_slug(self):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.side_effect = [
+            {"ok": True, "normalized_response": {"slugs": ["good", "bad"]}},
+            {"ok": True, "response_json": {"slug": "good", "name": "Good API"}},
+            {"ok": False, "error": "not found"},
+        ]
+
+        c = ObolosConnector()
+        opps = await c.fetch_opportunities(gateway, limit=10)
+        assert len(opps) == 1
+        assert opps[0].platform_id == "good"
+
+
+class TestMarketplaceUXTruth:
+    """Telegram surface must not advertise commands that do not exist."""
+
+    def test_bid_handler_does_not_advertise_submit(self):
+        """The bid output must not reference /marketplace submit."""
+        import inspect
+
+        from agent.social.telegram_handler import TelegramHandler
+        source = inspect.getsource(TelegramHandler._cmd_marketplace)
+        # Must NOT contain submit as a command hint
+        assert "/marketplace submit" not in source
+
+    def test_list_handler_does_not_advertise_submit(self):
+        """The list/help output must not reference /marketplace submit."""
+        import inspect
+
+        from agent.social.telegram_handler import TelegramHandler
+        source = inspect.getsource(TelegramHandler._cmd_marketplace)
+        # Count how many times "submit" appears as a command
+        lines = source.split("\n")
+        submit_commands = [line for line in lines if "/marketplace submit" in line]
+        assert len(submit_commands) == 0
+
+    def test_bid_output_mentions_not_supported(self):
+        """Bid output must clearly state submission is not yet supported."""
+        import inspect
+
+        from agent.social.telegram_handler import TelegramHandler
+        source = inspect.getsource(TelegramHandler._cmd_marketplace)
+        assert "not yet supported" in source.lower()
