@@ -650,7 +650,10 @@ class BuildService:
                 workspace_id=job.workspace_id,
                 metadata=verification_plan,
             )
-            _verify_timeout = int(os.environ.get("AGENT_VERIFY_TIMEOUT", "120"))
+            try:
+                _verify_timeout = int(os.environ.get("AGENT_VERIFY_TIMEOUT", "120"))
+            except (ValueError, TypeError):
+                _verify_timeout = 120
             results = run_verification_suite(
                 workspace_path=workspace_path,
                 steps=verification_steps,

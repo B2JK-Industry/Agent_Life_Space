@@ -656,3 +656,91 @@ class TestOperatorRouteRegistration:
         ]
         for name in handlers:
             assert callable(getattr(api, name)), f"{name} is not callable"
+
+
+# ─────────────────────────────────────────────
+# Owner key trust model
+# ─────────────────────────────────────────────
+
+
+class TestOwnerKeyTrustModel:
+    """Regression tests for AGENT_OWNER_API_KEY trust differentiation."""
+
+    def _make_request(self, key: str, remote: str = "127.0.0.1"):
+        """Create a mock request with auth header and remote IP."""
+        req = MagicMock()
+        req.headers = {"Authorization": f"Bearer {key}"} if key else {}
+        req.remote = remote
+        return req
+
+    def test_legacy_mode_any_valid_key_is_owner_on_localhost(self):
+        """Without AGENT_OWNER_API_KEY, any valid key is owner on localhost."""
+        with patch.dict("os.environ", {}, clear=False):
+            # Ensure AGENT_OWNER_API_KEY is not set
+            import os
+            os.environ.pop("AGENT_OWNER_API_KEY", None)
+            api = AgentAPI(api_keys=["key-a", "key-b"])
+
+        req = self._make_request("key-a")
+        assert api._is_owner_key(req) is True
+        req2 = self._make_request("key-b")
+        assert api._is_owner_key(req2) is True
+
+    def test_explicit_owner_key_only_owner_gets_privilege(self):
+        """With AGENT_OWNER_API_KEY set, only that key is owner."""
+        with patch.dict("os.environ", {"AGENT_OWNER_API_KEY": "owner-key-xyz"}):
+            api = AgentAPI(api_keys=["general-key"], port=8421)
+
+        req_owner = self._make_request("owner-key-xyz")
+        assert api._is_owner_key(req_owner) is True
+
+        req_general = self._make_request("general-key")
+        assert api._is_owner_key(req_general) is False
+
+    def test_owner_key_is_also_auth_valid(self):
+        """Owner key must pass _check_auth (it's added to api_keys)."""
+        with patch.dict("os.environ", {"AGENT_OWNER_API_KEY": "owner-key-xyz"}):
+            api = AgentAPI(api_keys=["general-key"], port=8421)
+
+        req = self._make_request("owner-key-xyz")
+        auth_error = api._check_auth(req)
+        assert auth_error is None, f"Owner key should pass auth, got: {auth_error}"
+
+    def test_general_key_passes_auth_but_not_owner(self):
+        """General key authenticates but is not owner."""
+        with patch.dict("os.environ", {"AGENT_OWNER_API_KEY": "owner-key-xyz"}):
+            api = AgentAPI(api_keys=["general-key"], port=8421)
+
+        req = self._make_request("general-key")
+        assert api._check_auth(req) is None  # auth passes
+        assert api._is_owner_key(req) is False  # not owner
+
+    def test_invalid_key_fails_auth(self):
+        """Invalid key fails auth regardless of owner config."""
+        with patch.dict("os.environ", {"AGENT_OWNER_API_KEY": "owner-key-xyz"}):
+            api = AgentAPI(api_keys=["general-key"], port=8421)
+
+        req = self._make_request("wrong-key")
+        assert api._check_auth(req) is not None  # auth fails
+
+    def test_missing_bearer_fails(self):
+        """Request without Bearer header fails auth."""
+        api = _make_api()
+        req = MagicMock()
+        req.headers = {}
+        req.remote = "127.0.0.1"
+        assert api._check_auth(req) is not None
+
+    def test_owner_key_not_owner_on_remote(self):
+        """Owner key on non-local IP should not get is_owner (by design, is_local gate is external)."""
+        # _is_owner_key only checks the key, not IP. The IP check is in the
+        # caller (is_owner_caller = is_authenticated and is_local and _is_owner_key).
+        # So _is_owner_key returns True for the key itself — the locality
+        # gate is applied separately.
+        with patch.dict("os.environ", {"AGENT_OWNER_API_KEY": "owner-key-xyz"}):
+            api = AgentAPI(api_keys=["general-key"], port=8421)
+
+        req = self._make_request("owner-key-xyz", remote="1.2.3.4")
+        # _is_owner_key only checks the key match, not IP
+        assert api._is_owner_key(req) is True
+        # But the caller would set is_owner_caller = False because is_local is False

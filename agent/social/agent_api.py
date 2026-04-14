@@ -142,6 +142,8 @@ class AgentAPI:
         # Owner key — if set, only this key gets owner=True on localhost.
         # If unset, any valid API key on localhost gets owner (legacy mode).
         self._owner_api_key: str = os.environ.get("AGENT_OWNER_API_KEY", "")
+        if self._owner_api_key:
+            self._api_keys.add(self._owner_api_key)
         # Rate limiting
         self._request_times: dict[str, list[float]] = defaultdict(list)
         # Audit + telemetry

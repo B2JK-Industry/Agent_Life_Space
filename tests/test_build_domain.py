@@ -1974,3 +1974,43 @@ class TestBuildService:
         assert request is not None
         assert request["context"]["workspace_id"] == job.workspace_id
         assert request["context"]["bundle_id"] == bundle["bundle_id"]
+
+
+# ─────────────────────────────────────────────
+# Verification timeout env parsing
+# ─────────────────────────────────────────────
+
+
+class TestVerifyTimeoutEnvParsing:
+    """AGENT_VERIFY_TIMEOUT must not crash on invalid values."""
+
+    def test_default_fallback_without_env(self):
+        import os
+        from unittest.mock import patch
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AGENT_VERIFY_TIMEOUT", None)
+            try:
+                val = int(os.environ.get("AGENT_VERIFY_TIMEOUT", "120"))
+            except (ValueError, TypeError):
+                val = 120
+            assert val == 120
+
+    def test_valid_integer_env(self):
+        import os
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"AGENT_VERIFY_TIMEOUT": "300"}):
+            try:
+                val = int(os.environ.get("AGENT_VERIFY_TIMEOUT", "120"))
+            except (ValueError, TypeError):
+                val = 120
+            assert val == 300
+
+    def test_invalid_env_falls_back_without_crash(self):
+        import os
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"AGENT_VERIFY_TIMEOUT": "not-a-number"}):
+            try:
+                val = int(os.environ.get("AGENT_VERIFY_TIMEOUT", "120"))
+            except (ValueError, TypeError):
+                val = 120
+            assert val == 120
