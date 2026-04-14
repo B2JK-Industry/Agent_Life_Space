@@ -178,9 +178,11 @@ class MarketplaceService:
     async def submit_bid(self, bid: Bid) -> dict[str, Any]:
         """Submit bid to platform. Approval-gated, persisted, audited.
 
-        Flow:
+        State machine:
         - DRAFT + approval_queue → propose approval, bid → READY
-        - READY (already approved) → execute gateway call
+        - READY + approval pending → return "still pending"
+        - READY + approval granted → execute gateway call → SUBMITTED
+        - READY + approval denied/expired → FAILED
         - DRAFT + no approval_queue → execute directly
         - SUBMITTED → reject (already done)
         """
@@ -195,7 +197,44 @@ class MarketplaceService:
         if not opportunity:
             return {"ok": False, "error": f"Opportunity {bid.opportunity_id} not found."}
 
-        # If bid is DRAFT and approval queue exists, propose (don't execute yet)
+        # ── READY: check approval outcome before acting ──
+        if bid.status == BidStatus.READY and self._approval_queue:
+            approval_id = bid.metadata.get("approval_id", "")
+            if not approval_id:
+                # Lost approval linkage — re-propose
+                bid.status = BidStatus.DRAFT
+            else:
+                req = self._approval_queue.get_request(approval_id)
+                if req is None:
+                    # Approval record gone — re-propose
+                    bid.status = BidStatus.DRAFT
+                else:
+                    status = req.get("status", "")
+                    if status in ("approved", "executed"):
+                        # Approved → fall through to execution below
+                        pass
+                    elif status in ("denied",):
+                        bid.status = BidStatus.FAILED
+                        await self._persist_bid(bid)
+                        return {
+                            "ok": False,
+                            "error": f"Approval denied: {req.get('denial_reason', 'no reason given')}",
+                        }
+                    elif status in ("expired",):
+                        bid.status = BidStatus.FAILED
+                        await self._persist_bid(bid)
+                        return {"ok": False, "error": "Approval expired. Re-draft and resubmit."}
+                    else:
+                        # Still pending
+                        return {
+                            "ok": False,
+                            "pending_approval": True,
+                            "approval_id": approval_id,
+                            "message": f"Approval still pending (`{approval_id}`). "
+                                       f"Use `/queue approve {approval_id}` to approve.",
+                        }
+
+        # ── DRAFT: propose new approval if queue exists ──
         if bid.status == BidStatus.DRAFT and self._approval_queue:
             from agent.core.approval import ApprovalCategory
             proposal = self._approval_queue.propose(
@@ -216,8 +255,7 @@ class MarketplaceService:
                 "message": f"Bid requires approval. Use `/queue approve {proposal.id}`",
             }
 
-        # READY or DRAFT (no queue) → execute actual gateway submission
-        # Use listing-specific route if the opportunity is a work listing
+        # ── Execute: READY+approved or DRAFT without queue ──
         if hasattr(connector, "submit_listing_bid") and "/listings/" in (opportunity.url or ""):
             result = await connector.submit_listing_bid(
                 self._gateway, opportunity.platform_id, bid,
@@ -228,6 +266,10 @@ class MarketplaceService:
             bid.status = BidStatus.SUBMITTED
             opportunity.status = OpportunityStatus.SUBMITTED
             await self._persist_opportunity(opportunity)
+            # Mark approval as executed if applicable
+            approval_id = bid.metadata.get("approval_id", "")
+            if approval_id and self._approval_queue:
+                self._approval_queue.mark_executed(approval_id)
         else:
             bid.status = BidStatus.FAILED
         await self._persist_bid(bid)

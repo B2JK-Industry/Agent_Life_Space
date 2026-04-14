@@ -956,15 +956,23 @@ class TestMarketplaceTelegramBehavior:
 
 
 class TestApprovalExecuteGap:
-    """Bid READY after approval should execute, not re-propose."""
+    """Full approval→execute flow must work without repeated approvals."""
 
     @pytest.mark.asyncio
-    async def test_ready_bid_executes_without_new_approval(self, tmp_path: Path):
+    async def test_full_draft_approve_execute_flow(self, tmp_path: Path):
+        """DRAFT → propose → READY → approve → submit again → SUBMITTED."""
         from unittest.mock import AsyncMock, MagicMock
 
         gateway = AsyncMock()
         gateway.call_api_via_capability.return_value = {"ok": True}
+
+        # Real-ish approval queue mock
         approval = MagicMock()
+        proposal = MagicMock()
+        proposal.id = "ap-001"
+        approval.propose.return_value = proposal
+        # After approval: get_request returns approved status
+        approval.get_request.return_value = {"status": "approved", "id": "ap-001"}
 
         svc = MarketplaceService(
             gateway=gateway, approval_queue=approval,
@@ -973,32 +981,72 @@ class TestApprovalExecuteGap:
         svc.registry.register(ObolosConnector())
         await svc.initialize()
 
-        opp = Opportunity(title="Approved", platform="obolos.tech", platform_id="s1")
+        opp = Opportunity(title="E2E", platform="obolos.tech", platform_id="slug-e2e")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=25.0, title="E2E Bid")
+        await svc._persist_bid(bid)
+
+        # Step 1: DRAFT → propose approval → READY
+        r1 = await svc.submit_bid(bid)
+        assert r1.get("pending_approval") is True
+        assert r1["approval_id"] == "ap-001"
+        reloaded = await svc.get_bid(bid.id)
+        assert reloaded.status == BidStatus.READY
+        assert reloaded.metadata["approval_id"] == "ap-001"
+        gateway.call_api_via_capability.assert_not_called()
+
+        # Step 2: READY + approved → execute gateway call → SUBMITTED
+        r2 = await svc.submit_bid(reloaded)
+        assert r2.get("ok") is True
+        approval.propose.assert_called_once()  # Only one proposal total
+        gateway.call_api_via_capability.assert_called_once()  # Gateway called exactly once
+
+        final = await svc.get_bid(bid.id)
+        assert final.status == BidStatus.SUBMITTED
+        approval.mark_executed.assert_called_once_with("ap-001")
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_pending_approval_does_not_execute(self, tmp_path: Path):
+        """READY + still pending → no gateway call, return pending."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        gateway = AsyncMock()
+        approval = MagicMock()
+        approval.get_request.return_value = {"status": "pending", "id": "ap-002"}
+
+        svc = MarketplaceService(
+            gateway=gateway, approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Pending", platform="obolos.tech", platform_id="slug-p")
         await svc._persist_opportunity(opp)
         bid = Bid(
             opportunity_id=opp.id, platform="obolos.tech",
-            status=BidStatus.READY, price_usd=10.0,
-            title="Ready Bid",
+            status=BidStatus.READY, metadata={"approval_id": "ap-002"},
         )
         await svc._persist_bid(bid)
 
         result = await svc.submit_bid(bid)
-        # Must execute, not propose again
-        assert result.get("ok") is True
-        approval.propose.assert_not_called()  # No new approval!
-        gateway.call_api_via_capability.assert_called_once()
+        assert result.get("pending_approval") is True
+        assert "still pending" in result.get("message", "").lower()
+        gateway.call_api_via_capability.assert_not_called()
+        approval.propose.assert_not_called()  # No duplicate proposal
         await svc.close()
 
     @pytest.mark.asyncio
-    async def test_draft_with_queue_proposes_then_ready_executes(self, tmp_path: Path):
+    async def test_denied_approval_fails_bid(self, tmp_path: Path):
+        """READY + denied → bid FAILED, clear error."""
         from unittest.mock import AsyncMock, MagicMock
 
         gateway = AsyncMock()
-        gateway.call_api_via_capability.return_value = {"ok": True}
         approval = MagicMock()
-        proposal = MagicMock()
-        proposal.id = "ap-123"
-        approval.propose.return_value = proposal
+        approval.get_request.return_value = {
+            "status": "denied", "denial_reason": "too expensive",
+        }
 
         svc = MarketplaceService(
             gateway=gateway, approval_queue=approval,
@@ -1007,21 +1055,79 @@ class TestApprovalExecuteGap:
         svc.registry.register(ObolosConnector())
         await svc.initialize()
 
-        opp = Opportunity(title="Flow", platform="obolos.tech", platform_id="s2")
+        opp = Opportunity(title="Denied", platform="obolos.tech", platform_id="slug-d")
         await svc._persist_opportunity(opp)
-        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=20.0)
+        bid = Bid(
+            opportunity_id=opp.id, platform="obolos.tech",
+            status=BidStatus.READY, metadata={"approval_id": "ap-003"},
+        )
         await svc._persist_bid(bid)
 
-        # Step 1: DRAFT → proposes approval → READY
-        r1 = await svc.submit_bid(bid)
-        assert r1.get("pending_approval") is True
+        result = await svc.submit_bid(bid)
+        assert result["ok"] is False
+        assert "denied" in result["error"].lower()
         reloaded = await svc.get_bid(bid.id)
-        assert reloaded.status == BidStatus.READY
+        assert reloaded.status == BidStatus.FAILED
+        gateway.call_api_via_capability.assert_not_called()
+        await svc.close()
 
-        # Step 2: READY → executes gateway call
-        r2 = await svc.submit_bid(reloaded)
-        assert r2.get("ok") is True
+    @pytest.mark.asyncio
+    async def test_expired_approval_fails_bid(self, tmp_path: Path):
+        """READY + expired → bid FAILED."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        gateway = AsyncMock()
+        approval = MagicMock()
+        approval.get_request.return_value = {"status": "expired"}
+
+        svc = MarketplaceService(
+            gateway=gateway, approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Expired", platform="obolos.tech", platform_id="slug-e")
+        await svc._persist_opportunity(opp)
+        bid = Bid(
+            opportunity_id=opp.id, platform="obolos.tech",
+            status=BidStatus.READY, metadata={"approval_id": "ap-004"},
+        )
+        await svc._persist_bid(bid)
+
+        result = await svc.submit_bid(bid)
+        assert result["ok"] is False
+        assert "expired" in result["error"].lower()
+        reloaded = await svc.get_bid(bid.id)
+        assert reloaded.status == BidStatus.FAILED
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_no_approval_queue_executes_directly(self, tmp_path: Path):
+        """DRAFT + no approval queue → execute directly, no proposal."""
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True}
+
+        svc = MarketplaceService(
+            gateway=gateway, approval_queue=None,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Direct", platform="obolos.tech", platform_id="slug-dir")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=10.0)
+        await svc._persist_bid(bid)
+
+        result = await svc.submit_bid(bid)
+        assert result["ok"] is True
         gateway.call_api_via_capability.assert_called_once()
+
+        reloaded = await svc.get_bid(bid.id)
+        assert reloaded.status == BidStatus.SUBMITTED
         await svc.close()
 
 
