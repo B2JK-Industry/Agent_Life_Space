@@ -948,3 +948,302 @@ class TestMarketplaceTelegramBehavior:
         result = await handler._cmd_marketplace(f"bid {opp.id}")
         assert "/marketplace submit" in result
         await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Approval → execute gap fix
+# ─────────────────────────────────────────────
+
+
+class TestApprovalExecuteGap:
+    """Bid READY after approval should execute, not re-propose."""
+
+    @pytest.mark.asyncio
+    async def test_ready_bid_executes_without_new_approval(self, tmp_path: Path):
+        from unittest.mock import AsyncMock, MagicMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True}
+        approval = MagicMock()
+
+        svc = MarketplaceService(
+            gateway=gateway, approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Approved", platform="obolos.tech", platform_id="s1")
+        await svc._persist_opportunity(opp)
+        bid = Bid(
+            opportunity_id=opp.id, platform="obolos.tech",
+            status=BidStatus.READY, price_usd=10.0,
+            title="Ready Bid",
+        )
+        await svc._persist_bid(bid)
+
+        result = await svc.submit_bid(bid)
+        # Must execute, not propose again
+        assert result.get("ok") is True
+        approval.propose.assert_not_called()  # No new approval!
+        gateway.call_api_via_capability.assert_called_once()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_draft_with_queue_proposes_then_ready_executes(self, tmp_path: Path):
+        from unittest.mock import AsyncMock, MagicMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True}
+        approval = MagicMock()
+        proposal = MagicMock()
+        proposal.id = "ap-123"
+        approval.propose.return_value = proposal
+
+        svc = MarketplaceService(
+            gateway=gateway, approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Flow", platform="obolos.tech", platform_id="s2")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=20.0)
+        await svc._persist_bid(bid)
+
+        # Step 1: DRAFT → proposes approval → READY
+        r1 = await svc.submit_bid(bid)
+        assert r1.get("pending_approval") is True
+        reloaded = await svc.get_bid(bid.id)
+        assert reloaded.status == BidStatus.READY
+
+        # Step 2: READY → executes gateway call
+        r2 = await svc.submit_bid(reloaded)
+        assert r2.get("ok") is True
+        gateway.call_api_via_capability.assert_called_once()
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Obolos Listings routes
+# ─────────────────────────────────────────────
+
+
+class TestObolosListingsRoutes:
+    """Route resolution for documented listings endpoints."""
+
+    def test_listings_list_route_exists(self):
+        from agent.control.policy import get_external_capability_route
+        route = get_external_capability_route("obolos_listings_list_primary")
+        assert route is not None
+        assert route.capability_id == "listings_list_v1"
+        assert route.request_mode == "obolos_listings_list_v1"
+
+    def test_listings_detail_route_exists(self):
+        from agent.control.policy import get_external_capability_route
+        route = get_external_capability_route("obolos_listings_detail_primary")
+        assert route is not None
+        assert route.capability_id == "listings_detail_v1"
+
+    def test_listings_bid_route_exists(self):
+        from agent.control.policy import get_external_capability_route
+        route = get_external_capability_route("obolos_listings_bid_primary")
+        assert route is not None
+        assert route.capability_id == "listings_bid_v1"
+
+    def test_jobs_list_route_exists(self):
+        from agent.control.policy import get_external_capability_route
+        route = get_external_capability_route("obolos_jobs_list_primary")
+        assert route is not None
+        assert route.capability_id == "jobs_list_v1"
+
+    def test_jobs_detail_route_exists(self):
+        from agent.control.policy import get_external_capability_route
+        route = get_external_capability_route("obolos_jobs_detail_primary")
+        assert route is not None
+
+    def test_jobs_submit_route_exists(self):
+        from agent.control.policy import get_external_capability_route
+        route = get_external_capability_route("obolos_jobs_submit_primary")
+        assert route is not None
+        assert route.capability_id == "jobs_submit_v1"
+
+
+class TestObolosConnectorListings:
+    """Connector listings/jobs methods against mock gateway."""
+
+    @pytest.mark.asyncio
+    async def test_list_listings(self):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {
+                "listings": [
+                    {"id": "L1", "title": "Build an API", "budget": 100, "skills": ["python"]},
+                    {"id": "L2", "title": "Review code", "budget": 50},
+                ],
+            },
+        }
+        c = ObolosConnector()
+        opps = await c.list_listings(gateway, limit=10)
+        assert len(opps) == 2
+        assert opps[0].platform_id == "L1"
+        assert opps[0].title == "Build an API"
+        assert opps[1].platform_id == "L2"
+
+        call_kwargs = gateway.call_api_via_capability.call_args.kwargs
+        assert call_kwargs["capability_id"] == "listings_list_v1"
+
+    @pytest.mark.asyncio
+    async def test_get_listing_detail(self):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {
+                "listing": {
+                    "id": "L1", "title": "Build API", "description": "Need Python API",
+                    "budget": 200, "skills": ["python", "api"],
+                },
+            },
+        }
+        c = ObolosConnector()
+        opp = await c.get_listing(gateway, "L1")
+        assert opp is not None
+        assert opp.title == "Build API"
+        assert opp.budget_max == 200.0
+
+    @pytest.mark.asyncio
+    async def test_submit_listing_bid(self):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"bid_id": "B123", "status": "pending"},
+        }
+        c = ObolosConnector()
+        bid = Bid(opportunity_id="L1", platform="obolos.tech", price_usd=80.0,
+                  proposal_text="I can do this", delivery_days=3)
+
+        result = await c.submit_listing_bid(gateway, "L1", bid)
+        assert result["ok"] is True
+        assert bid.status == BidStatus.SUBMITTED
+        assert bid.metadata.get("platform_bid_id") == "B123"
+
+        call_kwargs = gateway.call_api_via_capability.call_args.kwargs
+        assert call_kwargs["capability_id"] == "listings_bid_v1"
+        assert call_kwargs["resource"] == "L1"
+        assert call_kwargs["json_payload"]["price"] == 80.0
+
+    @pytest.mark.asyncio
+    async def test_list_jobs(self):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {
+                "jobs": [
+                    {"id": "J1", "title": "Build API", "status": "funded"},
+                    {"id": "J2", "title": "Review code", "status": "completed"},
+                ],
+            },
+        }
+        c = ObolosConnector()
+        jobs = await c.list_jobs(gateway, limit=10)
+        assert len(jobs) == 2
+        assert jobs[0]["id"] == "J1"
+
+    @pytest.mark.asyncio
+    async def test_get_job_detail(self):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {
+                "job": {"id": "J1", "title": "Build API", "status": "funded", "budget": 200},
+            },
+        }
+        c = ObolosConnector()
+        job = await c.get_job(gateway, "J1")
+        assert job is not None
+        assert job["status"] == "funded"
+
+
+class TestMarketplaceTelegramListingsJobs:
+    """Telegram behavior for listings/jobs commands."""
+
+    def _make_handler(self, marketplace_svc):
+        from unittest.mock import MagicMock
+
+        from agent.social.telegram_handler import TelegramHandler
+        agent = MagicMock()
+        agent.marketplace = marketplace_svc
+        handler = TelegramHandler.__new__(TelegramHandler)
+        handler._agent = agent
+        return handler
+
+    @pytest.mark.asyncio
+    async def test_help_lists_listings_and_jobs(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("unknowncmd")
+        assert "/marketplace listings" in result
+        assert "/marketplace jobs" in result
+        assert "/marketplace job" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_listings_empty(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True, "normalized_response": {"listings": []},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("listings")
+        assert "no work listings" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_listings_with_data(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {
+                "listings": [{"id": "L1", "title": "Build API", "budget": 100}],
+            },
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("listings")
+        assert "Build API" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_jobs_empty(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True, "normalized_response": {"jobs": []},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("jobs")
+        assert "no jobs" in result.lower()
+        await svc.close()

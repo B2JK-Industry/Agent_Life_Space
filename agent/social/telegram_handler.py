@@ -2159,6 +2159,54 @@ class TelegramHandler:
                 f"`/projects {result['project_id']}` for detail"
             )
 
+        # /marketplace listings [platform] — browse work listings
+        if action == "listings":
+            platform = subargs.split()[0] if subargs else "obolos.tech"
+            listings = await mkt.list_listings(platform=platform, limit=10)
+            if not listings:
+                return f"No work listings found on {platform}."
+            lines = [f"*Work listings from {platform}:*\n"]
+            for opp in listings[:10]:
+                budget = f" ({opp.budget_max} {opp.currency})" if opp.budget_max else ""
+                lines.append(f"  • `{opp.id[:8]}` *{opp.title[:55]}*{budget}")
+            lines.append("\n`/marketplace show <id>` | `/marketplace bid <id>`")
+            return "\n".join(lines)
+
+        # /marketplace jobs [platform] — list accepted jobs
+        if action == "jobs":
+            platform = subargs.split()[0] if subargs else "obolos.tech"
+            jobs = await mkt.list_jobs(platform=platform, limit=10)
+            if not jobs:
+                return f"No jobs found on {platform}."
+            lines = [f"*Jobs from {platform}:*\n"]
+            for j in jobs[:10]:
+                jid = str(j.get("id", j.get("_id", "?")))[:12]
+                title = j.get("title", j.get("description", "Untitled"))[:50]
+                status = j.get("status", "unknown")
+                lines.append(f"  • `{jid}` {title} [{status}]")
+            return "\n".join(lines)
+
+        # /marketplace job <id> [platform] — job detail
+        if action == "job" and subargs:
+            tokens = subargs.split()
+            job_id = tokens[0]
+            platform = tokens[1] if len(tokens) > 1 else "obolos.tech"
+            detail = await mkt.get_job_detail(platform, job_id)
+            if not detail:
+                return f"Job `{job_id}` not found on {platform}."
+            lines = [
+                f"*Job:* {detail.get('title', detail.get('description', 'Untitled'))[:80]}",
+                f"ID: `{detail.get('id', detail.get('_id', '?'))}`",
+                f"Status: {detail.get('status', 'unknown')}",
+            ]
+            if detail.get("budget"):
+                lines.append(f"Budget: {detail['budget']}")
+            if detail.get("deadline"):
+                lines.append(f"Deadline: {detail['deadline']}")
+            if detail.get("listing_id"):
+                lines.append(f"From listing: `{detail['listing_id']}`")
+            return "\n".join(lines)
+
         # /marketplace list (default)
         if action == "list" or not action:
             opps = await mkt.list_opportunities(limit=8)
@@ -2188,18 +2236,23 @@ class TelegramHandler:
                 "  `/marketplace bid <id>` — draft bid\n"
                 "  `/marketplace bids` — list drafts\n"
                 "  `/marketplace submit <bid_id>` — send bid (approval-gated)\n"
+                "  `/marketplace listings` — browse work listings\n"
+                "  `/marketplace jobs` — list accepted jobs\n"
                 "  `/marketplace track <id>` — track as project"
             )
             return "\n".join(lines)
 
         return (
             "*Marketplace commands:*\n"
-            "  `/marketplace discover` — fetch opportunities\n"
+            "  `/marketplace discover` — API marketplace\n"
+            "  `/marketplace listings` — work listings\n"
             "  `/marketplace show <id>` — opportunity detail\n"
             "  `/marketplace eval <id>` — assess feasibility\n"
             "  `/marketplace bid <id>` — prepare bid draft\n"
             "  `/marketplace submit <bid_id>` — send bid (approval-gated)\n"
             "  `/marketplace bids` — list bid drafts\n"
+            "  `/marketplace jobs` — accepted jobs\n"
+            "  `/marketplace job <id>` — job detail\n"
             "  `/marketplace track <id>` — track as ALS project\n"
             "  `/marketplace list` — overview"
         )

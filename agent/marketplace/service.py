@@ -176,7 +176,14 @@ class MarketplaceService:
         return bid
 
     async def submit_bid(self, bid: Bid) -> dict[str, Any]:
-        """Submit bid to platform. Approval-gated, persisted, audited."""
+        """Submit bid to platform. Approval-gated, persisted, audited.
+
+        Flow:
+        - DRAFT + approval_queue → propose approval, bid → READY
+        - READY (already approved) → execute gateway call
+        - DRAFT + no approval_queue → execute directly
+        - SUBMITTED → reject (already done)
+        """
         connector = self._registry.get(bid.platform)
         if not connector:
             return {"ok": False, "error": f"No connector for {bid.platform}"}
@@ -184,13 +191,12 @@ class MarketplaceService:
         if bid.status == BidStatus.SUBMITTED:
             return {"ok": False, "error": "Bid already submitted."}
 
-        # Resolve the opportunity (needed for platform_id / slug)
         opportunity = await self.get_opportunity(bid.opportunity_id)
         if not opportunity:
             return {"ok": False, "error": f"Opportunity {bid.opportunity_id} not found."}
 
-        # Gate through approval queue if available
-        if self._approval_queue:
+        # If bid is DRAFT and approval queue exists, propose (don't execute yet)
+        if bid.status == BidStatus.DRAFT and self._approval_queue:
             from agent.core.approval import ApprovalCategory
             proposal = self._approval_queue.propose(
                 category=ApprovalCategory.EXTERNAL,
@@ -201,6 +207,7 @@ class MarketplaceService:
                 context={"bid_id": bid.id, "opportunity_id": bid.opportunity_id},
             )
             bid.status = BidStatus.READY
+            bid.metadata["approval_id"] = proposal.id
             await self._persist_bid(bid)
             return {
                 "ok": False,
@@ -209,9 +216,20 @@ class MarketplaceService:
                 "message": f"Bid requires approval. Use `/queue approve {proposal.id}`",
             }
 
-        result = await connector.submit_bid(self._gateway, bid, opportunity)
+        # READY or DRAFT (no queue) → execute actual gateway submission
+        # Use listing-specific route if the opportunity is a work listing
+        if hasattr(connector, "submit_listing_bid") and "/listings/" in (opportunity.url or ""):
+            result = await connector.submit_listing_bid(
+                self._gateway, opportunity.platform_id, bid,
+            )
+        else:
+            result = await connector.submit_bid(self._gateway, bid, opportunity)
         if result.get("ok"):
             bid.status = BidStatus.SUBMITTED
+            opportunity.status = OpportunityStatus.SUBMITTED
+            await self._persist_opportunity(opportunity)
+        else:
+            bid.status = BidStatus.FAILED
         await self._persist_bid(bid)
         return result
 
@@ -288,6 +306,45 @@ class MarketplaceService:
     async def engage(self, opportunity: Opportunity, bid: Bid) -> dict[str, Any]:
         """Legacy alias for track()."""
         return await self.track(opportunity, bid)
+
+    # ─── Listings / Jobs (delegated to connector) ───
+
+    async def list_listings(self, *, platform: str = "", limit: int = 20) -> list[Opportunity]:
+        """Browse work listings from platform connectors."""
+        all_listings: list[Opportunity] = []
+        connectors = [self._registry.get(platform)] if platform else self._registry.all()
+        for connector in connectors:
+            if connector is None or not hasattr(connector, "list_listings"):
+                continue
+            try:
+                listings = await connector.list_listings(self._gateway, limit=limit)
+                for opp in listings:
+                    await self._persist_opportunity(opp)
+                all_listings.extend(listings)
+            except Exception:
+                logger.warning("marketplace_listings_error", platform=getattr(connector, "platform_id", "?"))
+        return all_listings
+
+    async def list_jobs(self, *, platform: str = "", limit: int = 20) -> list[dict[str, Any]]:
+        """List accepted jobs from platform connectors."""
+        all_jobs: list[dict[str, Any]] = []
+        connectors = [self._registry.get(platform)] if platform else self._registry.all()
+        for connector in connectors:
+            if connector is None or not hasattr(connector, "list_jobs"):
+                continue
+            try:
+                jobs = await connector.list_jobs(self._gateway, limit=limit)
+                all_jobs.extend(jobs)
+            except Exception:
+                logger.warning("marketplace_jobs_error", platform=getattr(connector, "platform_id", "?"))
+        return all_jobs
+
+    async def get_job_detail(self, platform: str, job_id: str) -> dict[str, Any] | None:
+        """Get job detail from a specific platform."""
+        connector = self._registry.get(platform)
+        if not connector or not hasattr(connector, "get_job"):
+            return None
+        return await connector.get_job(self._gateway, job_id)
 
     # ─── Stats ───
 

@@ -1472,6 +1472,68 @@ class ExternalGatewayService:
             if form_data:
                 spec["form_data"] = dict(form_data)
             return spec
+        # ── Obolos Listings routes ──
+        if route.request_mode == "obolos_listings_list_v1":
+            return {
+                "resource": "",
+                "method": "GET",
+                "target_url": f"{target_url.rstrip('/')}/listings",
+                "query_params": dict(query_params),
+                "json_payload": {},
+            }
+        if route.request_mode == "obolos_listings_detail_v1":
+            listing_id = str(resource or "").strip().strip("/")
+            if not listing_id:
+                raise ValueError("Listing detail requires a listing ID.")
+            return {
+                "resource": listing_id,
+                "method": "GET",
+                "target_url": f"{target_url.rstrip('/')}/listings/{listing_id}",
+                "query_params": {},
+                "json_payload": {},
+            }
+        if route.request_mode == "obolos_listings_bid_v1":
+            listing_id = str(resource or "").strip().strip("/")
+            if not listing_id:
+                raise ValueError("Listing bid requires a listing ID.")
+            return {
+                "resource": listing_id,
+                "method": "POST",
+                "target_url": f"{target_url.rstrip('/')}/listings/{listing_id}/bid",
+                "query_params": {},
+                "json_payload": dict(json_payload),
+            }
+        # ── Obolos Jobs routes ──
+        if route.request_mode == "obolos_jobs_list_v1":
+            return {
+                "resource": "",
+                "method": "GET",
+                "target_url": f"{target_url.rstrip('/')}/jobs",
+                "query_params": dict(query_params),
+                "json_payload": {},
+            }
+        if route.request_mode == "obolos_jobs_detail_v1":
+            job_id = str(resource or "").strip().strip("/")
+            if not job_id:
+                raise ValueError("Job detail requires a job ID.")
+            return {
+                "resource": job_id,
+                "method": "GET",
+                "target_url": f"{target_url.rstrip('/')}/jobs/{job_id}",
+                "query_params": {},
+                "json_payload": {},
+            }
+        if route.request_mode == "obolos_jobs_submit_v1":
+            job_id = str(resource or "").strip().strip("/")
+            if not job_id:
+                raise ValueError("Job submit requires a job ID.")
+            return {
+                "resource": job_id,
+                "method": "POST",
+                "target_url": f"{target_url.rstrip('/')}/jobs/{job_id}/submit",
+                "query_params": {},
+                "json_payload": dict(json_payload),
+            }
         # Default: pass through form_data if provided
         spec = {
             "method": normalized_method or ("POST" if json_payload or form_data else "GET"),
@@ -1542,6 +1604,53 @@ class ExternalGatewayService:
                 "result_id": str(payload.get("id", payload.get("result_id", ""))),
                 "status": str(payload.get("status", "")),
                 "top_level_keys": sorted(payload.keys())[:25],
+            }
+        # ── Obolos Listings response normalization ──
+        if route.response_mode == "obolos_listings_list_v1":
+            listings = payload.get("listings", payload.get("data", []))
+            if not isinstance(listings, list):
+                listings = []
+            return {
+                "kind": "listings_list",
+                "provider_status": "ok",
+                "count": len(listings),
+                "listings": listings[:50],
+            }
+        if route.response_mode == "obolos_listings_detail_v1":
+            return {
+                "kind": "listings_detail",
+                "provider_status": "ok",
+                "listing": payload,
+            }
+        if route.response_mode == "obolos_listings_bid_v1":
+            return {
+                "kind": "listings_bid",
+                "provider_status": "ok",
+                "bid_id": str(payload.get("id", payload.get("bid_id", payload.get("bidId", "")))),
+                "status": str(payload.get("status", "")),
+            }
+        if route.response_mode == "obolos_jobs_list_v1":
+            jobs = payload.get("jobs", payload.get("data", []))
+            if not isinstance(jobs, list):
+                jobs = []
+            return {
+                "kind": "jobs_list",
+                "provider_status": "ok",
+                "count": len(jobs),
+                "jobs": jobs[:50],
+            }
+        if route.response_mode == "obolos_jobs_detail_v1":
+            return {
+                "kind": "jobs_detail",
+                "provider_status": "ok",
+                "job": payload,
+            }
+        if route.response_mode == "obolos_jobs_submit_v1":
+            return {
+                "kind": "jobs_submit",
+                "provider_status": "ok",
+                "status": str(payload.get("status", "")),
+                "submission_id": str(payload.get("id", payload.get("submission_id", ""))),
             }
         return {
             "kind": "external_api_call",
