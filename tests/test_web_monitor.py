@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -26,7 +25,6 @@ from agent.web_monitor.service import (
     diff_snapshots,
     render_report,
 )
-
 
 # ─── Models ───
 

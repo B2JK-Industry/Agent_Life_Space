@@ -55,7 +55,7 @@ class TestEndToEndLogRedaction:
 
     def test_secret_not_written_to_log_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            paths = setup_tiered_logging(tmpdir)
+            setup_tiered_logging(tmpdir)
 
             # Log a message with a secret field
             log = structlog.get_logger("redaction_test")
