@@ -1135,3 +1135,110 @@ class TestBlockingIOProtection:
         from agent.brain.dispatcher import InternalDispatcher
         source = inspect.getsource(InternalDispatcher)
         assert "to_thread(classify_intent" in source
+
+
+# ─────────────────────────────────────────────
+# Truth layer regression tests
+# ─────────────────────────────────────────────
+
+
+class TestProjectInventoryIntent:
+    """PROJECT_INVENTORY must fire for inventory questions."""
+
+    @pytest.mark.parametrize("text", [
+        "aké projekty máš uložené?",
+        "jaké projekty máš?",
+        "koľko projektov máš?",
+        "what projects do you have stored?",
+        "list projects",
+        "ukáž projekty",
+        "čo máš v projekt db?",
+    ])
+    def test_project_inventory_detected(self, text: str) -> None:
+        result = telegram_intents.detect_intent(text)
+        assert result is not None
+        assert result.intent == "project_inventory", f"'{text}' → {result.intent}"
+
+    def test_project_inventory_does_not_match_project_status(self) -> None:
+        result = telegram_intents.detect_intent("aký je stav projektu?")
+        assert result is not None
+        assert result.intent != "project_inventory"
+
+
+class TestWorkflowInventoryIntent:
+    """WORKFLOW_INVENTORY must fire for workflow listing questions."""
+
+    @pytest.mark.parametrize("text", [
+        "aké workflowy máš aktívne?",
+        "koľko workflow máš?",
+        "what workflows do you have?",
+        "list workflows",
+    ])
+    def test_workflow_inventory_detected(self, text: str) -> None:
+        result = telegram_intents.detect_intent(text)
+        assert result is not None
+        assert result.intent == "workflow_inventory", f"'{text}' → {result.intent}"
+
+
+class TestMediumReasoningIntent:
+    """MEDIUM_REASONING must fire for analytical project questions."""
+
+    @pytest.mark.parametrize("text", [
+        "what is still missing for full end-to-end monitoring?",
+        "navrhni phased plán pre web monitoring mvp",
+        "how would you stage a medium project into safe slices?",
+        "how do you keep build execution bounded?",
+        "čo ešte chýba pre monitoring?",
+    ])
+    def test_medium_reasoning_detected(self, text: str) -> None:
+        result = telegram_intents.detect_intent(text)
+        assert result is not None
+        assert result.intent == "medium_reasoning", f"'{text}' → {result.intent}"
+
+
+class TestMemoryTruthRegression:
+    """Memory stats must use correct key from MemoryStore.get_stats()."""
+
+    def test_memory_stats_key_is_total_memories(self) -> None:
+        import inspect
+
+        from agent.memory.store import MemoryStore
+        source = inspect.getsource(MemoryStore.get_stats)
+        assert "total_memories" in source
+
+    def test_handle_project_status_reads_total_memories(self) -> None:
+        import inspect
+
+        source = inspect.getsource(telegram_intents.handle_project_status)
+        assert "total_memories" in source
+
+
+class TestProjectTruthRegression:
+    """Grounded handlers must not claim non-existent features."""
+
+    def test_no_archived_status_in_project_model(self) -> None:
+        from agent.projects.manager import ProjectStatus
+        valid = {s.value for s in ProjectStatus}
+        assert "archived" not in valid
+
+    def test_project_model_has_expected_lifecycle(self) -> None:
+        from agent.projects.manager import ProjectStatus
+        expected = {"idea", "planning", "active", "paused", "completed", "abandoned"}
+        actual = {s.value for s in ProjectStatus}
+        assert actual == expected
+
+    def test_projects_persist_via_sqlite(self) -> None:
+        """ProjectManager uses aiosqlite — confirms persistence across restarts."""
+        import inspect
+
+        from agent.projects.manager import ProjectManager
+        source = inspect.getsource(ProjectManager)
+        assert "aiosqlite" in source
+
+    def test_recurring_workflows_persist_via_control_plane(self) -> None:
+        """RecurringWorkflowManager persists via control plane storage."""
+        import inspect
+
+        from agent.control.recurring import RecurringWorkflowManager
+        source = inspect.getsource(RecurringWorkflowManager)
+        assert "persist" in source.lower() or "save" in source.lower()

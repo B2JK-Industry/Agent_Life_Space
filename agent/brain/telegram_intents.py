@@ -73,6 +73,9 @@ REPO_VERIFICATION = "repo_verification"  # "má repo tests?", "uveď 2 test súb
 PROJECT_DECOMPOSITION = "project_decomposition"  # "čo z toho vieš dnes / čo chýba?"
 WEB_ACCESS_CAPABILITY = "web_access_capability"  # "vieš sa dostať na X?"
 RECURRING_CAPABILITY = "recurring_capability"  # "vieš niečo spúšťať periodicky?"
+PROJECT_INVENTORY = "project_inventory"  # "aké projekty máš uložené?"
+WORKFLOW_INVENTORY = "workflow_inventory"  # "aké workflowy máš aktívne?"
+MEDIUM_REASONING = "medium_reasoning"  # "what is still missing for X?"
 WEATHER_REPORT_SETUP = "weather_report_setup"  # "every morning send me weather in X"
 WEATHER_REPORT_CITY_REPLY = "weather_report_city_reply"  # plain city after follow-up
 
@@ -741,6 +744,34 @@ _RECURRING_CAPABILITY_REGEXES: tuple[re.Pattern[str], ...] = (
     ),
 )
 
+# Project inventory — "aké projekty máš uložené?", "what projects do you have?"
+_PROJECT_INVENTORY_REGEXES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(aké|ake|jaké|jake)\s+(projekty|projects)\s+(máš|mas|mate|mám)", re.IGNORECASE),
+    re.compile(r"\b(koľko|kolko)\s+(projektov|projects)\s+(máš|mas|mate)", re.IGNORECASE),
+    re.compile(r"\b(what|which)\s+projects\s+(do\s+you\s+have|are\s+stored|exist)", re.IGNORECASE),
+    re.compile(r"\b(list|show|ukáž|ukaz|vypíš|vypis)\s+.{0,10}(projekty|projects)\b", re.IGNORECASE),
+    re.compile(r"\bproject\s+(db|database|databáz|databaz|store|inventory)\b", re.IGNORECASE),
+    re.compile(r"\b(čo|co)\s+(máš|mas)\s+.{0,10}(uložen|ulozen|v\s+projekt)", re.IGNORECASE),
+)
+
+# Workflow inventory — "aké workflowy máš aktívne?", "how many workflows?"
+_WORKFLOW_INVENTORY_REGEXES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(aké|ake|jaké|jake)\s+(workflow|workflowy|recurring)", re.IGNORECASE),
+    re.compile(r"\b(koľko|kolko)\s+(workflow|workflowov|recurring)", re.IGNORECASE),
+    re.compile(r"\b(what|which|how\s+many)\s+(workflow|recurring\s+workflow)", re.IGNORECASE),
+    re.compile(r"\b(list|show|ukáž|ukaz|vypíš|vypis)\s+.{0,10}(workflows?|workflowy)\b", re.IGNORECASE),
+)
+
+# Medium-scope reasoning — analytical project questions that should NOT go to build
+_MEDIUM_REASONING_REGEXES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bwhat\s+(is\s+)?(still\s+)?missing\s+(for|to)\b", re.IGNORECASE),
+    re.compile(r"\b(navrhni|suggest|propose)\s+.{0,15}(phased|fázový|fazovy)\s+(plan|plán)\b", re.IGNORECASE),
+    re.compile(r"\bhow\s+(would|do|should)\s+you\s+(stage|decompose|split|slice)\b", re.IGNORECASE),
+    re.compile(r"\bhow\s+(do\s+you|does\s+\w+)\s+keep\s+.{0,20}(bounded|safe|isolated)\b", re.IGNORECASE),
+    re.compile(r"\b(čo|co)\s+(ešte|este)\s+(chýba|chyba|treba)\s+(pre|na|k)\b", re.IGNORECASE),
+    re.compile(r"\b(ako|how)\s+(by\s+si|would\s+you)\s+.{0,20}(rozdelil|split|stage|decompos)", re.IGNORECASE),
+)
+
 # Review request — "sprav review", "urob code review", "review this repo"
 _REVIEW_REQUEST_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(sprav|urob|run|do)\s+.{0,10}review\b", re.IGNORECASE),
@@ -958,6 +989,18 @@ def detect_intent(text: str) -> IntentMatch | None:
     #    because both match "má repo tests?" patterns.
     if _matches_any(stripped, _REPO_VERIFICATION_REGEXES):
         return IntentMatch(intent=REPO_VERIFICATION, payload={})
+
+    # 13.5a. Project inventory — "aké projekty máš?" (more specific than status)
+    if _matches_any(stripped, _PROJECT_INVENTORY_REGEXES):
+        return IntentMatch(intent=PROJECT_INVENTORY, payload={})
+
+    # 13.5b. Workflow inventory — "aké workflowy máš?"
+    if _matches_any(stripped, _WORKFLOW_INVENTORY_REGEXES):
+        return IntentMatch(intent=WORKFLOW_INVENTORY, payload={})
+
+    # 13.5c. Medium-scope reasoning — "what is still missing for X?"
+    if _matches_any(stripped, _MEDIUM_REASONING_REGEXES):
+        return IntentMatch(intent=MEDIUM_REASONING, payload={})
 
     # 13.6. Project status / state questions.
     if _matches_any(stripped, _PROJECT_STATUS_REGEXES):
@@ -1484,10 +1527,11 @@ async def handle_project_status(agent: Any) -> str:
     except Exception:
         parts.append("Runtime: unknown")
 
-    # Memory
+    # Memory (key is "total_memories" in MemoryStore.get_stats)
     try:
         mem = status.get("memory", {})
-        parts.append(f"Memory: {mem.get('total', 0)} entries")
+        mem_count = mem.get("total_memories", mem.get("total", 0))
+        parts.append(f"Memory: {mem_count} entries (persisted)")
     except Exception:
         pass
 
@@ -1583,6 +1627,116 @@ def handle_recurring_capability() -> str:
     )
 
 
+async def handle_project_inventory(agent: Any) -> str:
+    """List stored projects from the real ProjectManager DB."""
+    try:
+        projects = await agent.projects.list_projects()
+    except Exception:
+        return "Could not read project database."
+
+    if not projects:
+        return (
+            "No projects stored. The project database is empty.\n"
+            "Create one: `/projects create <name> --description ...`"
+        )
+
+    by_status: dict[str, list[str]] = {}
+    for p in projects:
+        by_status.setdefault(p.status.value, []).append(p.name)
+
+    parts = [f"*Stored projects: {len(projects)}*\n"]
+    _emoji = {"idea": "💡", "planning": "📝", "active": "🔨",
+              "paused": "⏸", "completed": "✅", "abandoned": "❌"}
+    for status_val, names in by_status.items():
+        emoji = _emoji.get(status_val, "❓")
+        parts.append(f"{emoji} *{status_val}* ({len(names)}): {', '.join(names[:5])}")
+    parts.append("\nAll projects persist across restarts (SQLite).")
+    parts.append("`/projects <id>` for detail | `/projects link <id> <job_id>` to link jobs")
+    return "\n".join(parts)
+
+
+def handle_workflow_inventory(agent: Any) -> str:
+    """List stored recurring workflows from the real manager."""
+    try:
+        if not hasattr(agent, "recurring_workflows"):
+            return "Recurring workflow system is not initialized."
+        workflows = agent.recurring_workflows.list_workflows()
+    except Exception:
+        return "Could not read workflow store."
+
+    if not workflows:
+        return (
+            "No recurring workflows stored.\n"
+            "Create one: `/workflow create <name> --schedule daily --type review --repo .`"
+        )
+
+    parts = [f"*Stored recurring workflows: {len(workflows)}*\n"]
+    _status_mark = {"active": "▶", "paused": "⏸", "failed": "✗"}
+    for w in workflows[:10]:
+        mark = _status_mark.get(w.status, "?")
+        parts.append(f"{mark} *{w.name}* — {w.schedule}, {w.run_count} runs")
+    parts.append("\nAll workflows persist across restarts (SQLite).")
+    parts.append("`/workflow` to manage")
+    return "\n".join(parts)
+
+
+def handle_medium_reasoning(agent: Any) -> str:
+    """Lightweight structured answer for medium-scope analytical questions.
+
+    Reads live agent status to ground the answer in reality, then returns
+    a structured implemented/partial/missing breakdown. Zero LLM cost.
+    """
+    try:
+        status = agent.get_status()
+    except Exception:
+        status = {}
+
+    build = status.get("build", {})
+    review = status.get("review", {})
+    mem = status.get("memory", {})
+
+    implemented = [
+        "Core runtime, agent loop, watchdog",
+        f"Memory store ({mem.get('total_memories', '?')} persisted entries)",
+        f"Build pipeline ({build.get('total_jobs', 0)} historical jobs)",
+        f"Review pipeline ({review.get('total_jobs', 0)} historical jobs)",
+        "Web access (fetch, scrape, search)",
+        "Web monitoring (extract → filter → snapshot → diff → report)",
+        "Project tracking (create, lifecycle, job linkage, SQLite-persisted)",
+        "Recurring workflows (cron-polled, configurable schedule)",
+        "Finance ledger (propose → approve → cost tracking)",
+        "Approval queue with human-in-the-loop gate",
+        "Self-update (git pull, fail-closed, owner-only)",
+        "Telegram + Agent API channels",
+        "Tiered logging with secret redaction",
+    ]
+
+    partial = [
+        "Proactive Telegram delivery (cron foundation exists, not end-to-end)",
+        "Auto-setup monitoring from natural language (extraction works, setup is manual)",
+        "Medium-project decomposition (manual via /projects, no auto-phasing)",
+    ]
+
+    missing = [
+        "External API integrations (email, Slack, marketplace connectors)",
+        "Browser automation for JS-heavy pages",
+        "Self-install pipeline (agent can build code but not auto-deploy it)",
+        "Multi-agent coordination (API exists, orchestration does not)",
+    ]
+
+    parts = ["*Capability breakdown (grounded from live state)*\n"]
+    parts.append(f"✅ *Implemented ({len(implemented)}):*")
+    for item in implemented:
+        parts.append(f"  • {item}")
+    parts.append(f"\n🔧 *Partial / foundation ({len(partial)}):*")
+    for item in partial:
+        parts.append(f"  • {item}")
+    parts.append(f"\n❌ *Not yet built ({len(missing)}):*")
+    for item in missing:
+        parts.append(f"  • {item}")
+    return "\n".join(parts)
+
+
 def handle_review_request() -> str:
     """Grounded reply for review requests — routes to /review."""
     return (
@@ -1654,7 +1808,7 @@ def handle_project_decomposition(agent: Any) -> str:
     # Check each major capability surface
     if status.get("running"):
         existing.append("Core runtime + agent loop")
-    if status.get("memory", {}).get("total", 0) >= 0:
+    if status.get("memory", {}).get("total_memories", 0) >= 0:
         existing.append("Memory store (persistent SQLite)")
     if status.get("build", {}):
         existing.append("Build pipeline (codegen → Docker → verify)")
@@ -1958,9 +2112,12 @@ __all__ = [
     "PRESENCE",
     "PROJECT_DECOMPOSITION",
     "PROJECT_STATUS",
+    "MEDIUM_REASONING",
+    "PROJECT_INVENTORY",
     "RECURRING_CAPABILITY",
     "REPO_VERIFICATION",
     "REVIEW_REQUEST",
+    "WORKFLOW_INVENTORY",
     "SELF_DESCRIPTION",
     "SELF_UPDATE_IMPERATIVE",
     "SELF_UPDATE_QUESTION",
@@ -1981,13 +2138,16 @@ __all__ = [
     "handle_limits",
     "handle_memory_horizon",
     "handle_memory_list",
+    "handle_medium_reasoning",
     "handle_memory_usage",
     "handle_presence",
     "handle_project_decomposition",
+    "handle_project_inventory",
     "handle_project_status",
     "handle_recurring_capability",
     "handle_repo_verification",
     "handle_review_request",
+    "handle_workflow_inventory",
     "handle_self_description",
     "handle_self_update_question",
     "handle_skills",

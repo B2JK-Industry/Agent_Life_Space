@@ -952,6 +952,15 @@ class AgentBrain:
             if intent == telegram_intents.COMPLEX_TASK:
                 return telegram_intents.handle_complex_task(self._agent)
 
+            if intent == telegram_intents.PROJECT_INVENTORY:
+                return await telegram_intents.handle_project_inventory(self._agent)
+
+            if intent == telegram_intents.WORKFLOW_INVENTORY:
+                return telegram_intents.handle_workflow_inventory(self._agent)
+
+            if intent == telegram_intents.MEDIUM_REASONING:
+                return telegram_intents.handle_medium_reasoning(self._agent)
+
             if intent == telegram_intents.PROJECT_STATUS:
                 return await telegram_intents.handle_project_status(self._agent)
 
