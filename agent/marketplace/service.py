@@ -255,8 +255,17 @@ class MarketplaceService:
                 "message": f"Bid requires approval. Use `/queue approve {proposal.id}`",
             }
 
-        # ── Execute: READY+approved or DRAFT without queue ──
-        if hasattr(connector, "submit_listing_bid") and "/listings/" in (opportunity.url or ""):
+        # ── Execute: only work listings are biddable ──
+        if not opportunity.is_listing:
+            return {
+                "ok": False,
+                "error": (
+                    "This opportunity is an API marketplace item, not a work listing. "
+                    "Provider bids are only supported for work listings. "
+                    "Use `/marketplace listings` to find biddable work."
+                ),
+            }
+        if hasattr(connector, "submit_listing_bid"):
             result = await connector.submit_listing_bid(
                 self._gateway, opportunity.platform_id, bid,
             )
