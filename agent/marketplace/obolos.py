@@ -273,17 +273,42 @@ class ObolosConnector:
         self, gateway: Any, listing_id: str, bid: Bid,
     ) -> dict[str, Any]:
         """POST /api/listings/{id}/bid — submit bid to a work listing."""
+        # Obolos requires string values for price and delivery_time
+        payload = {
+            "price": str(bid.price_usd),
+            "delivery_time": str(bid.delivery_days),
+            "message": bid.proposal_text,
+        }
         result = await gateway.call_api_via_capability(
             capability_id="listings_bid_v1",
             provider_id="obolos.tech",
             resource=listing_id,
             method="POST",
-            json_payload={
-                "price": bid.price_usd,
-                "delivery_time": bid.delivery_days,
-                "message": bid.proposal_text,
-            },
+            json_payload=payload,
         )
+        response_error = str(result.get("response_json", {}).get("error", "")).lower()
+        response_text = str(result.get("response_text", "")).lower()
+        if (
+            not result.get("ok")
+            and int(result.get("status_code", 0) or 0) == 400
+            and "price is required" in f"{response_error} {response_text}"
+        ):
+            logger.info(
+                "obolos_listing_bid_retrying_as_form_data",
+                listing_id=listing_id,
+                bid_id=bid.id,
+            )
+            result = await gateway.call_api_via_capability(
+                capability_id="listings_bid_v1",
+                provider_id="obolos.tech",
+                resource=listing_id,
+                method="POST",
+                form_data={
+                    "price": str(bid.price_usd),
+                    "delivery_time": str(bid.delivery_days),
+                    "message": bid.proposal_text,
+                },
+            )
         if result.get("ok"):
             bid.status = BidStatus.SUBMITTED
             bid.submitted_at = datetime.now(UTC).isoformat()

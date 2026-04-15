@@ -1284,7 +1284,7 @@ class TestObolosConnectorListings:
         call_kwargs = gateway.call_api_via_capability.call_args.kwargs
         assert call_kwargs["capability_id"] == "listings_bid_v1"
         assert call_kwargs["resource"] == "L1"
-        assert call_kwargs["json_payload"]["price"] == 80.0
+        assert call_kwargs["json_payload"]["price"] == "80.0"
 
     @pytest.mark.asyncio
     async def test_list_jobs(self):
