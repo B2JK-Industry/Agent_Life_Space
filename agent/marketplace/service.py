@@ -465,6 +465,18 @@ class MarketplaceService:
         terminal = await self._get_terminal_outcome(job_id)
         if terminal:
             return {"ok": False, "error": f"Job {job_id} already finalized ({terminal.status.value})."}
+        # Block duplicate submit — already submitted locally
+        existing_submit = next(
+            (o for o in await self.list_outcomes(limit=200)
+             if o.external_job_id == job_id and o.status == JobOutcomeStatus.SUBMITTED),
+            None,
+        )
+        if existing_submit:
+            return {
+                "ok": False,
+                "error": "Work already submitted for this job. Awaiting platform response.",
+                "existing_outcome_id": existing_submit.id,
+            }
         result = await connector.submit_job_work(
             self._gateway, job_id, summary=summary, proof=proof, artifact_ids=artifact_ids,
         )

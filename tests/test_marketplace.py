@@ -2146,3 +2146,86 @@ class TestContradictoryTerminalGuard:
         r2 = await svc.complete_job("obolos.tech", "J1")
         assert r2["ok"] is True
         await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Duplicate job-submit guard
+# ─────────────────────────────────────────────
+
+
+class TestDuplicateJobSubmit:
+    """Repeated job-submit must not create duplicate SUBMITTED outcomes."""
+
+    @pytest.mark.asyncio
+    async def test_second_submit_blocked(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        r1 = await svc.submit_job_work("obolos.tech", "J1", summary="First")
+        assert r1["ok"] is True
+
+        r2 = await svc.submit_job_work("obolos.tech", "J1", summary="Duplicate")
+        assert r2["ok"] is False
+        assert "already submitted" in r2["error"].lower()
+        assert r2.get("existing_outcome_id")
+
+        # Only one SUBMITTED outcome exists
+        outcomes = await svc.list_outcomes()
+        submitted = [o for o in outcomes if o.external_job_id == "J1" and o.status.value == "submitted"]
+        assert len(submitted) == 1
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_then_complete_still_works(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {"revenue": 50}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.submit_job_work("obolos.tech", "J1", summary="Done")
+        r2 = await svc.complete_job("obolos.tech", "J1")
+        assert r2["ok"] is True
+
+        outcomes = await svc.list_outcomes()
+        statuses = sorted(o.status.value for o in outcomes if o.external_job_id == "J1")
+        assert statuses == ["completed", "submitted"]
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_then_reject_still_works(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.submit_job_work("obolos.tech", "J1", summary="Done")
+        r2 = await svc.reject_job("obolos.tech", "J1", reason="Bad")
+        assert r2["ok"] is True
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_report_no_inflated_submitted(self, tmp_path: Path):
+        """Report counts must not inflate from blocked duplicate submits."""
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.submit_job_work("obolos.tech", "J1", summary="First")
+        await svc.submit_job_work("obolos.tech", "J1", summary="Dup")  # blocked
+        await svc.submit_job_work("obolos.tech", "J1", summary="Dup2")  # blocked
+
+        outcomes = await svc.list_outcomes()
+        submitted = [o for o in outcomes if o.status.value == "submitted"]
+        assert len(submitted) == 1  # no inflation
+        await svc.close()
