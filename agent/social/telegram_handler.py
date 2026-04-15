@@ -2099,6 +2099,49 @@ class TelegramHandler:
         action = parts[0].lower() if parts else ""
         subargs = parts[1].strip() if len(parts) > 1 else ""
 
+        # /marketplace create-listing --title "..." --description "..." --budget N --deadline Nd
+        if action == "create-listing":
+            tokens = subargs.split("--")
+            title = ""
+            description = ""
+            budget = 5.0
+            deadline = "7d"
+            for token in tokens:
+                token = token.strip()
+                if token.startswith("title "):
+                    title = token[6:].strip().strip('"').strip("'")
+                elif token.startswith("description "):
+                    description = token[12:].strip().strip('"').strip("'")
+                elif token.startswith("budget "):
+                    try:
+                        budget = float(token[7:].strip())
+                    except ValueError:
+                        pass
+                elif token.startswith("deadline "):
+                    deadline = token[9:].strip()
+            if not title:
+                return (
+                    "Usage: `/marketplace create-listing --title \"...\" "
+                    "--description \"...\" --budget 5 --deadline 7d`"
+                )
+            connector = mkt.registry.get("obolos.tech")
+            if not connector or not hasattr(connector, "create_listing"):
+                return "Listing creation not available."
+            result = await connector.create_listing(
+                title=title, description=description,
+                max_budget=budget, deadline=deadline,
+            )
+            if result.get("ok"):
+                data = result.get("data", {})
+                return (
+                    f"Listing created on obolos.tech:\n"
+                    f"  Title: *{title}*\n"
+                    f"  ID: `{data.get('id', '?')}`\n"
+                    f"  Budget: ${budget}\n"
+                    f"  Status: {data.get('status', 'open')}"
+                )
+            return f"Listing creation failed: {result.get('error', 'unknown')}"
+
         # /marketplace discover [platform] [--category X]
         if action == "discover":
             platform = ""

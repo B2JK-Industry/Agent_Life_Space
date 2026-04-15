@@ -39,6 +39,7 @@ from agent.marketplace.obolos_cli import (
     cli_job_reject,
     cli_job_submit,
     cli_listing_bid,
+    cli_listing_create,
     cli_listing_info,
     cli_listing_list,
     cli_reputation_check,
@@ -84,6 +85,27 @@ class ObolosConnector:
     @property
     def transport(self) -> str:
         return "cli" if _use_cli() else "gateway"
+
+    # ─── Create listing (offer services) ───
+
+    async def create_listing(
+        self,
+        *,
+        title: str,
+        description: str = "",
+        max_budget: float = 0,
+        deadline: str = "7d",
+    ) -> dict[str, Any]:
+        """Create a work listing on obolos.tech via CLI."""
+        if not _use_cli():
+            return {"ok": False, "error": "Obolos CLI not available. Install with: npm install -g @obolos_tech/cli"}
+        result = await cli_listing_create(
+            title=title, description=description,
+            max_budget=max_budget, deadline=deadline,
+        )
+        if result["ok"]:
+            logger.info("obolos_listing_created", title=title[:50], id=result["data"].get("id", ""))
+        return result
 
     # ─── API Marketplace (discovery) ───
 

@@ -138,6 +138,23 @@ async def cli_job_list() -> dict[str, Any]:
     return await run_cli("job", "list")
 
 
+async def cli_listing_create(
+    *,
+    title: str,
+    description: str = "",
+    max_budget: float = 0,
+    deadline: str = "7d",
+) -> dict[str, Any]:
+    args = ["listing", "create", "--title", title]
+    if description:
+        args.extend(["--description", description])
+    if max_budget:
+        args.extend(["--max-budget", str(max_budget)])
+    if deadline:
+        args.extend(["--deadline", deadline])
+    return await run_cli(*args)
+
+
 async def cli_job_info(job_id: str) -> dict[str, Any]:
     return await run_cli("job", "info", job_id)
 
