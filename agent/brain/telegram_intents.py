@@ -1151,6 +1151,7 @@ def handle_capability() -> str:
         "  • Conversation + memory (per-chat history, persistent SQLite, RAG)\n"
         "  • Code review (`/review <path>`) — deterministic pipeline with artifacts\n"
         "  • Build pipeline (`/build <task>`) — codegen → Docker sandbox → verification\n"
+        "  • Marketplace earning (`/marketplace`) — find work on obolos.tech, bid, submit deliverables\n"
         "  • Web read (`/web <url>` or natural language)\n"
         "  • Project tracking (`/projects`) — link jobs to long-running initiatives\n"
         "  • Recurring workflows (`/workflow`) — scheduled review/build jobs\n"
