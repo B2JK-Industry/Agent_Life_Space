@@ -278,7 +278,7 @@ class TelegramHandler:
             "/projects — zoznam projektov\n"
             "/runtime — čo beží na pozadí (cron, API, watchdog)\n"
             "/usage — spotreba tokenov a náklady\n"
-            "/queue — stav pracovnej fronty\n"
+            "/queue [pending|approve|deny] — stav pracovnej fronty a approvals\n"
             "/intake — spusti review alebo build cez unified intake\n"
             "/build — shortcut pre build intake\n"
             "/jobs — zoznam product jobov (review, build)\n"
@@ -386,15 +386,109 @@ class TelegramHandler:
         return f"Úloha vytvorená: *{task.name}* (id: `{task.id}`)"
 
     async def _cmd_queue(self, args: str) -> str:
-        if not self._work_loop:
-            return "Work loop nie je aktívny."
-        status = self._work_loop.get_status()
-        return (
-            f"*Pracovná fronta*\n"
-            f"V rade: {status['queue_size']}\n"
-            f"Spracúva sa: {'áno' if status['processing'] else 'nie'}\n"
-            f"Celkom spracované: {status.get('total_attempted', status.get('total_success', 0))}"
-        )
+        approval_queue = getattr(self._agent, "approval_queue", None)
+        parts = args.strip().split()
+        action = parts[0].lower() if parts else ""
+
+        def _format_status(value: Any) -> str:
+            if value is None:
+                return "unknown"
+            return value.value if hasattr(value, "value") else str(value)
+
+        if action in {"pending", "approvals"}:
+            if approval_queue is None:
+                return "Approval queue nie je inicializovaná."
+            pending = approval_queue.get_pending()
+            if not pending:
+                return "Žiadne approvals nečakajú."
+            lines = [f"*Pending approvals* ({len(pending)}):"]
+            for req in pending[:10]:
+                desc = str(req.get("description", "")).strip() or "Bez popisu"
+                category = req.get("category", "?")
+                risk = req.get("risk_level", "?")
+                lines.append(
+                    f"• `{req.get('id', '?')}` [{category}/{risk}] {desc[:90]}"
+                )
+                reason = str(req.get("reason", "")).strip()
+                if reason:
+                    lines.append(f"  Reason: {reason[:120]}")
+            lines.append("\n`/queue approve <id>` | `/queue deny <id> [reason]`")
+            return "\n".join(lines)
+
+        if action == "approve":
+            if approval_queue is None:
+                return "Approval queue nie je inicializovaná."
+            if len(parts) < 2:
+                return "Použi: `/queue approve <approval_id>`"
+            request_id = parts[1]
+            approved = approval_queue.approve(request_id, decided_by="owner")
+            if approved is None:
+                existing = approval_queue.get_request(request_id)
+                if existing is not None:
+                    status = _format_status(existing.get("status"))
+                    return f"Approval `{request_id}` je už v stave *{status}*."
+                return f"Approval `{request_id}` not found."
+            status = _format_status(getattr(approved, "status", None))
+            if status == "expired":
+                return f"Approval `{approved.id}` expired before approval."
+            if status == "partially_approved":
+                return (
+                    f"Approval `{approved.id}` partially approved.\n"
+                    f"Status: *{status}*"
+                )
+            return (
+                f"Approval `{approved.id}` approved.\n"
+                f"Status: *{status}*\n"
+                f"Re-run the original command to continue execution."
+            )
+
+        if action == "deny":
+            if approval_queue is None:
+                return "Approval queue nie je inicializovaná."
+            if len(parts) < 2:
+                return "Použi: `/queue deny <approval_id> [reason]`"
+            request_id = parts[1]
+            reason = " ".join(parts[2:]).strip()
+            denied = approval_queue.deny(request_id, reason=reason, decided_by="owner")
+            if denied is None:
+                existing = approval_queue.get_request(request_id)
+                if existing is not None:
+                    status = _format_status(existing.get("status"))
+                    return f"Approval `{request_id}` je už v stave *{status}*."
+                return f"Approval `{request_id}` not found."
+            message = f"Approval `{denied.id}` denied."
+            if reason:
+                message += f"\nReason: {reason}"
+            return message
+
+        work_status = self._work_loop.get_status() if self._work_loop else None
+        pending = approval_queue.get_pending() if approval_queue is not None else []
+
+        lines = ["*Pracovná fronta*"]
+        if work_status is None:
+            lines.append("Work loop: neaktívny")
+        else:
+            lines.append(f"V rade: {work_status['queue_size']}")
+            lines.append(f"Spracúva sa: {'áno' if work_status['processing'] else 'nie'}")
+            lines.append(
+                "Celkom spracované: "
+                f"{work_status.get('total_attempted', work_status.get('total_success', 0))}"
+            )
+
+        if approval_queue is not None:
+            lines.append(f"\nPending approvals: {len(pending)}")
+            if pending:
+                next_req = pending[0]
+                lines.append(
+                    f"Next: `{next_req.get('id', '?')}` "
+                    f"({next_req.get('category', '?')}, {next_req.get('risk_level', '?')})"
+                )
+                lines.append("`/queue pending` | `/queue approve <id>` | `/queue deny <id> [reason]`")
+
+        if work_status is None and approval_queue is None:
+            return "Work loop ani approval queue nie sú aktívne."
+
+        return "\n".join(lines)
 
     async def _cmd_consolidate(self, args: str) -> str:
         """Run memory consolidation directly — no LLM needed."""

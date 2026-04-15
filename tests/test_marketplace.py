@@ -1562,8 +1562,10 @@ class TestTelegramBidEligibility:
         from agent.social.telegram_handler import TelegramHandler
         agent = MagicMock()
         agent.marketplace = marketplace_svc
+        agent.approval_queue = getattr(marketplace_svc, "_approval_queue", None)
         handler = TelegramHandler.__new__(TelegramHandler)
         handler._agent = agent
+        handler._work_loop = None
         return handler
 
     @pytest.mark.asyncio
@@ -2330,6 +2332,81 @@ class TestDuplicateJobSubmit:
         outcomes = await svc.list_outcomes()
         statuses = sorted(o.status.value for o in outcomes if o.external_job_id == "J1")
         assert statuses == ["completed", "submitted"]
+        await svc.close()
+
+
+class TestTelegramMarketplaceApprovalFlow:
+    """Operator must be able to approve marketplace bids from the command surface."""
+
+    def _make_handler(self, marketplace_svc):
+        from unittest.mock import MagicMock
+
+        from agent.social.telegram_handler import TelegramHandler
+        agent = MagicMock()
+        agent.marketplace = marketplace_svc
+        agent.approval_queue = getattr(marketplace_svc, "_approval_queue", None)
+        handler = TelegramHandler.__new__(TelegramHandler)
+        handler._agent = agent
+        handler._work_loop = None
+        return handler
+
+    @pytest.mark.asyncio
+    async def test_submit_approve_submit_flow_via_handler(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+        from agent.core.approval import ApprovalQueue
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"bid_id": "B1", "status": "pending"},
+        }
+        approval = ApprovalQueue()
+        svc = MarketplaceService(
+            gateway=gateway,
+            approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="Live Listing",
+            platform="obolos.tech",
+            platform_id="L1",
+            url="https://obolos.tech/api/listings/L1",
+            raw_data={"status": "open"},
+            budget_max=5.0,
+            skills_required=["python"],
+        )
+        await svc._persist_opportunity(opp)
+
+        handler = self._make_handler(svc)
+
+        bid_result = await handler._cmd_marketplace(f"bid {opp.id}")
+        assert "bid draft created" in bid_result.lower()
+
+        bids = await svc.list_bids(limit=10)
+        assert bids, "bid draft should be persisted"
+        bid = bids[0]
+
+        first_submit = await handler._cmd_marketplace(f"submit {bid.id}")
+        assert "requires approval" in first_submit.lower()
+
+        pending = approval.get_pending()
+        assert len(pending) == 1
+        approval_id = pending[0]["id"]
+
+        approve_result = await handler._cmd_queue(f"approve {approval_id}")
+        assert "approved" in approve_result.lower()
+
+        second_submit = await handler._cmd_marketplace(f"submit {bid.id}")
+        assert "submitted to obolos.tech" in second_submit.lower()
+        gateway.call_api_via_capability.assert_called_once()
+
+        approval_record = approval.get_request(approval_id)
+        assert approval_record is not None
+        assert approval_record["status"] == "executed"
         await svc.close()
 
     @pytest.mark.asyncio

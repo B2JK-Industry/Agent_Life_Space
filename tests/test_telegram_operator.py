@@ -4,6 +4,7 @@ Tests for Phase 3 operator Telegram commands: /report, /intake, /build.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -384,6 +385,52 @@ class TestHelpIncludes:
         assert "/report" in result
         assert "/jobs" in result
         assert "/deliver" in result
+        assert "/queue [pending|approve|deny]" in result
+
+
+class TestQueueCommand:
+
+    async def test_queue_pending_lists_approvals(self, handler, mock_agent):
+        approval_queue = MagicMock()
+        approval_queue.get_pending.return_value = [
+            {
+                "id": "apr123",
+                "category": "external",
+                "risk_level": "medium",
+                "description": "Submit bid to Obolos listing",
+                "reason": "External write requires approval",
+            }
+        ]
+        mock_agent.approval_queue = approval_queue
+
+        result = await handler.handle("/queue pending", user_id=1, chat_id=1)
+
+        assert "Pending approvals" in result
+        assert "apr123" in result
+        assert "Submit bid to Obolos listing" in result
+
+    async def test_queue_approve_executes(self, handler, mock_agent):
+        approval_queue = MagicMock()
+        approval_queue.approve.return_value = SimpleNamespace(id="apr123", status="approved")
+        mock_agent.approval_queue = approval_queue
+
+        result = await handler.handle("/queue approve apr123", user_id=1, chat_id=1)
+
+        assert "approved" in result.lower()
+        approval_queue.approve.assert_called_once_with("apr123", decided_by="owner")
+
+    async def test_queue_deny_executes(self, handler, mock_agent):
+        approval_queue = MagicMock()
+        approval_queue.deny.return_value = SimpleNamespace(id="apr123", status="denied")
+        mock_agent.approval_queue = approval_queue
+
+        result = await handler.handle("/queue deny apr123 too risky", user_id=1, chat_id=1)
+
+        assert "denied" in result.lower()
+        assert "too risky" in result
+        approval_queue.deny.assert_called_once_with(
+            "apr123", reason="too risky", decided_by="owner",
+        )
 
 
 class TestTypingIndicatorCleanup:
