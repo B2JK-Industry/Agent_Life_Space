@@ -44,6 +44,13 @@ _ALS_CAPABILITIES = frozenset({
 })
 
 
+def _to_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class ObolosConnector:
     """Connector for obolos.tech x402 marketplace."""
 
@@ -400,9 +407,16 @@ class ObolosConnector:
             return None
         title = listing.get("title") or listing.get("name") or f"Listing {lid[:8]}"
         description = listing.get("description", "")
+        budget_min = _to_float(listing.get("min_budget"))
+        budget_max = _to_float(listing.get("max_budget"))
         budget = listing.get("budget", listing.get("price", 0))
         if isinstance(budget, dict):
             budget = budget.get("amount", budget.get("max", 0))
+        budget_fallback = _to_float(budget)
+        if not budget_min:
+            budget_min = budget_fallback
+        if not budget_max:
+            budget_max = budget_fallback or budget_min
         tags = listing.get("skills", listing.get("tags", []))
         if isinstance(tags, str):
             tags = [t.strip() for t in tags.split(",") if t.strip()]
@@ -414,11 +428,12 @@ class ObolosConnector:
             title=str(title)[:200],
             description=str(description)[:500],
             url=f"https://obolos.tech/api/listings/{lid}",
-            category=tags[0] if tags else "listing",
-            budget_min=float(budget) if budget else 0.0,
-            budget_max=float(budget) if budget else 0.0,
-            currency="USD",
+            category="listing",
+            budget_min=budget_min,
+            budget_max=budget_max,
+            currency=str(listing.get("currency", "USD")),
             skills_required=tags[:10] if isinstance(tags, list) else [],
+            deadline=str(listing.get("deadline", "")),
             status=OpportunityStatus.DISCOVERED,
             raw_data=listing,
         )

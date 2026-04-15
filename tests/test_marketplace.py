@@ -1190,7 +1190,10 @@ class TestObolosConnectorListings:
             "ok": True,
             "normalized_response": {
                 "listings": [
-                    {"id": "L1", "title": "Build an API", "budget": 100, "skills": ["python"]},
+                    {
+                        "id": "L1", "title": "Build an API",
+                        "min_budget": "50", "max_budget": "100", "skills": ["python"],
+                    },
                     {"id": "L2", "title": "Review code", "budget": 50},
                 ],
             },
@@ -1200,6 +1203,8 @@ class TestObolosConnectorListings:
         assert len(opps) == 2
         assert opps[0].platform_id == "L1"
         assert opps[0].title == "Build an API"
+        assert opps[0].budget_min == 50.0
+        assert opps[0].budget_max == 100.0
         assert opps[1].platform_id == "L2"
 
         call_kwargs = gateway.call_api_via_capability.call_args.kwargs
@@ -1221,6 +1226,22 @@ class TestObolosConnectorListings:
         opps_a = await c.list_listings(gateway, limit=10)
         opps_b = await c.list_listings(gateway, limit=10)
         assert opps_a[0].id == opps_b[0].id
+
+    def test_normalize_listing_uses_budget_range_and_deadline(self):
+        c = ObolosConnector()
+        opp = c._normalize_listing_to_opportunity({
+            "id": "L3",
+            "title": "Budgeted work",
+            "min_budget": "1.25",
+            "max_budget": "5.75",
+            "deadline": "2026-04-21T00:00:00Z",
+            "status": "open",
+        })
+        assert opp is not None
+        assert opp.budget_min == 1.25
+        assert opp.budget_max == 5.75
+        assert opp.deadline == "2026-04-21T00:00:00Z"
+        assert opp.category == "listing"
 
     @pytest.mark.asyncio
     async def test_get_listing_detail(self):
