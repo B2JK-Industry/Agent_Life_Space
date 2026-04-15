@@ -60,7 +60,8 @@ class AgentCron:
         self._tasks.append(asyncio.create_task(self._retention_pruning_loop()))
         self._tasks.append(asyncio.create_task(self._data_cleanup_loop()))
         self._tasks.append(asyncio.create_task(self._log_retention_loop()))
-        logger.info("cron_started", jobs=12)
+        self._tasks.append(asyncio.create_task(self._marketplace_monitor_loop()))
+        logger.info("cron_started", jobs=13)
 
     async def stop(self) -> None:
         self._running = False
@@ -564,3 +565,133 @@ class AgentCron:
                 short_pruned=short_pruned,
                 short_bytes_freed=results["short"].bytes_freed,
             )
+
+    # --- Marketplace Monitor (every 6 hours) ---
+
+    _MARKETPLACE_INTERVAL = int(os.environ.get("AGENT_MARKETPLACE_INTERVAL", "21600"))  # 6h
+    _ALS_SKILLS = frozenset({
+        "python", "code-review", "code-generation", "api", "data-analysis",
+        "text-generation", "summarization", "testing", "linting",
+        "documentation", "web-scraping", "monitoring", "security",
+    })
+
+    async def _marketplace_monitor_loop(self) -> None:
+        """Scan Obolos marketplace for new opportunities every N hours.
+
+        Zero LLM tokens. Deterministic scan + Telegram delivery.
+        """
+        await asyncio.sleep(120)  # let agent settle
+        while self._running:
+            try:
+                await self._do_marketplace_scan()
+                await asyncio.sleep(self._MARKETPLACE_INTERVAL)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("cron_marketplace_monitor_error")
+
+    async def _do_marketplace_scan(self) -> None:
+        mkt = getattr(self._agent, "marketplace", None)
+        if mkt is None:
+            return
+
+        # Scan listings + jobs
+        try:
+            listings = await mkt.list_listings(platform="obolos.tech", limit=20)
+        except Exception:
+            listings = []
+        try:
+            jobs_raw = await mkt.list_jobs(platform="obolos.tech", limit=20)
+        except Exception:
+            jobs_raw = []
+        try:
+            outcomes = await mkt.list_outcomes(limit=20)
+        except Exception:
+            outcomes = []
+        try:
+            bids = await mkt.list_bids(limit=50)
+        except Exception:
+            bids = []
+
+        # Build deterministic report
+        now = datetime.now(UTC)
+        lines = [f"📊 *Obolos Marketplace Report* ({now.strftime('%Y-%m-%d %H:%M')} UTC)\n"]
+
+        # Open listings — filter to ALS-capable
+        open_listings = [o for o in listings if o.raw_data.get("status") == "open"]
+        expired = [o for o in open_listings if self._is_expired(o)]
+        fresh = [o for o in open_listings if not self._is_expired(o)]
+
+        if fresh:
+            lines.append(f"🟢 *Fresh open listings ({len(fresh)}):*")
+            for o in fresh:
+                skills = set(o.skills_required)
+                matched = skills & self._ALS_SKILLS
+                fit = "✅" if matched else "❓"
+                budget = f" {o.budget_max} {o.currency}" if o.budget_max else ""
+                lines.append(f"  {fit} *{o.title[:50]}*{budget}")
+                if matched:
+                    lines.append(f"     Matched skills: {', '.join(sorted(matched))}")
+                lines.append(f"     ID: `{o.platform_id[:12]}`")
+        else:
+            lines.append("⚪ No fresh open listings right now.")
+
+        if expired:
+            lines.append(f"\n⏰ {len(expired)} expired open listing(s) (not biddable)")
+
+        # Jobs summary
+        if jobs_raw:
+            by_status: dict[str, int] = {}
+            for j in jobs_raw:
+                s = j.get("status", "?")
+                by_status[s] = by_status.get(s, 0) + 1
+            status_parts = [f"{c} {s}" for s, c in sorted(by_status.items())]
+            lines.append(f"\n📋 *Jobs:* {len(jobs_raw)} total ({', '.join(status_parts)})")
+
+        # Bids summary
+        if bids:
+            bid_by_status: dict[str, int] = {}
+            for b in bids:
+                bid_by_status[b.status.value] = bid_by_status.get(b.status.value, 0) + 1
+            bid_parts = [f"{c} {s}" for s, c in sorted(bid_by_status.items())]
+            lines.append(f"🏷 *Bids:* {len(bids)} ({', '.join(bid_parts)})")
+
+        # Outcomes
+        if outcomes:
+            completed = sum(1 for o in outcomes if o.status.value == "completed")
+            revenue = sum(o.revenue_amount or 0 for o in outcomes if o.revenue_amount)
+            lines.append(f"📈 *Outcomes:* {len(outcomes)} recorded, {completed} completed")
+            if revenue:
+                lines.append(f"   Revenue: ${revenue:.2f}")
+
+        # Action items
+        if fresh:
+            lines.append(f"\n💡 *{len(fresh)} listing(s) may need attention:*")
+            lines.append("   `/marketplace listings` to browse")
+            lines.append("   `/marketplace eval <id>` to assess")
+
+        report = "\n".join(lines)
+
+        # Deliver via Telegram
+        telegram = getattr(self._agent, "telegram", None)
+        if telegram and hasattr(telegram, "_bot") and telegram._bot:
+            owner_chat = getattr(telegram, "_owner_chat_id", 0)
+            if owner_chat:
+                try:
+                    await telegram._bot.send_message(owner_chat, report)
+                    logger.info("cron_marketplace_report_sent", listings=len(listings), fresh=len(fresh))
+                except Exception:
+                    logger.warning("cron_marketplace_telegram_send_failed")
+        else:
+            logger.info("cron_marketplace_report_no_telegram", report_length=len(report))
+
+    @staticmethod
+    def _is_expired(opp: Any) -> bool:
+        deadline = str(getattr(opp, "deadline", "") or opp.raw_data.get("deadline", ""))
+        if not deadline:
+            return False
+        try:
+            dl = datetime.fromisoformat(deadline.replace("Z", "+00:00"))
+            return dl < datetime.now(UTC)
+        except (ValueError, TypeError):
+            return False
