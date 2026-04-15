@@ -1665,7 +1665,7 @@ class TestObolosConnectorLifecycle:
         kw = gateway.call_api_via_capability.call_args.kwargs
         assert kw["capability_id"] == "jobs_submit_v1"
         assert kw["resource"] == "J1"
-        assert kw["json_payload"]["result"] == "Done"
+        assert kw["json_payload"]["deliverable"] == "Done"
 
     @pytest.mark.asyncio
     async def test_complete_job(self):

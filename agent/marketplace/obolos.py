@@ -355,10 +355,13 @@ class ObolosConnector:
         self, gateway: Any, job_id: str, *,
         summary: str = "", proof: str = "", artifact_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        """POST /api/jobs/{id}/submit — submit completed work."""
+        """POST /api/jobs/{id}/submit — submit completed work.
+
+        Obolos requires 'deliverable' field (not 'result').
+        """
         payload: dict[str, Any] = {}
         if summary:
-            payload["result"] = summary
+            payload["deliverable"] = summary
         if proof:
             payload["proof"] = proof
         if artifact_ids:

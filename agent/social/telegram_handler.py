@@ -2327,7 +2327,7 @@ class TelegramHandler:
                 return f"No jobs found on {platform}."
             lines = [f"*Jobs from {platform}:*\n"]
             for j in jobs[:10]:
-                jid = str(j.get("id", j.get("_id", "?")))[:12]
+                jid = str(j.get("id", j.get("_id", "?")))
                 title = j.get("title", j.get("description", "Untitled"))[:50]
                 status = j.get("status", "unknown")
                 lines.append(f"  • `{jid}` {title} [{status}]")
