@@ -41,6 +41,7 @@ class AgentCron:
         self._owner_chat_id = owner_chat_id
         self._running = False
         self._tasks: list[asyncio.Task[Any]] = []
+        self._marketplace_lock = asyncio.Lock()
 
     async def start(self) -> None:
         if self._running:
@@ -583,7 +584,8 @@ class AgentCron:
         await asyncio.sleep(120)  # let agent settle
         while self._running:
             try:
-                await self._do_marketplace_scan()
+                async with self._marketplace_lock:
+                    await self._do_marketplace_scan()
                 await asyncio.sleep(self._MARKETPLACE_INTERVAL)
             except asyncio.CancelledError:
                 break
@@ -592,7 +594,7 @@ class AgentCron:
 
     async def _do_marketplace_scan(self) -> None:
         mkt = getattr(self._agent, "marketplace", None)
-        if mkt is None:
+        if mkt is None or not getattr(mkt, "_initialized", False):
             return
 
         # Scan listings + jobs
@@ -682,6 +684,12 @@ class AgentCron:
         else:
             logger.info("cron_marketplace_report_no_telegram", report_length=len(report))
 
+        # ── Proactive scouting: auto-evaluate + auto-bid for matching listings ──
+        await self._auto_scout_listings(mkt, fresh)
+
+        # ── Re-execute approved bids that cron prepared earlier ──
+        await self._resubmit_approved_bids(mkt)
+
     @staticmethod
     def _is_expired(opp: Any) -> bool:
         deadline = str(getattr(opp, "deadline", "") or opp.raw_data.get("deadline", ""))
@@ -692,3 +700,181 @@ class AgentCron:
             return dl < datetime.now(UTC)
         except (ValueError, TypeError):
             return False
+
+    # ─── Proactive Scouting ───
+
+    _MAX_SCOUT_PER_CYCLE = 3  # Cap auto-bids per scan to avoid spam
+
+    async def _auto_scout_listings(self, mkt: Any, fresh_listings: list[Any]) -> None:
+        """Proactive scouting: auto-evaluate fresh listings and prepare bids.
+
+        For each new listing that John hasn't bid on yet:
+        1. Evaluate feasibility (deterministic, zero LLM cost)
+        2. If feasible/partial: prepare bid draft → trigger approval queue
+        3. Send Telegram notification with evaluation + approve command
+
+        Operator still approves every bid — John just does the legwork.
+        """
+        if not fresh_listings:
+            return
+
+        # Get existing bids to avoid duplicate scouting
+        try:
+            existing_bids = await mkt.list_bids(limit=200)
+        except Exception:
+            existing_bids = []
+        bid_opp_ids = {b.opportunity_id for b in existing_bids}
+
+        scouted = 0
+        for opp in fresh_listings:
+            if scouted >= self._MAX_SCOUT_PER_CYCLE:
+                break
+
+            # Skip if we already have a bid for this opportunity
+            if opp.id in bid_opp_ids:
+                continue
+
+            # Check listing is biddable
+            try:
+                biddable, reason = mkt.get_listing_bid_eligibility(opp)
+                if not biddable:
+                    continue
+            except Exception:
+                continue
+
+            # Evaluate feasibility (local, no network)
+            try:
+                evaluation = mkt.evaluate(opp)
+            except Exception:
+                logger.exception("cron_scout_eval_failed", opp_id=opp.id)
+                continue
+
+            verdict = evaluation.verdict.value
+            if verdict == "infeasible":
+                continue
+
+            # Prepare bid draft (local)
+            try:
+                bid = mkt.prepare_bid(opp, evaluation)
+            except Exception:
+                logger.exception("cron_scout_bid_prep_failed", opp_id=opp.id)
+                continue
+
+            # Submit bid — triggers approval queue, does NOT send money
+            try:
+                result = await mkt.submit_bid(bid)
+            except Exception:
+                logger.exception("cron_scout_submit_failed", opp_id=opp.id)
+                continue
+
+            # Send actionable Telegram notification
+            await self._send_scout_notification(opp, evaluation, bid, result)
+            scouted += 1
+
+        if scouted:
+            logger.info("cron_auto_scout_complete", scouted=scouted)
+
+    async def _send_scout_notification(
+        self, opp: Any, evaluation: Any, bid: Any, result: dict[str, Any],
+    ) -> None:
+        """Send Telegram message about a scouted listing with approve command."""
+        if not self._bot or not self._owner_chat_id:
+            return
+
+        verdict_val = getattr(evaluation.verdict, "value", "unknown")
+        confidence = float(getattr(evaluation, "confidence", 0.0))
+        verdict_emoji = "✅" if verdict_val == "feasible" else "🟡"
+
+        budget_max = getattr(opp, "budget_max", None)
+        currency = getattr(opp, "currency", "USD")
+        skills = getattr(opp, "skills_required", []) or []
+        description = getattr(opp, "description", "") or ""
+        title = getattr(opp, "title", "?") or "?"
+
+        budget_line = f"💵 Budget: {budget_max} {currency}" if budget_max else ""
+        skills_line = f"🛠 Skills: {', '.join(skills[:5])}" if skills else ""
+
+        msg_lines = [
+            "🔍 *Našiel som prácu na Obolos:*",
+            "",
+            f"📋 *{title[:60]}*",
+        ]
+        if budget_line:
+            msg_lines.append(budget_line)
+        if skills_line:
+            msg_lines.append(skills_line)
+        if description:
+            msg_lines.append(f"📝 {description[:120]}")
+
+        reasoning = getattr(evaluation, "reasoning", "") or ""
+        price_usd = float(getattr(bid, "price_usd", 0.0))
+        msg_lines.extend([
+            "",
+            f"{verdict_emoji} *Hodnotenie:* {verdict_val} ({confidence:.0%})",
+            f"   {reasoning}",
+            "",
+            f"💰 *Pripravený bid:* ${price_usd:.2f}",
+        ])
+
+        if result.get("pending_approval"):
+            approval_id = result.get("approval_id", "")
+            msg_lines.extend([
+                "",
+                "⏳ *Čakám na tvoj súhlas:*",
+                f"`/queue approve {approval_id}`",
+                f"alebo `/queue deny {approval_id}`",
+            ])
+        elif result.get("ok"):
+            msg_lines.append("✅ Bid odoslaný!")
+        else:
+            error = result.get("error", "neznáma chyba")
+            msg_lines.append(f"❌ Nepodarilo sa: {error[:100]}")
+
+        msg = "\n".join(msg_lines)
+        try:
+            await self._bot.send_message(self._owner_chat_id, msg)
+        except Exception:
+            logger.warning("cron_scout_telegram_failed")
+
+    # ─── Approved-Bid Re-execution ───
+
+    async def _resubmit_approved_bids(self, mkt: Any) -> None:
+        """Re-execute READY bids that the operator approved since last scan.
+
+        After cron prepares a bid → operator approves via /queue approve →
+        this method detects the approval and executes the bid automatically.
+        The operator doesn't need to manually re-run any command.
+        """
+        try:
+            bids = await mkt.list_bids(limit=100)
+        except Exception:
+            return
+
+        resubmitted = 0
+        for bid in bids:
+            if bid.status.value != "ready":
+                continue
+
+            # Try to submit — submit_bid() checks approval status internally
+            try:
+                result = await mkt.submit_bid(bid)
+            except Exception:
+                logger.exception("cron_resubmit_failed", bid_id=bid.id)
+                continue
+
+            if result.get("ok"):
+                resubmitted += 1
+                # Notify operator that bid was auto-submitted after approval
+                if self._bot and self._owner_chat_id:
+                    msg = (
+                        f"✅ *Bid odoslaný po tvojom schválení:*\n"
+                        f"📋 {bid.title[:60]}\n"
+                        f"💰 ${bid.price_usd:.2f}"
+                    )
+                    try:
+                        await self._bot.send_message(self._owner_chat_id, msg)
+                    except Exception:
+                        pass
+
+        if resubmitted:
+            logger.info("cron_resubmit_approved_bids", count=resubmitted)

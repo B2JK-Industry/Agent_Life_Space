@@ -2434,3 +2434,267 @@ class TestTelegramMarketplaceApprovalFlow:
         submitted = [o for o in outcomes if o.status.value == "submitted"]
         assert len(submitted) == 1  # no inflation
         await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Auto-Scout (Cron proactive scouting)
+# ─────────────────────────────────────────────
+
+
+class TestAutoScout:
+    """Tests for the cron auto-scout that evaluates and prepares bids."""
+
+    def _make_cron(self, agent, bot=None, chat_id=0):
+        from agent.core.cron import AgentCron
+        return AgentCron(agent, telegram_bot=bot, owner_chat_id=chat_id)
+
+    def _make_svc(self, tmp_path):
+        from agent.core.approval import ApprovalQueue
+        approval = ApprovalQueue()
+        svc = MarketplaceService(
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=approval,
+        )
+        svc.registry.register(ObolosConnector())
+        return svc
+
+    def _make_listing_opp(self, *, title="Python Code Review", platform_id="L1",
+                          budget=10.0, skills=None, status="open"):
+        return Opportunity(
+            platform="obolos.tech",
+            platform_id=platform_id,
+            title=title,
+            url=f"https://obolos.tech/api/listings/{platform_id}",
+            category="listing",
+            budget_max=budget,
+            currency="USD",
+            skills_required=skills or ["python", "code-review"],
+            raw_data={"status": status},
+        )
+
+    @pytest.mark.asyncio
+    async def test_auto_scout_evaluates_and_bids(self, tmp_path: Path):
+        """Scout should evaluate fresh listings and prepare bids."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        opp = self._make_listing_opp()
+        await svc._persist_opportunity(opp)
+
+        await cron._auto_scout_listings(svc, [opp])
+
+        # Should have created a bid in READY status (awaiting approval)
+        bids = await svc.list_bids()
+        assert len(bids) == 1
+        assert bids[0].opportunity_id == opp.id
+        assert bids[0].price_usd > 0
+        assert bids[0].status == BidStatus.READY
+
+        # Should have sent Telegram notification with approve command
+        assert bot.send_message.called
+        msg = bot.send_message.call_args[0][1]
+        assert "Python Code Review" in msg
+        assert "/queue approve" in msg
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_auto_scout_skips_already_bid(self, tmp_path: Path):
+        """Scout should not create duplicate bids."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        opp = self._make_listing_opp()
+        await svc._persist_opportunity(opp)
+
+        # Pre-existing bid for this opportunity
+        existing_bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=5.0)
+        await svc._persist_bid(existing_bid)
+
+        await cron._auto_scout_listings(svc, [opp])
+
+        # Should still be only 1 bid (no duplicate)
+        bids = await svc.list_bids()
+        assert len(bids) == 1
+        assert bids[0].id == existing_bid.id
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_auto_scout_skips_infeasible(self, tmp_path: Path):
+        """Scout should not bid on infeasible listings."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        # Listing requiring skills John doesn't have
+        opp = self._make_listing_opp(
+            title="Solidity Audit",
+            skills=["solidity", "evm", "smart-contracts", "formal-verification", "defi"],
+        )
+        await svc._persist_opportunity(opp)
+
+        await cron._auto_scout_listings(svc, [opp])
+
+        # No bid created for infeasible listing
+        bids = await svc.list_bids()
+        assert len(bids) == 0
+        assert not bot.send_message.called
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_auto_scout_respects_max_per_cycle(self, tmp_path: Path):
+        """Scout should cap bids per cycle to avoid spam."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        # 5 feasible listings, but max is 3 per cycle
+        opps = []
+        for i in range(5):
+            opp = self._make_listing_opp(
+                title=f"Python Job #{i}",
+                platform_id=f"L{i}",
+            )
+            await svc._persist_opportunity(opp)
+            opps.append(opp)
+
+        await cron._auto_scout_listings(svc, opps)
+
+        bids = await svc.list_bids()
+        assert len(bids) == cron._MAX_SCOUT_PER_CYCLE  # 3, not 5
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_auto_scout_empty_listings(self, tmp_path: Path):
+        """Scout should handle empty listings gracefully."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        await cron._auto_scout_listings(svc, [])
+
+        bids = await svc.list_bids()
+        assert len(bids) == 0
+        assert not bot.send_message.called
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_resubmit_approved_bids(self, tmp_path: Path):
+        """After operator approves, next cron cycle auto-submits the bid."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agent.core.approval import ApprovalQueue
+
+        approval = ApprovalQueue()
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"bid_id": "B1", "status": "pending"},
+        }
+        svc = MarketplaceService(
+            gateway=gateway,
+            approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        # Step 1: scout creates a bid in READY state
+        opp = self._make_listing_opp()
+        await svc._persist_opportunity(opp)
+        await cron._auto_scout_listings(svc, [opp])
+
+        bids = await svc.list_bids()
+        assert len(bids) == 1
+        assert bids[0].status == BidStatus.READY
+        approval_id = bids[0].metadata["approval_id"]
+
+        # Step 2: operator approves
+        approval.approve(approval_id)
+
+        # Step 3: next cron cycle re-submits
+        bot.reset_mock()
+        await cron._resubmit_approved_bids(svc)
+
+        # Bid should now be SUBMITTED
+        bids = await svc.list_bids()
+        assert bids[0].status == BidStatus.SUBMITTED
+
+        # Should have notified operator
+        assert bot.send_message.called
+        msg = bot.send_message.call_args[0][1]
+        assert "odoslaný po tvojom schválení" in msg
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_resubmit_skips_pending_bids(self, tmp_path: Path):
+        """Resubmit should not execute bids still pending approval."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        # Create bid in READY state (pending approval)
+        opp = self._make_listing_opp()
+        await svc._persist_opportunity(opp)
+        await cron._auto_scout_listings(svc, [opp])
+
+        bids = await svc.list_bids()
+        assert bids[0].status == BidStatus.READY
+
+        # Don't approve — just try resubmit
+        bot.reset_mock()
+        await cron._resubmit_approved_bids(svc)
+
+        # Should still be READY (not submitted, not failed)
+        bids = await svc.list_bids()
+        assert bids[0].status == BidStatus.READY
+
+        await svc.close()
