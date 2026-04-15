@@ -13,11 +13,18 @@ Hierarchy:
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
+
+
+def stable_marketplace_id(platform: str, platform_id: str, *, kind: str = "opportunity") -> str:
+    """Return a deterministic local ID for an external marketplace entity."""
+    digest = hashlib.sha256(f"{kind}:{platform}:{platform_id}".encode()).hexdigest()
+    return digest[:12]
 
 # ─────────────────────────────────────────────
 # Opportunity — normalized external listing

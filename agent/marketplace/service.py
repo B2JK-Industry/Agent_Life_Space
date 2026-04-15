@@ -104,8 +104,13 @@ class MarketplaceService:
     async def discover(
         self, *, platform: str = "", category: str = "", limit: int = 20,
     ) -> list[Opportunity]:
-        """Fetch opportunities from one or all platforms."""
-        all_opps: list[Opportunity] = []
+        """Fetch opportunities from one or all platforms.
+
+        For Obolos-like connectors, discovery includes both generic marketplace
+        opportunities and work listings so operators do not get a false-empty
+        result when only the listings surface is available.
+        """
+        all_opps: dict[str, Opportunity] = {}
 
         connectors = (
             [self._registry.get(platform)] if platform
@@ -121,15 +126,27 @@ class MarketplaceService:
                 )
                 for opp in opps:
                     await self._persist_opportunity(opp)
-                all_opps.extend(opps)
+                    all_opps[opp.id] = opp
             except Exception:
                 logger.warning("marketplace_discover_error", platform=getattr(connector, "platform_id", "?"))
+            if hasattr(connector, "list_listings"):
+                try:
+                    listings = await connector.list_listings(self._gateway, limit=limit)
+                    for opp in listings:
+                        await self._persist_opportunity(opp)
+                        all_opps[opp.id] = opp
+                except Exception:
+                    logger.warning(
+                        "marketplace_listings_discover_error",
+                        platform=getattr(connector, "platform_id", "?"),
+                    )
 
-        logger.info("marketplace_discover", total=len(all_opps))
-        return all_opps
+        discovered = list(all_opps.values())[:limit]
+        logger.info("marketplace_discover", total=len(discovered))
+        return discovered
 
     async def get_opportunity(self, opportunity_id: str) -> Opportunity | None:
-        """Get a persisted opportunity by ID."""
+        """Get a persisted opportunity by exact ID or unique short prefix."""
         if not self._db:
             return None
         async with self._db.execute(
@@ -138,6 +155,21 @@ class MarketplaceService:
             row = await cur.fetchone()
             if row:
                 return Opportunity.from_dict(orjson.loads(row[0]))
+        matches: list[Opportunity] = []
+        async with self._db.execute(
+            "SELECT data FROM opportunities ORDER BY rowid DESC",
+        ) as cur:
+            rows = await cur.fetchall()
+        for raw_row in rows:
+            opp = Opportunity.from_dict(orjson.loads(raw_row[0]))
+            if (
+                opp.id.startswith(opportunity_id)
+                or opp.platform_id == opportunity_id
+                or opp.platform_id.startswith(opportunity_id)
+            ):
+                matches.append(opp)
+        if len(matches) == 1:
+            return matches[0]
         return None
 
     async def list_opportunities(
@@ -186,6 +218,19 @@ class MarketplaceService:
             )
         bid = connector.prepare_bid(opportunity, evaluation)
         return bid
+
+    def get_listing_bid_eligibility(self, opportunity: Opportunity) -> tuple[bool, str]:
+        """Return whether a listing is currently biddable on the platform."""
+        if not opportunity.is_listing:
+            return False, (
+                "This opportunity is an API marketplace item, not a work listing. "
+                "Provider bids are only supported for work listings. "
+                "Use `/marketplace listings` to find biddable work."
+            )
+        market_status = str(opportunity.raw_data.get("status", "")).strip().lower()
+        if market_status and market_status != "open":
+            return False, f"Listing is not open for bids (platform status: {market_status})."
+        return True, ""
 
     async def submit_bid(self, bid: Bid) -> dict[str, Any]:
         """Submit bid to platform. Approval-gated, persisted, audited.
@@ -268,15 +313,9 @@ class MarketplaceService:
             }
 
         # ── Execute: only work listings are biddable ──
-        if not opportunity.is_listing:
-            return {
-                "ok": False,
-                "error": (
-                    "This opportunity is an API marketplace item, not a work listing. "
-                    "Provider bids are only supported for work listings. "
-                    "Use `/marketplace listings` to find biddable work."
-                ),
-            }
+        biddable, reason = self.get_listing_bid_eligibility(opportunity)
+        if not biddable:
+            return {"ok": False, "error": reason}
         if hasattr(connector, "submit_listing_bid"):
             result = await connector.submit_listing_bid(
                 self._gateway, opportunity.platform_id, bid,
@@ -299,7 +338,7 @@ class MarketplaceService:
     # ─── Bid queries ───
 
     async def get_bid(self, bid_id: str) -> Bid | None:
-        """Get a persisted bid by ID."""
+        """Get a persisted bid by exact ID or unique short prefix."""
         if not self._db:
             return None
         async with self._db.execute(
@@ -308,6 +347,17 @@ class MarketplaceService:
             row = await cur.fetchone()
             if row:
                 return Bid.from_dict(orjson.loads(row[0]))
+        matches: list[Bid] = []
+        async with self._db.execute(
+            "SELECT data FROM bids ORDER BY rowid DESC",
+        ) as cur:
+            rows = await cur.fetchall()
+        for raw_row in rows:
+            bid = Bid.from_dict(orjson.loads(raw_row[0]))
+            if bid.id.startswith(bid_id):
+                matches.append(bid)
+        if len(matches) == 1:
+            return matches[0]
         return None
 
     async def list_bids(self, *, limit: int = 20) -> list[Bid]:
@@ -607,6 +657,23 @@ class MarketplaceService:
     async def _persist_opportunity(self, opp: Opportunity) -> None:
         if not self._db:
             return
+        # Keep exactly one local row per external platform/platform_id pair.
+        if opp.platform_id:
+            async with self._db.execute(
+                "SELECT id, data FROM opportunities WHERE platform = ?",
+                (opp.platform,),
+            ) as cur:
+                rows = await cur.fetchall()
+            for row_id, row_data in rows:
+                existing = Opportunity.from_dict(orjson.loads(row_data))
+                if (
+                    existing.platform_id == opp.platform_id
+                    and existing.id != opp.id
+                ):
+                    await self._db.execute(
+                        "DELETE FROM opportunities WHERE id = ?",
+                        (row_id,),
+                    )
         data = orjson.dumps(opp.to_dict()).decode()
         await self._db.execute(
             "INSERT OR REPLACE INTO opportunities (id, data, platform, status, created_at) VALUES (?, ?, ?, ?, ?)",

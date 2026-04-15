@@ -31,6 +31,7 @@ from agent.marketplace.models import (
     FeasibilityVerdict,
     Opportunity,
     OpportunityStatus,
+    stable_marketplace_id,
 )
 
 logger = structlog.get_logger(__name__)
@@ -407,6 +408,7 @@ class ObolosConnector:
             tags = [t.strip() for t in tags.split(",") if t.strip()]
 
         return Opportunity(
+            id=stable_marketplace_id("obolos.tech", lid),
             platform="obolos.tech",
             platform_id=str(lid),
             title=str(title)[:200],
@@ -442,6 +444,7 @@ class ObolosConnector:
             tags = [t.strip() for t in tags.split(",") if t.strip()]
 
         return Opportunity(
+            id=stable_marketplace_id("obolos.tech", str(slug)),
             platform="obolos.tech",
             platform_id=slug,
             title=str(title),

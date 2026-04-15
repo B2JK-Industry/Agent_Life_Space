@@ -287,6 +287,7 @@ class TelegramHandler:
             "/settlement — payment settlement queue a akcie\n"
             "/workflow — recurring workflow management\n"
             "/pipeline — multi-job pipeline orchestration\n"
+            "/marketplace — Obolos scouting, bids, jobs, reporting\n"
             "/report — operator report, inbox, margin\n"
             "/help — tento help\n\n"
             "Alebo napíš čokoľvek — premýšľam a konám."
@@ -2025,7 +2026,9 @@ class TelegramHandler:
             lines = [f"*Discovered {len(opps)} opportunities:*\n"]
             for opp in opps[:10]:
                 budget = f" ({opp.budget_max} {opp.currency})" if opp.budget_max else ""
-                lines.append(f"  • `{opp.id[:8]}` *{opp.title[:60]}*{budget}")
+                platform_status = str(opp.raw_data.get("status", "")).strip().lower()
+                status_label = f" [{platform_status}]" if platform_status else ""
+                lines.append(f"  • `{opp.id[:8]}` *{opp.title[:60]}*{budget}{status_label}")
             lines.append("\n`/marketplace show <id>` | `/marketplace eval <id>`")
             return "\n".join(lines)
 
@@ -2045,6 +2048,9 @@ class TelegramHandler:
                 f"Platform: {opp.platform} (`{opp.platform_id}`)",
                 f"Status: {opp.status.value}",
             ]
+            platform_status = str(opp.raw_data.get("status", "")).strip().lower()
+            if platform_status:
+                lines.append(f"Platform status: {platform_status}")
             if opp.budget_max:
                 lines.append(f"Budget: {opp.budget_max} {opp.currency}")
             if opp.skills_required:
@@ -2063,11 +2069,18 @@ class TelegramHandler:
                     job_link = f" → job `{b.external_job_id[:10]}`" if b.external_job_id else ""
                     proj_link = f" → project `{b.project_id[:8]}`" if b.project_id else ""
                     lines.append(f"  `{b.id[:8]}` {b.status.value} ${b.price_usd:.2f}{job_link}{proj_link}")
-            if opp.is_listing:
+            is_biddable, biddable_reason = mkt.get_listing_bid_eligibility(opp)
+            if opp.is_listing and is_biddable:
                 lines.append(
                     f"\n`/marketplace eval {opp.id}` | "
                     f"`/marketplace bid {opp.id}` | "
                     f"`/marketplace track {opp.id}`"
+                )
+            elif opp.is_listing:
+                lines.append(
+                    f"\n`/marketplace eval {opp.id}` | "
+                    f"`/marketplace track {opp.id}`\n"
+                    f"_{biddable_reason}_"
                 )
             else:
                 lines.append(
@@ -2095,8 +2108,11 @@ class TelegramHandler:
                 lines.append(f"Matched: {', '.join(ev.matched_skills[:5])}")
             if ev.missing_skills:
                 lines.append(f"Missing: {', '.join(ev.missing_skills[:5])}")
-            if ev.verdict != FeasibilityVerdict.INFEASIBLE and opp.is_listing:
+            is_biddable, biddable_reason = mkt.get_listing_bid_eligibility(opp)
+            if ev.verdict != FeasibilityVerdict.INFEASIBLE and opp.is_listing and is_biddable:
                 lines.append(f"\n`/marketplace bid {opp.id}` to prepare a bid draft")
+            elif ev.verdict != FeasibilityVerdict.INFEASIBLE and opp.is_listing:
+                lines.append(f"\n_{biddable_reason}_")
             elif ev.verdict != FeasibilityVerdict.INFEASIBLE:
                 lines.append("\n_API marketplace item — bidding available for work listings only._")
             return "\n".join(lines)
@@ -2106,13 +2122,9 @@ class TelegramHandler:
             opp = await mkt.get_opportunity(subargs.split()[0])
             if not opp:
                 return f"Opportunity `{subargs}` not found."
-            if not opp.is_listing:
-                return (
-                    f"Opportunity `{opp.id[:8]}` is an API marketplace item, "
-                    f"not a work listing.\n"
-                    f"Provider bids are only supported for work listings.\n"
-                    f"Use `/marketplace listings` to browse biddable work."
-                )
+            is_biddable, biddable_reason = mkt.get_listing_bid_eligibility(opp)
+            if not is_biddable:
+                return biddable_reason
             ev = mkt.evaluate(opp)
             if ev.verdict.value == "infeasible":
                 return f"Opportunity is infeasible: {ev.reasoning}"
@@ -2208,7 +2220,8 @@ class TelegramHandler:
             lines = [f"*Work listings from {platform}:*\n"]
             for opp in listings[:10]:
                 budget = f" ({opp.budget_max} {opp.currency})" if opp.budget_max else ""
-                lines.append(f"  • `{opp.id[:8]}` *{opp.title[:55]}*{budget}")
+                platform_status = str(opp.raw_data.get("status", "")).strip().lower() or "unknown"
+                lines.append(f"  • `{opp.id[:8]}` *{opp.title[:55]}*{budget} [{platform_status}]")
             lines.append("\n`/marketplace show <id>` | `/marketplace bid <id>`")
             return "\n".join(lines)
 
@@ -2366,7 +2379,9 @@ class TelegramHandler:
                 lines.append("*Recent opportunities:*")
                 for opp in opps[:8]:
                     budget = f" {opp.budget_max}{opp.currency}" if opp.budget_max else ""
-                    lines.append(f"  `{opp.id[:8]}` {opp.title[:45]} [{opp.status.value}]{budget}")
+                    platform_status = str(opp.raw_data.get("status", "")).strip().lower()
+                    status_label = platform_status or opp.status.value
+                    lines.append(f"  `{opp.id[:8]}` {opp.title[:45]} [{status_label}]{budget}")
             if bids:
                 lines.append("\n*Recent bid drafts:*")
                 for b in bids[:5]:

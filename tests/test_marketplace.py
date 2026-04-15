@@ -22,6 +22,7 @@ from agent.marketplace.models import (
     FeasibilityVerdict,
     Opportunity,
     OpportunityStatus,
+    stable_marketplace_id,
 )
 from agent.marketplace.obolos import ObolosConnector
 from agent.marketplace.service import MarketplaceService
@@ -1203,6 +1204,23 @@ class TestObolosConnectorListings:
 
         call_kwargs = gateway.call_api_via_capability.call_args.kwargs
         assert call_kwargs["capability_id"] == "listings_list_v1"
+        assert opps[0].id == stable_marketplace_id("obolos.tech", "L1")
+
+    @pytest.mark.asyncio
+    async def test_listings_ids_are_stable_across_fetches(self):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {
+                "listings": [{"id": "L1", "title": "Build an API", "budget": 100}],
+            },
+        }
+        c = ObolosConnector()
+        opps_a = await c.list_listings(gateway, limit=10)
+        opps_b = await c.list_listings(gateway, limit=10)
+        assert opps_a[0].id == opps_b[0].id
 
     @pytest.mark.asyncio
     async def test_get_listing_detail(self):
@@ -1308,6 +1326,15 @@ class TestMarketplaceTelegramListingsJobs:
         await svc.close()
 
     @pytest.mark.asyncio
+    async def test_direct_help_lists_marketplace(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_help("")
+        assert "/marketplace" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
     async def test_listings_empty(self, tmp_path: Path):
         from unittest.mock import AsyncMock
         gateway = AsyncMock()
@@ -1337,6 +1364,49 @@ class TestMarketplaceTelegramListingsJobs:
         await svc.initialize()
         handler = self._make_handler(svc)
         result = await handler._cmd_marketplace("listings")
+        assert "Build API" in result
+        assert "[open]" in result.lower() or "[unknown]" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_show_resolves_short_id_prefix(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {
+                "listings": [{"id": "L1", "title": "Build API", "budget": 100, "status": "open"}],
+            },
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+
+        listings_result = await handler._cmd_marketplace("listings")
+        short_id = stable_marketplace_id("obolos.tech", "L1")[:8]
+        assert short_id in listings_result
+
+        show_result = await handler._cmd_marketplace(f"show {short_id}")
+        assert "Build API" in show_result
+        assert "Platform status: open" in show_result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_discover_falls_back_to_listings(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.side_effect = [
+            {"ok": False, "error": "route unavailable"},
+            {"ok": True, "normalized_response": {"listings": [{"id": "L1", "title": "Build API", "status": "open"}]}},
+        ]
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("discover")
         assert "Build API" in result
         await svc.close()
 
@@ -1435,6 +1505,32 @@ class TestBidEligibility:
         gateway.call_api_via_capability.assert_called_once()
         await svc.close()
 
+    @pytest.mark.asyncio
+    async def test_service_submit_rejects_non_open_listing(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="Accepted Listing",
+            platform="obolos.tech",
+            platform_id="L1",
+            url="https://obolos.tech/api/listings/L1",
+            raw_data={"status": "accepted"},
+        )
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=50.0)
+        await svc._persist_bid(bid)
+
+        result = await svc.submit_bid(bid)
+        assert result["ok"] is False
+        assert "not open for bids" in result["error"].lower()
+        gateway.call_api_via_capability.assert_not_called()
+        await svc.close()
+
 
 class TestTelegramBidEligibility:
     """Telegram /marketplace bid rejects non-listing opportunities."""
@@ -1484,6 +1580,24 @@ class TestTelegramBidEligibility:
         result = await handler._cmd_marketplace(f"bid {opp.id}")
         assert "bid draft created" in result.lower()
         assert "/marketplace submit" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_bid_on_non_open_listing_rejected(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="Taken Work", platform="obolos.tech", platform_id="W2",
+            url="https://obolos.tech/api/listings/W2",
+            raw_data={"status": "accepted"},
+        )
+        await svc._persist_opportunity(opp)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"bid {opp.id[:8]}")
+        assert "not open for bids" in result.lower()
         await svc.close()
 
 
