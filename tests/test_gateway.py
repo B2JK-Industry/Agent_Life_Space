@@ -534,6 +534,7 @@ class TestExternalGatewayService:
             assert kwargs["method"] == "POST"
             assert kwargs["target_url"] == "https://obolos.tech/api/ocr-text-extraction"
             assert kwargs["json_payload"] == {"mode": "fast"}
+            assert kwargs["auth_header_name"] == "x-wallet-address"
             assert kwargs["auth_token"] == "0xabc123"
             return {
                 "status_code": 200,
@@ -560,6 +561,50 @@ class TestExternalGatewayService:
         assert result["route_id"] == "obolos_marketplace_api_primary"
         assert result["normalized_response"]["kind"] == "marketplace_api_call"
         assert result["response_json"]["text"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_gateway_provider_listing_bid_uses_wallet_header(
+        self,
+        control_plane,
+    ):
+        async def executor(**kwargs: object) -> dict[str, object]:
+            assert kwargs["method"] == "POST"
+            assert kwargs["target_url"] == "https://obolos.tech/api/listings/L1/bid"
+            assert kwargs["auth_header_name"] == "x-wallet-address"
+            assert kwargs["auth_token"] == "0xabc123"
+            assert kwargs["json_payload"] == {
+                "price": 4.0,
+                "delivery_time": 3,
+                "message": "Ship it",
+            }
+            return {
+                "status_code": 200,
+                "response_json": {"bid_id": "BID-1", "status": "pending"},
+                "response_text": "ok",
+            }
+
+        service = ExternalGatewayService(
+            control_plane_state=control_plane,
+            request_executor=executor,
+            environment={"AGENT_OBOLOS_WALLET_ADDRESS": "0xabc123"},
+        )
+
+        result = await service.call_api_via_capability(
+            provider_id="obolos.tech",
+            capability_id="listings_bid_v1",
+            resource="L1",
+            method="POST",
+            json_payload={
+                "price": 4.0,
+                "delivery_time": 3,
+                "message": "Ship it",
+            },
+            requester="cli",
+        )
+
+        assert result["ok"] is True
+        assert result["route_id"] == "obolos_listings_bid_primary"
+        assert result["normalized_response"]["bid_id"] == "BID-1"
 
     @pytest.mark.asyncio
     async def test_gateway_provider_api_payment_required_returns_structured_denial(
