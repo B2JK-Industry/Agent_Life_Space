@@ -672,16 +672,13 @@ class AgentCron:
 
         report = "\n".join(lines)
 
-        # Deliver via Telegram
-        telegram = getattr(self._agent, "telegram", None)
-        if telegram and hasattr(telegram, "_bot") and telegram._bot:
-            owner_chat = getattr(telegram, "_owner_chat_id", 0)
-            if owner_chat:
-                try:
-                    await telegram._bot.send_message(owner_chat, report)
-                    logger.info("cron_marketplace_report_sent", listings=len(listings), fresh=len(fresh))
-                except Exception:
-                    logger.warning("cron_marketplace_telegram_send_failed")
+        # Deliver via Telegram (use self._bot, not self._agent.telegram)
+        if self._bot and self._owner_chat_id:
+            try:
+                await self._bot.send_message(self._owner_chat_id, report)
+                logger.info("cron_marketplace_report_sent", listings=len(listings), fresh=len(fresh))
+            except Exception:
+                logger.warning("cron_marketplace_telegram_send_failed")
         else:
             logger.info("cron_marketplace_report_no_telegram", report_length=len(report))
 
