@@ -408,26 +408,19 @@ class TestObolosConnectorGatewayContract:
         assert opp.skills_required == ["python"]
 
     @pytest.mark.asyncio
-    async def test_submit_bid_uses_marketplace_api_call(self):
-        """submit_bid must POST to marketplace_api_call_v1 with opportunity slug."""
+    async def test_generic_submit_bid_returns_not_supported(self):
+        """Generic submit_bid for API marketplace items returns not-supported."""
         from unittest.mock import AsyncMock
 
         gateway = AsyncMock()
-        gateway.call_api_via_capability.return_value = {"ok": True, "status_code": 200}
-
         c = ObolosConnector()
         opp = Opportunity(platform="obolos.tech", platform_id="test-slug", title="Test")
-        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=10.0, title="My Bid")
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=10.0)
 
         result = await c.submit_bid(gateway, bid, opp)
-        assert result["ok"] is True
-        assert bid.status == BidStatus.SUBMITTED
-
-        call_kwargs = gateway.call_api_via_capability.call_args.kwargs
-        assert call_kwargs["capability_id"] == "marketplace_api_call_v1"
-        assert call_kwargs["resource"] == "test-slug"
-        assert call_kwargs["method"] == "POST"
-        assert "json_payload" in call_kwargs
+        assert result["ok"] is False
+        assert "not supported" in result["error"].lower()
+        gateway.call_api_via_capability.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_submit_bid_without_opportunity_fails(self):
