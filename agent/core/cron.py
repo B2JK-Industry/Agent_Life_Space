@@ -821,8 +821,8 @@ class AgentCron:
             msg_lines.extend([
                 "",
                 "⏳ *Čakám na tvoj súhlas:*",
-                f"`/queue approve {approval_id}`",
-                f"alebo `/queue deny {approval_id}`",
+                "Confirm with `/yes` or reject with `/no`.",
+                f"Approval ID: `{approval_id}`",
             ])
         elif result.get("ok"):
             msg_lines.append("✅ Bid odoslaný!")

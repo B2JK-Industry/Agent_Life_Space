@@ -544,3 +544,201 @@ class TestAgentCronStop:
         assert cron._tasks == [], "cron should clear its task list on stop()"
         # And the running flag should be back to False.
         assert cron._running is False
+
+
+class TestYesNoCommands:
+    """`/yes` and `/no` operator UX shorthand for approval queue."""
+
+    @pytest.fixture
+    def handler_with_real_queue(self, mock_agent):
+        """Handler wired up with a real ApprovalQueue (in-memory)."""
+        from agent.core.approval import ApprovalQueue
+        mock_agent.approval_queue = ApprovalQueue()
+        return TelegramHandler(agent=mock_agent), mock_agent.approval_queue
+
+    async def test_yes_no_pending_returns_clear_message(self, handler_with_real_queue):
+        handler, queue = handler_with_real_queue
+        result = await handler.handle("/yes", user_id=1, chat_id=1)
+        assert "nečakajú" in result.lower() or "no pending" in result.lower()
+
+    async def test_no_no_pending_returns_clear_message(self, handler_with_real_queue):
+        handler, queue = handler_with_real_queue
+        result = await handler.handle("/no", user_id=1, chat_id=1)
+        assert "nečakajú" in result.lower() or "no pending" in result.lower()
+
+    async def test_yes_unique_pending_approves_it(self, handler_with_real_queue):
+        from agent.core.approval import ApprovalCategory
+        handler, queue = handler_with_real_queue
+        proposal = queue.propose(
+            ApprovalCategory.EXTERNAL,
+            description="Submit bid X",
+            reason="Marketplace bid on obolos.tech",
+            proposed_by="marketplace_service",
+        )
+
+        result = await handler.handle("/yes", user_id=1, chat_id=1)
+
+        assert "approved" in result.lower()
+        assert proposal.id in result
+        # Audit trail intact: queue says approved/executed
+        after = queue.get_request(proposal.id)
+        assert after is not None
+        assert after["status"] in ("approved", "executed")
+
+    async def test_no_unique_pending_denies_it(self, handler_with_real_queue):
+        from agent.core.approval import ApprovalCategory
+        handler, queue = handler_with_real_queue
+        proposal = queue.propose(
+            ApprovalCategory.FINANCE,
+            description="Create paid listing",
+            reason="John as client",
+            proposed_by="marketplace_service.create_listing",
+        )
+
+        result = await handler.handle("/no too expensive", user_id=1, chat_id=1)
+
+        assert "denied" in result.lower()
+        assert proposal.id in result
+        assert "too expensive" in result
+        after = queue.get_request(proposal.id)
+        assert after is not None
+        assert after["status"] == "denied"
+
+    async def test_yes_with_explicit_id(self, handler_with_real_queue):
+        from agent.core.approval import ApprovalCategory
+        handler, queue = handler_with_real_queue
+        # Two pending → ambiguous without id, must use explicit
+        p1 = queue.propose(ApprovalCategory.EXTERNAL, "Bid one", proposed_by="x")
+        p2 = queue.propose(ApprovalCategory.EXTERNAL, "Bid two", proposed_by="x")
+
+        result = await handler.handle(f"/yes {p2.id}", user_id=1, chat_id=1)
+        assert p2.id in result
+        assert "approved" in result.lower()
+
+        # The other one is untouched
+        assert queue.get_request(p1.id)["status"] == "pending"
+
+    async def test_no_with_explicit_id_and_reason(self, handler_with_real_queue):
+        from agent.core.approval import ApprovalCategory
+        handler, queue = handler_with_real_queue
+        p1 = queue.propose(ApprovalCategory.EXTERNAL, "Bid one", proposed_by="x")
+        p2 = queue.propose(ApprovalCategory.EXTERNAL, "Bid two", proposed_by="x")
+
+        result = await handler.handle(
+            f"/no {p2.id} budget too high", user_id=1, chat_id=1,
+        )
+        assert p2.id in result
+        assert "denied" in result.lower()
+        assert "budget too high" in result
+        assert queue.get_request(p1.id)["status"] == "pending"
+        assert queue.get_request(p2.id)["status"] == "denied"
+
+    async def test_yes_ambiguity_refuses_to_guess(self, handler_with_real_queue):
+        from agent.core.approval import ApprovalCategory
+        handler, queue = handler_with_real_queue
+        p1 = queue.propose(ApprovalCategory.EXTERNAL, "Bid A", proposed_by="x")
+        p2 = queue.propose(ApprovalCategory.FINANCE, "Listing B", proposed_by="x")
+
+        result = await handler.handle("/yes", user_id=1, chat_id=1)
+
+        # Must not approve anything
+        assert queue.get_request(p1.id)["status"] == "pending"
+        assert queue.get_request(p2.id)["status"] == "pending"
+        # Must guide to use explicit id
+        assert "/yes <id>" in result or "/queue" in result
+        # Must list the candidates
+        assert p1.id in result or p2.id in result
+
+    async def test_no_ambiguity_refuses_to_guess(self, handler_with_real_queue):
+        from agent.core.approval import ApprovalCategory
+        handler, queue = handler_with_real_queue
+        queue.propose(ApprovalCategory.EXTERNAL, "Bid A", proposed_by="x")
+        queue.propose(ApprovalCategory.FINANCE, "Listing B", proposed_by="x")
+
+        result = await handler.handle("/no rejected", user_id=1, chat_id=1)
+        # Both must remain pending — `/no` did not deny anything
+        pending_after = queue.get_pending()
+        assert len(pending_after) == 2
+        assert "/no <id>" in result or "/queue" in result
+
+    async def test_yes_unknown_id_returns_not_found(self, handler_with_real_queue):
+        handler, queue = handler_with_real_queue
+        result = await handler.handle("/yes deadbeef1234", user_id=1, chat_id=1)
+        assert "not found" in result.lower()
+
+    async def test_no_unknown_id_returns_not_found(self, handler_with_real_queue):
+        handler, queue = handler_with_real_queue
+        result = await handler.handle("/no abcdef123456", user_id=1, chat_id=1)
+        assert "not found" in result.lower()
+
+    async def test_yes_already_approved_reports_state(self, handler_with_real_queue):
+        from agent.core.approval import ApprovalCategory
+        handler, queue = handler_with_real_queue
+        proposal = queue.propose(ApprovalCategory.TOOL, "X", proposed_by="x")
+        queue.approve(proposal.id, decided_by="owner")
+
+        result = await handler.handle(f"/yes {proposal.id}", user_id=1, chat_id=1)
+        # Truthful: it's already in approved/executed state
+        assert "approved" in result.lower() or "executed" in result.lower()
+
+    async def test_no_already_denied_reports_state(self, handler_with_real_queue):
+        from agent.core.approval import ApprovalCategory
+        handler, queue = handler_with_real_queue
+        proposal = queue.propose(ApprovalCategory.TOOL, "X", proposed_by="x")
+        queue.deny(proposal.id, reason="initial", decided_by="owner")
+
+        result = await handler.handle(f"/no {proposal.id}", user_id=1, chat_id=1)
+        assert "denied" in result.lower()
+
+    async def test_yes_expired_approval_reports_state(self, handler_with_real_queue):
+        from agent.core.approval import ApprovalCategory
+        handler, queue = handler_with_real_queue
+        # ttl=0 → instantly expired on next get_pending() / expire_stale()
+        proposal = queue.propose(
+            ApprovalCategory.TOOL, "X", proposed_by="x", ttl_seconds=0,
+        )
+        # Force expiration (matches what `/yes` would do internally)
+        queue.expire_stale()
+
+        result = await handler.handle(f"/yes {proposal.id}", user_id=1, chat_id=1)
+        # Truthful: state is expired (or treated as already-resolved)
+        assert "expired" in result.lower() or "already" in result.lower() or "not found" in result.lower()
+
+    async def test_yes_short_prefix_resolves_when_unique(self, handler_with_real_queue):
+        from agent.core.approval import ApprovalCategory
+        handler, queue = handler_with_real_queue
+        proposal = queue.propose(ApprovalCategory.EXTERNAL, "Bid X", proposed_by="x")
+        # Use first 6 chars as a prefix
+        prefix = proposal.id[:6]
+
+        result = await handler.handle(f"/yes {prefix}", user_id=1, chat_id=1)
+        assert proposal.id in result
+        assert "approved" in result.lower()
+
+    async def test_yes_no_queue_returns_clear_error(self, mock_agent):
+        # No approval_queue attribute at all
+        mock_agent.approval_queue = None
+        handler = TelegramHandler(agent=mock_agent)
+        result = await handler.handle("/yes", user_id=1, chat_id=1)
+        assert "queue" in result.lower() or "approval" in result.lower()
+
+    async def test_existing_queue_approve_still_works(self, handler_with_real_queue):
+        """Regression: /queue approve <id> path is unchanged."""
+        from agent.core.approval import ApprovalCategory
+        handler, queue = handler_with_real_queue
+        proposal = queue.propose(ApprovalCategory.EXTERNAL, "Test", proposed_by="x")
+        result = await handler.handle(
+            f"/queue approve {proposal.id}", user_id=1, chat_id=1,
+        )
+        assert "approved" in result.lower()
+        assert proposal.id in result
+
+    async def test_existing_queue_deny_still_works(self, handler_with_real_queue):
+        """Regression: /queue deny <id> path is unchanged."""
+        from agent.core.approval import ApprovalCategory
+        handler, queue = handler_with_real_queue
+        proposal = queue.propose(ApprovalCategory.EXTERNAL, "Test", proposed_by="x")
+        result = await handler.handle(
+            f"/queue deny {proposal.id} bad fit", user_id=1, chat_id=1,
+        )
+        assert "denied" in result.lower()

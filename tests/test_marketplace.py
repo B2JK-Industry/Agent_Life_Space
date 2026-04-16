@@ -2403,6 +2403,90 @@ class TestTelegramMarketplaceApprovalFlow:
         await svc.close()
 
     @pytest.mark.asyncio
+    async def test_marketplace_submit_message_mentions_yes_no(self, tmp_path: Path):
+        """Operator-facing submit reply must include the new /yes /no UX hint."""
+        from agent.core.approval import ApprovalQueue
+
+        approval = ApprovalQueue()
+        svc = MarketplaceService(
+            approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="UX Listing",
+            platform="obolos.tech",
+            platform_id="LX",
+            url="https://obolos.tech/api/listings/LX",
+            raw_data={"status": "open"},
+            budget_max=4.0,
+            skills_required=["python"],
+        )
+        await svc._persist_opportunity(opp)
+        handler = self._make_handler(svc)
+
+        await handler._cmd_marketplace(f"bid {opp.id}")
+        bid = (await svc.list_bids(limit=10))[0]
+        reply = await handler._cmd_marketplace(f"submit {bid.id}")
+
+        # New UX must mention the shorthand AND keep explicit ID visible.
+        assert "/yes" in reply
+        assert "/no" in reply
+        # Approval ID stays visible for debugging / explicit /queue route.
+        approval_id = approval.get_pending()[0]["id"]
+        assert approval_id in reply
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_marketplace_submit_then_yes_executes_bid(self, tmp_path: Path):
+        """Full UX: submit → /yes → next submit succeeds (without typing the id)."""
+        from unittest.mock import AsyncMock
+
+        from agent.core.approval import ApprovalQueue
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"bid_id": "B-YES", "status": "pending"},
+        }
+        approval = ApprovalQueue()
+        svc = MarketplaceService(
+            gateway=gateway,
+            approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="YesPath",
+            platform="obolos.tech",
+            platform_id="LY",
+            url="https://obolos.tech/api/listings/LY",
+            raw_data={"status": "open"},
+            budget_max=3.0,
+            skills_required=["python"],
+        )
+        await svc._persist_opportunity(opp)
+        handler = self._make_handler(svc)
+
+        await handler._cmd_marketplace(f"bid {opp.id}")
+        bid = (await svc.list_bids(limit=10))[0]
+        await handler._cmd_marketplace(f"submit {bid.id}")
+
+        # Operator types just `/yes` — single pending approval, no ambiguity.
+        approve = await handler._cmd_yes("")
+        assert "approved" in approve.lower()
+
+        # Second submit now executes via gateway.
+        result = await handler._cmd_marketplace(f"submit {bid.id}")
+        assert "submitted to obolos.tech" in result.lower()
+        gateway.call_api_via_capability.assert_called_once()
+        await svc.close()
+
+    @pytest.mark.asyncio
     async def test_submit_then_reject_still_works(self, tmp_path: Path):
         from unittest.mock import AsyncMock
         gateway = AsyncMock()
@@ -2497,11 +2581,11 @@ class TestAutoScout:
         assert bids[0].price_usd > 0
         assert bids[0].status == BidStatus.READY
 
-        # Should have sent Telegram notification with approve command
+        # Should have sent Telegram notification with approve shorthand
         assert bot.send_message.called
         msg = bot.send_message.call_args[0][1]
         assert "Python Code Review" in msg
-        assert "/queue approve" in msg
+        assert "/yes" in msg or "/queue approve" in msg
 
         await svc.close()
 

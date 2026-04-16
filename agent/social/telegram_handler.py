@@ -241,6 +241,8 @@ class TelegramHandler:
             "/settlement": self._cmd_settlement,
             "/marketplace": self._cmd_marketplace,
             "/spec": self._cmd_spec,
+            "/yes": self._cmd_yes,
+            "/no": self._cmd_no,
             "/help": self._cmd_help,
         }
 
@@ -280,6 +282,8 @@ class TelegramHandler:
             "/runtime — čo beží na pozadí (cron, API, watchdog)\n"
             "/usage — spotreba tokenov a náklady\n"
             "/queue [pending|approve|deny] — stav pracovnej fronty a approvals\n"
+            "/yes [id] — schváliť pending approval (skratka `/queue approve`)\n"
+            "/no [id] [reason] — zamietnuť pending approval (skratka `/queue deny`)\n"
             "/intake — spusti review alebo build cez unified intake\n"
             "/build — shortcut pre build intake (so spec quality gate)\n"
             "/spec [idea] — spec coach: pomôže ti napísať dobrý popis pre /build\n"
@@ -491,6 +495,140 @@ class TelegramHandler:
             return "Work loop ani approval queue nie sú aktívne."
 
         return "\n".join(lines)
+
+    # ─── /yes /no — operator UX shorthand for approve/deny ───
+
+    def _resolve_yesno_target(self, raw_id: str) -> tuple[str, str]:
+        """Pick the approval `/yes` or `/no` should act on.
+
+        Returns (target_id, error_message). If error_message is non-empty,
+        no target was chosen and the caller should return that message.
+        """
+        approval_queue = getattr(self._agent, "approval_queue", None)
+        if approval_queue is None:
+            return "", "Approval queue nie je inicializovaná."
+
+        if raw_id:
+            # Explicit ID — accept exact match or unique short prefix.
+            existing = approval_queue.get_request(raw_id)
+            if existing is not None:
+                return str(existing.get("id", raw_id)), ""
+            pending = approval_queue.get_pending()
+            matches = [
+                str(r.get("id", "")) for r in pending
+                if str(r.get("id", "")).startswith(raw_id)
+            ]
+            if len(matches) == 1:
+                return matches[0], ""
+            if len(matches) > 1:
+                return "", (
+                    f"Prefix `{raw_id}` matchuje {len(matches)} approvals. "
+                    "Použi celé ID alebo `/queue pending`."
+                )
+            return "", f"Approval `{raw_id}` not found."
+
+        # No ID — must be exactly one pending approval, or refuse to guess.
+        pending = approval_queue.get_pending()
+        if not pending:
+            return "", "Žiadne approvals nečakajú."
+        if len(pending) > 1:
+            preview_lines = [
+                f"Je {len(pending)} pending approvals. `/yes` nevie ktorý:",
+            ]
+            for req in pending[:5]:
+                desc = str(req.get("description", "")).strip() or "Bez popisu"
+                preview_lines.append(f"• `{req.get('id', '?')}` {desc[:70]}")
+            preview_lines.append(
+                "\nPouži `/yes <id>` alebo `/no <id>` (alebo `/queue pending`)."
+            )
+            return "", "\n".join(preview_lines)
+        return str(pending[0].get("id", "")), ""
+
+    async def _cmd_yes(self, args: str) -> str:
+        """Approve the unique pending approval, or one named by id/prefix.
+
+        Shorthand for `/queue approve <id>`. Refuses to guess when there
+        is more than one pending approval.
+        """
+        approval_queue = getattr(self._agent, "approval_queue", None)
+        raw_id = args.strip().split()[0] if args.strip() else ""
+
+        target_id, err = self._resolve_yesno_target(raw_id)
+        if err:
+            return err
+
+        existing_before = approval_queue.get_request(target_id)
+        approved = approval_queue.approve(target_id, decided_by="owner")
+        if approved is None:
+            # Either expired during expire_stale() inside get_pending, or
+            # already resolved. Surface the truthful current state.
+            now = approval_queue.get_request(target_id) or existing_before
+            if now is not None:
+                status = now.get("status", "unknown")
+                if hasattr(status, "value"):
+                    status = status.value
+                return f"Approval `{target_id}` je už v stave *{status}*."
+            return f"Approval `{target_id}` not found."
+
+        status = approved.status.value if hasattr(approved.status, "value") else str(approved.status)
+        if status == "expired":
+            return f"Approval `{approved.id}` expired before approval."
+        if status == "partially_approved":
+            return (
+                f"Approval `{approved.id}` partially approved.\n"
+                f"Status: *{status}*"
+            )
+        return (
+            f"✅ Approval `{approved.id}` approved.\n"
+            f"Status: *{status}*\n"
+            f"Re-run the original command to continue execution."
+        )
+
+    async def _cmd_no(self, args: str) -> str:
+        """Deny the unique pending approval, or one named by id/prefix.
+
+        Shorthand for `/queue deny <id> [reason]`. Tokens after the id
+        (or, for the no-id form, the entire args) are treated as reason.
+        Refuses to guess when there is more than one pending approval.
+        """
+        approval_queue = getattr(self._agent, "approval_queue", None)
+        tokens = args.strip().split() if args.strip() else []
+        # Heuristic: if first token looks like an approval id (12 hex chars),
+        # treat it as the explicit id and rest as reason. Otherwise the
+        # whole thing is reason for the unique-pending case.
+        raw_id = ""
+        reason = ""
+        if tokens:
+            first = tokens[0]
+            looks_like_id = (
+                len(first) >= 4 and len(first) <= 32
+                and all(c in "0123456789abcdefABCDEF" for c in first)
+            )
+            if looks_like_id:
+                raw_id = first
+                reason = " ".join(tokens[1:]).strip()
+            else:
+                reason = " ".join(tokens).strip()
+
+        target_id, err = self._resolve_yesno_target(raw_id)
+        if err:
+            return err
+
+        existing_before = approval_queue.get_request(target_id)
+        denied = approval_queue.deny(target_id, reason=reason, decided_by="owner")
+        if denied is None:
+            now = approval_queue.get_request(target_id) or existing_before
+            if now is not None:
+                status = now.get("status", "unknown")
+                if hasattr(status, "value"):
+                    status = status.value
+                return f"Approval `{target_id}` je už v stave *{status}*."
+            return f"Approval `{target_id}` not found."
+
+        message = f"❌ Approval `{denied.id}` denied."
+        if reason:
+            message += f"\nReason: {reason}"
+        return message
 
     async def _cmd_consolidate(self, args: str) -> str:
         """Run memory consolidation directly — no LLM needed."""
@@ -2266,8 +2404,9 @@ class TelegramHandler:
                 aid = result.get("approval_id", "")
                 return (
                     f"💰 *Listing potrebuje súhlas (až ${budget:.2f} USDC):*\n"
-                    f"  `/queue approve {aid}` — schváliť\n"
-                    f"  `/queue deny {aid}` — zamietnuť\n"
+                    f"Confirm with `/yes` or reject with `/no`.\n"
+                    f"Approval ID: `{aid}`\n"
+                    f"_(explicit form: `/yes {aid}` / `/no {aid}` / `/queue approve {aid}`)_\n"
                     f"\nPo schválení znova zavolaj rovnaký príkaz s `--approval-id={aid}`."
                 )
             if result.get("ok"):
@@ -2426,10 +2565,12 @@ class TelegramHandler:
                 return f"Bid `{bid.id[:8]}` was already submitted."
             result = await mkt.submit_bid(bid)
             if result.get("pending_approval"):
+                aid = result.get("approval_id", "")
                 return (
                     f"Bid `{bid.id[:8]}` requires approval before submission.\n"
-                    f"Approval ID: `{result.get('approval_id', '?')}`\n"
-                    f"Use `/queue approve {result.get('approval_id', '')}` to approve."
+                    f"Confirm with `/yes` or reject with `/no`.\n"
+                    f"Approval ID: `{aid}`\n"
+                    f"_(explicit: `/yes {aid}` / `/no {aid}` / `/queue approve {aid}`)_"
                 )
             if result.get("ok"):
                 return (
