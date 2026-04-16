@@ -204,6 +204,97 @@ class MarketplaceService:
             )
         return connector.evaluate_opportunity(opportunity, agent_capabilities or [])
 
+    # ─── Client mode: hire others by creating listings ───
+
+    async def create_listing(
+        self,
+        *,
+        platform: str = "obolos.tech",
+        title: str,
+        description: str = "",
+        max_budget: float = 0.0,
+        deadline: str = "7d",
+        approval_id: str = "",
+    ) -> dict[str, Any]:
+        """Create a paid work listing — John acts as client, hires others.
+
+        Spending money requires owner approval (FINANCE category).
+        Two-phase flow:
+        1. Without approval_id → propose approval, return pending status
+        2. With approval_id → check status, execute if approved
+
+        Same-wallet constraint: John cannot bid on his own listings — Obolos
+        rejects same wallet for client and worker. This method does NOT prevent
+        creation, but the bidding side will refuse self-bidding.
+        """
+        connector = self._registry.get(platform)
+        if not connector or not hasattr(connector, "create_listing"):
+            return {"ok": False, "error": f"No create-listing support for {platform}"}
+
+        if not title.strip():
+            return {"ok": False, "error": "Listing title is required."}
+        if max_budget <= 0:
+            return {"ok": False, "error": "Listing must have a positive max_budget."}
+
+        # ── Phase 2: approval ID provided → check status, execute if approved ──
+        if approval_id and self._approval_queue:
+            req = self._approval_queue.get_request(approval_id)
+            if req is None:
+                return {"ok": False, "error": f"Approval {approval_id} not found."}
+            status = req.get("status", "")
+            if status in ("denied",):
+                return {"ok": False, "error": f"Approval denied: {req.get('denial_reason', 'no reason')}"}
+            if status in ("expired",):
+                return {"ok": False, "error": "Approval expired. Re-propose."}
+            if status not in ("approved", "executed"):
+                return {
+                    "ok": False,
+                    "pending_approval": True,
+                    "approval_id": approval_id,
+                    "message": f"Approval still pending. Use `/queue approve {approval_id}`",
+                }
+            # Approved → fall through to execute
+
+        # ── Phase 1: no approval ID → propose approval, return pending ──
+        elif self._approval_queue:
+            from agent.core.approval import ApprovalCategory
+            proposal = self._approval_queue.propose(
+                category=ApprovalCategory.FINANCE,
+                description=f"Create paid Obolos listing: {title[:60]} (budget ${max_budget:.2f})",
+                risk_level="high",
+                reason=f"John as client: hire others to do work. Spends up to ${max_budget:.2f} USDC.",
+                proposed_by="marketplace_service.create_listing",
+                context={
+                    "platform": platform,
+                    "title": title,
+                    "description": description[:200],
+                    "max_budget": max_budget,
+                    "deadline": deadline,
+                },
+            )
+            return {
+                "ok": False,
+                "pending_approval": True,
+                "approval_id": proposal.id,
+                "message": (
+                    f"Listing creation requires owner approval (commits up to "
+                    f"${max_budget:.2f} USDC). Use `/queue approve {proposal.id}` "
+                    f"then re-run `/marketplace create-listing` with --approval-id={proposal.id}"
+                ),
+            }
+
+        # ── Execute: approved or no approval queue ──
+        result = await connector.create_listing(
+            title=title, description=description,
+            max_budget=max_budget, deadline=deadline,
+        )
+        if result.get("ok") and approval_id and self._approval_queue:
+            self._approval_queue.mark_executed(approval_id)
+        if result.get("ok"):
+            logger.info("marketplace_listing_created", platform=platform, title=title[:50],
+                        budget=max_budget)
+        return result
+
     # ─── Bidding ───
 
     def prepare_bid(self, opportunity: Opportunity, evaluation: Evaluation) -> Bid:

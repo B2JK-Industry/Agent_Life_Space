@@ -2099,6 +2099,64 @@ class TelegramHandler:
         action = parts[0].lower() if parts else ""
         subargs = parts[1].strip() if len(parts) > 1 else ""
 
+        # /marketplace create-listing --title "..." --description "..." --budget N --deadline Nd
+        # Optional: --approval-id <id> to execute after operator approval
+        if action == "create-listing":
+            tokens = subargs.split("--")
+            title = ""
+            description = ""
+            budget = 0.0
+            deadline = "7d"
+            approval_id = ""
+            for token in tokens:
+                token = token.strip()
+                if token.startswith("title "):
+                    title = token[6:].strip().strip('"').strip("'")
+                elif token.startswith("description "):
+                    description = token[12:].strip().strip('"').strip("'")
+                elif token.startswith("budget "):
+                    try:
+                        budget = float(token[7:].strip())
+                    except ValueError:
+                        pass
+                elif token.startswith("deadline "):
+                    deadline = token[9:].strip()
+                elif token.startswith("approval-id"):
+                    rest = token[len("approval-id"):].lstrip("=").strip()
+                    approval_id = rest.strip('"').strip("'")
+            if not title or budget <= 0:
+                return (
+                    "Usage: `/marketplace create-listing --title \"...\" "
+                    "--description \"...\" --budget 5 --deadline 7d`\n"
+                    "_Spending USDC requires owner approval._"
+                )
+            result = await mkt.create_listing(
+                platform="obolos.tech",
+                title=title, description=description,
+                max_budget=budget, deadline=deadline,
+                approval_id=approval_id,
+            )
+            if result.get("pending_approval"):
+                aid = result.get("approval_id", "")
+                return (
+                    f"💰 *Listing potrebuje súhlas (až ${budget:.2f} USDC):*\n"
+                    f"  `/queue approve {aid}` — schváliť\n"
+                    f"  `/queue deny {aid}` — zamietnuť\n"
+                    f"\nPo schválení: `/marketplace create-listing --title \"{title}\" "
+                    f"--budget {budget} --approval-id={aid}`"
+                )
+            if result.get("ok"):
+                data = result.get("data", {})
+                return (
+                    f"✅ Listing vytvorený na obolos.tech:\n"
+                    f"  Title: *{title}*\n"
+                    f"  ID: `{data.get('id', '?')}`\n"
+                    f"  Budget: ${budget}\n"
+                    f"  Status: {data.get('status', 'open')}\n"
+                    f"\n_Workeri budú bidovať. Pozri ich cez_ `/marketplace listings`."
+                )
+            return f"❌ Listing creation failed: {result.get('error', 'unknown')}"
+
         # /marketplace discover [platform] [--category X]
         if action == "discover":
             platform = ""
@@ -2500,22 +2558,25 @@ class TelegramHandler:
             return "\n".join(lines)
 
         return (
-            "*Marketplace commands:*\n"
-            "*Scouting:*\n"
+            "*Marketplace commands* (dual role: client + worker)\n"
+            "*Worker — Scouting:*\n"
             "  `/marketplace discover` — API marketplace\n"
             "  `/marketplace listings` — work listings\n"
             "  `/marketplace show <id>` — opportunity detail\n"
             "  `/marketplace eval <id>` — assess feasibility\n"
-            "*Bidding:*\n"
+            "*Worker — Bidding:*\n"
             "  `/marketplace bid <id>` — prepare bid draft\n"
             "  `/marketplace submit <bid_id>` — send bid (approval-gated)\n"
             "  `/marketplace bids` — list bid drafts\n"
-            "*Jobs:*\n"
+            "*Worker — Jobs:*\n"
             "  `/marketplace jobs` — accepted jobs\n"
             "  `/marketplace job <id>` — job detail\n"
             "  `/marketplace job-submit <id>` — submit work\n"
             "  `/marketplace job-complete <id>` — mark completed\n"
             "  `/marketplace job-reject <id>` — reject/decline\n"
+            "*Client — Hire others:*\n"
+            "  `/marketplace create-listing --title \"...\" --budget 5` — post paid work\n"
+            "    _(spends USDC, FINANCE approval required)_\n"
             "*Tracking:*\n"
             "  `/marketplace track <id>` — track as ALS project\n"
             "  `/marketplace link-job <bid_id> <job_id>` — link job to bid\n"

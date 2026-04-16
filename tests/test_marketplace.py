@@ -2698,3 +2698,166 @@ class TestAutoScout:
         assert bids[0].status == BidStatus.READY
 
         await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Create-Listing (Client mode — John hires others)
+# ─────────────────────────────────────────────
+
+
+class TestCreateListing:
+    """Tests for John as client: creating paid listings to hire others."""
+
+    def _make_svc(self, tmp_path):
+        from agent.core.approval import ApprovalQueue
+        approval = ApprovalQueue()
+        svc = MarketplaceService(
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=approval,
+        )
+        svc.registry.register(ObolosConnector())
+        return svc, approval
+
+    @pytest.mark.asyncio
+    async def test_create_listing_requires_approval(self, tmp_path: Path):
+        """First call without approval_id proposes finance approval."""
+        svc, approval = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        result = await svc.create_listing(
+            platform="obolos.tech",
+            title="Need Python code review",
+            description="Review my module",
+            max_budget=10.0,
+            deadline="7d",
+        )
+
+        assert result["ok"] is False
+        assert result["pending_approval"] is True
+        assert "approval_id" in result
+
+        # Verify a FINANCE approval was created
+        proposals = approval.get_pending()
+        finance = [p for p in proposals if p.get("category") == "finance"]
+        assert len(finance) == 1
+        assert "obolos listing" in finance[0]["description"].lower()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_create_listing_rejects_zero_budget(self, tmp_path: Path):
+        """Listing must have a positive max_budget."""
+        svc, _ = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        result = await svc.create_listing(
+            platform="obolos.tech",
+            title="Free job",
+            max_budget=0.0,
+        )
+
+        assert result["ok"] is False
+        assert "positive max_budget" in result["error"].lower()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_create_listing_rejects_empty_title(self, tmp_path: Path):
+        """Listing must have a title."""
+        svc, _ = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        result = await svc.create_listing(
+            platform="obolos.tech",
+            title="   ",
+            max_budget=5.0,
+        )
+
+        assert result["ok"] is False
+        assert "title is required" in result["error"].lower()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_create_listing_executes_after_approval(self, tmp_path: Path):
+        """Second call with approved approval_id executes via connector."""
+        from unittest.mock import AsyncMock, patch
+
+        svc, approval = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        # Phase 1: propose
+        first = await svc.create_listing(
+            platform="obolos.tech",
+            title="Need code review",
+            max_budget=5.0,
+        )
+        assert first["pending_approval"] is True
+        approval_id = first["approval_id"]
+
+        # Owner approves
+        approval.approve(approval_id)
+
+        # Phase 2: execute — mock the connector's create_listing CLI call
+        mock_create = AsyncMock(return_value={
+            "ok": True,
+            "data": {"id": "listing-123", "status": "open"},
+        })
+        with patch.object(
+            svc.registry.get("obolos.tech"), "create_listing", mock_create,
+        ):
+            result = await svc.create_listing(
+                platform="obolos.tech",
+                title="Need code review",
+                max_budget=5.0,
+                approval_id=approval_id,
+            )
+
+        assert result["ok"] is True
+        assert result["data"]["id"] == "listing-123"
+        mock_create.assert_called_once()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_create_listing_blocked_after_denial(self, tmp_path: Path):
+        """Denied approval blocks execution."""
+        svc, approval = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        first = await svc.create_listing(
+            platform="obolos.tech",
+            title="Risky listing",
+            max_budget=100.0,
+        )
+        approval_id = first["approval_id"]
+        approval.deny(approval_id, reason="too expensive")
+
+        result = await svc.create_listing(
+            platform="obolos.tech",
+            title="Risky listing",
+            max_budget=100.0,
+            approval_id=approval_id,
+        )
+
+        assert result["ok"] is False
+        assert "denied" in result["error"].lower()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_create_listing_handles_unknown_platform(self, tmp_path: Path):
+        """Unknown platform returns clear error."""
+        svc, _ = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        result = await svc.create_listing(
+            platform="nonexistent.platform",
+            title="Test",
+            max_budget=5.0,
+        )
+
+        assert result["ok"] is False
+        assert "create-listing support" in result["error"].lower()
+
+        await svc.close()
