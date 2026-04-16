@@ -635,3 +635,206 @@ class TestExternalGatewayService:
         assert result["ok"] is False
         assert result["denial"]["code"] == "external_api_payment_required"
         assert result["status_code"] == 402
+
+
+class TestApiCallDenialDetail:
+    """Verify _api_call_denial surfaces useful provider error info."""
+
+    @pytest.mark.asyncio
+    async def test_denial_includes_response_json_error(self, control_plane):
+        """When provider returns JSON {error: ...}, denial preserves it."""
+
+        async def executor(**kwargs: object) -> dict[str, object]:
+            return {
+                "status_code": 422,
+                "response_json": {"error": "Listing not open for bids"},
+                "response_text": '{"error":"Listing not open for bids"}',
+                "response_headers": {},
+            }
+
+        service = ExternalGatewayService(
+            control_plane_state=control_plane,
+            request_executor=executor,
+            environment={"AGENT_OBOLOS_WALLET_ADDRESS": "0xabc123"},
+        )
+
+        result = await service.call_api_via_capability(
+            provider_id="obolos.tech",
+            capability_id="listings_bid_v1",
+            resource="listing-id-1",
+            method="POST",
+            json_payload={"price": "1.0"},
+            requester="cli",
+        )
+
+        assert result["ok"] is False
+        denial = result["denial"]
+        assert denial["code"] == "external_api_call_failed"
+        assert "Listing not open for bids" in denial["detail"]
+        assert denial["metadata"]["provider_error"] == "Listing not open for bids"
+        assert denial["metadata"]["status_code"] == 422
+
+    @pytest.mark.asyncio
+    async def test_denial_falls_back_to_status_when_no_body(self, control_plane):
+        """When provider returns no body, denial still has structured detail.
+
+        Uses 404 (non-retryable) so we exercise the per-route denial — the
+        retry-then-all-routes-failed path is a separate concern.
+        """
+
+        async def executor(**kwargs: object) -> dict[str, object]:
+            return {
+                "status_code": 404,
+                "response_json": {},
+                "response_text": "",
+                "response_headers": {},
+            }
+
+        service = ExternalGatewayService(
+            control_plane_state=control_plane,
+            request_executor=executor,
+            environment={"AGENT_OBOLOS_WALLET_ADDRESS": "0xabc123"},
+        )
+
+        result = await service.call_api_via_capability(
+            provider_id="obolos.tech",
+            capability_id="listings_bid_v1",
+            resource="listing-id-2",
+            method="POST",
+            json_payload={"price": "1.0"},
+            requester="cli",
+        )
+
+        assert result["ok"] is False
+        denial = result["denial"]
+        # Generic message must mention the status code
+        assert "404" in denial["detail"]
+        assert denial["metadata"]["status_code"] == 404
+        assert "provider_error" not in denial["metadata"]
+
+    @pytest.mark.asyncio
+    async def test_denial_includes_text_excerpt_when_no_json(self, control_plane):
+        """Plain-text provider error gets surfaced as response_excerpt."""
+
+        async def executor(**kwargs: object) -> dict[str, object]:
+            return {
+                "status_code": 422,
+                "response_json": {},
+                "response_text": "internal upstream timeout from provider",
+                "response_headers": {},
+            }
+
+        service = ExternalGatewayService(
+            control_plane_state=control_plane,
+            request_executor=executor,
+            environment={"AGENT_OBOLOS_WALLET_ADDRESS": "0xabc123"},
+        )
+
+        result = await service.call_api_via_capability(
+            provider_id="obolos.tech",
+            capability_id="listings_bid_v1",
+            resource="listing-id-3",
+            method="POST",
+            json_payload={"price": "1.0"},
+            requester="cli",
+        )
+
+        denial = result["denial"]
+        assert "internal upstream timeout from provider" in denial["detail"]
+        assert denial["metadata"]["provider_error"] == "internal upstream timeout from provider"
+
+    @pytest.mark.asyncio
+    async def test_denial_handles_nested_error_object(self, control_plane):
+        """JSON {error: {message: ...}} still extracts the message."""
+
+        async def executor(**kwargs: object) -> dict[str, object]:
+            return {
+                "status_code": 400,
+                "response_json": {
+                    "error": {"message": "Invalid price format", "code": "BAD_PRICE"}
+                },
+                "response_text": "",
+                "response_headers": {},
+            }
+
+        service = ExternalGatewayService(
+            control_plane_state=control_plane,
+            request_executor=executor,
+            environment={"AGENT_OBOLOS_WALLET_ADDRESS": "0xabc123"},
+        )
+
+        result = await service.call_api_via_capability(
+            provider_id="obolos.tech",
+            capability_id="listings_bid_v1",
+            resource="listing-id-4",
+            method="POST",
+            json_payload={"price": "0"},
+            requester="cli",
+        )
+
+        denial = result["denial"]
+        assert denial["metadata"]["provider_error"] == "Invalid price format"
+        assert "Invalid price format" in denial["detail"]
+
+    @pytest.mark.asyncio
+    async def test_denial_truncates_long_provider_errors(self, control_plane):
+        """Bounded extraction — no unbounded payload dumps in audit metadata."""
+
+        long_msg = "X" * 1000
+
+        async def executor(**kwargs: object) -> dict[str, object]:
+            return {
+                "status_code": 400,
+                "response_json": {"error": long_msg},
+                "response_text": "",
+                "response_headers": {},
+            }
+
+        service = ExternalGatewayService(
+            control_plane_state=control_plane,
+            request_executor=executor,
+            environment={"AGENT_OBOLOS_WALLET_ADDRESS": "0xabc123"},
+        )
+
+        result = await service.call_api_via_capability(
+            provider_id="obolos.tech",
+            capability_id="listings_bid_v1",
+            resource="listing-id-5",
+            method="POST",
+            json_payload={"price": "1"},
+            requester="cli",
+        )
+
+        denial = result["denial"]
+        # Bounded to 200 chars per _extract_provider_error_detail contract
+        assert len(denial["metadata"]["provider_error"]) == 200
+
+    def test_extract_provider_error_detail_static_paths(self):
+        """Direct unit coverage of the extractor's branches."""
+        from agent.control.gateway import ExternalGatewayService as Svc
+
+        # Plain "error"
+        assert Svc._extract_provider_error_detail(
+            response_json={"error": "boom"}, response_text="",
+        ) == "boom"
+        # "message" fallback
+        assert Svc._extract_provider_error_detail(
+            response_json={"message": "msg"}, response_text="",
+        ) == "msg"
+        # "errors" list
+        assert Svc._extract_provider_error_detail(
+            response_json={"errors": [{"message": "first"}, {"message": "second"}]},
+            response_text="",
+        ) == "first"
+        # Plain text fallback
+        assert Svc._extract_provider_error_detail(
+            response_json={}, response_text="raw error",
+        ) == "raw error"
+        # HTML body skipped
+        assert Svc._extract_provider_error_detail(
+            response_json={}, response_text="<html>500</html>",
+        ) == ""
+        # Empty everything
+        assert Svc._extract_provider_error_detail(
+            response_json={}, response_text="",
+        ) == ""

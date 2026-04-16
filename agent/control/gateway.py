@@ -1780,25 +1780,93 @@ class ExternalGatewayService:
                 except Exception:
                     pass  # settlement hook failure must not break gateway
             return denial
+        # Surface upstream provider error detail so operators can debug live
+        # API failures without grepping through logs. Prefer structured JSON
+        # error fields, fall back to a short text excerpt, then HTTP status.
+        response_json = result.get("response_json") or {}
+        response_text = str(result.get("response_text") or "")
+        provider_detail = self._extract_provider_error_detail(
+            response_json=response_json if isinstance(response_json, dict) else {},
+            response_text=response_text,
+        )
+        gateway_error = result.get("error") or ""
+
+        # Build a layered detail string: gateway error → provider detail → status.
+        detail_parts: list[str] = []
+        if gateway_error:
+            detail_parts.append(str(gateway_error))
+        if provider_detail and provider_detail not in detail_parts:
+            detail_parts.append(f"Provider: {provider_detail}")
+        if not detail_parts:
+            detail_parts.append(
+                f"Provider '{provider_id}' returned HTTP {status_code or '0'}."
+            )
+        detail = " | ".join(detail_parts)
+
+        metadata: dict[str, Any] = {
+            "provider_id": provider_id,
+            "capability_id": capability_id,
+            "route_id": route_id,
+            "target_url": request_spec["target_url"],
+            "status_code": status_code,
+        }
+        if provider_detail:
+            metadata["provider_error"] = provider_detail
+        # Include a short, bounded response excerpt for operator visibility.
+        # Keep payloads small to avoid log/audit bloat and accidental dumps.
+        if response_text and not provider_detail:
+            metadata["response_excerpt"] = response_text[:500]
+
         return make_denial(
             code="external_api_call_failed",
             summary="External API call failed",
-            detail=(
-                result.get("error")
-                or f"Provider '{provider_id}' returned HTTP {status_code or '0'}."
-            ),
+            detail=detail,
             scope=provider_id,
             policy_id=policy.id,
             environment_profile_id=policy.environment_profile_id,
             suggested_action="Review the provider response, auth, and route configuration, then retry.",
-            metadata={
-                "provider_id": provider_id,
-                "capability_id": capability_id,
-                "route_id": route_id,
-                "target_url": request_spec["target_url"],
-                "status_code": status_code,
-            },
+            metadata=metadata,
         )
+
+    @staticmethod
+    def _extract_provider_error_detail(
+        *,
+        response_json: dict[str, Any],
+        response_text: str,
+    ) -> str:
+        """Extract the most useful error string from a provider response.
+
+        Tries structured JSON fields first (Obolos and most REST APIs put
+        their errors under "error" / "message" / "detail" / "errors").
+        Falls back to a trimmed text excerpt. Always bounded to 200 chars
+        so operator-facing detail stays compact and audit-safe.
+        """
+        # Structured JSON fields, in priority order
+        for field in ("error", "message", "detail", "error_message", "title"):
+            value = response_json.get(field)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:200]
+            if isinstance(value, dict):
+                # Some APIs nest: {"error": {"message": "..."}}
+                nested = value.get("message") or value.get("detail")
+                if isinstance(nested, str) and nested.strip():
+                    return nested.strip()[:200]
+        # Some APIs return {"errors": [{"message": "..."}, ...]}
+        errors_list = response_json.get("errors")
+        if isinstance(errors_list, list) and errors_list:
+            first = errors_list[0]
+            if isinstance(first, str) and first.strip():
+                return first.strip()[:200]
+            if isinstance(first, dict):
+                msg = first.get("message") or first.get("detail")
+                if isinstance(msg, str) and msg.strip():
+                    return msg.strip()[:200]
+        # Plain-text fallback (HTML / non-JSON responses)
+        if response_text:
+            stripped = response_text.strip()
+            if stripped and not stripped.startswith("<"):  # skip HTML blobs
+                return stripped[:200]
+        return ""
 
     async def _execute_http_request_with_retry(
         self,

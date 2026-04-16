@@ -338,7 +338,12 @@ class MarketplaceService:
 
         Both come from the vault. Either one matching a listing's creator
         means "this is my listing → cannot bid on it (same-wallet rule)".
+
+        The vault lookup must be a synchronous callable. Async lookups (e.g.
+        AsyncMock in tests) are intentionally ignored to avoid unawaited
+        coroutines — production gateway always exposes a sync `_secret_lookup`.
         """
+        import inspect
         import os
         cached = getattr(self, "_my_wallets_cached", None)
         if cached is not None:
@@ -351,31 +356,29 @@ class MarketplaceService:
         if env_val:
             ids.add(env_val.lower())
 
-        # Source 2: vault — Obolos auth (typically ANP id like "als-john-b2jk")
+        # Source 2/3: vault — pull all known representations of the identity
         if self._gateway is not None:
             lookup = getattr(self._gateway, "_secret_lookup", None)
-            if callable(lookup):
-                try:
-                    anp = str(lookup("obolos.tech.wallet_address") or "").strip()
-                    if anp:
-                        ids.add(anp.lower())
-                except Exception:
-                    pass
-
-                # Source 3: vault EVM address (Obolos uses this on-chain).
-                # First try the dedicated key, then derive from ETH_PRIVATE_KEY.
-                try:
-                    evm = str(lookup("obolos.tech.client_address") or "").strip()
-                    if evm:
-                        ids.add(evm.lower())
-                except Exception:
-                    pass
-                try:
-                    eth_addr = str(lookup("ETH_ADDRESS") or "").strip()
-                    if eth_addr:
-                        ids.add(eth_addr.lower())
-                except Exception:
-                    pass
+            # Accept only sync callables. AsyncMock and async helpers would
+            # return coroutines that never get awaited from this sync method.
+            if callable(lookup) and not inspect.iscoroutinefunction(lookup):
+                for key in (
+                    "obolos.tech.wallet_address",   # ANP id (auth header)
+                    "obolos.tech.client_address",   # explicit EVM, if set
+                    "ETH_ADDRESS",                  # John's vault EVM
+                ):
+                    try:
+                        value = lookup(key)
+                    except Exception:
+                        continue
+                    # Defense-in-depth: if the lookup unexpectedly returned a
+                    # coroutine (e.g. dynamic mock), close it instead of leaking.
+                    if inspect.iscoroutine(value):
+                        value.close()
+                        continue
+                    text = str(value or "").strip()
+                    if text:
+                        ids.add(text.lower())
 
         self._my_wallets_cached = ids
         return ids

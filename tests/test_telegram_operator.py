@@ -178,6 +178,8 @@ class TestBuildCommand:
         assert "Použitie" in result
 
     async def test_build_delegates_to_intake(self, handler, mock_agent):
+        # --no-coach bypasses the spec-quality gate; this test verifies
+        # the intake-delegation contract, not the coach behavior.
         mock_agent.submit_operator_intake.return_value = {
             "status": "completed",
             "job_kind": "build",
@@ -187,7 +189,7 @@ class TestBuildCommand:
             "job": {"status": "completed", "metadata": {}},
         }
         result = await handler.handle(
-            '/build . --description add tests',
+            '/build . --no-coach --description add tests',
             user_id=1, chat_id=1,
         )
         assert "b456" in result
@@ -214,10 +216,39 @@ class TestBuildCommand:
             "job": {"status": "completed", "metadata": {}},
         }
 
-        result = await handler.handle('/build . --description scaffold service', user_id=1, chat_id=1)
+        result = await handler.handle(
+            '/build . --no-coach --description scaffold service',
+            user_id=1, chat_id=1,
+        )
 
         assert "b600" in result
         assert captured["timeout"] == 600.0
+
+    async def test_build_concrete_description_skips_gate(self, handler, mock_agent):
+        """A well-formed description passes the spec gate without --no-coach.
+
+        Documents that the gate is heuristic, not blanket-blocking: real
+        specs with concrete tech terms + acceptance signals go straight
+        through to intake.
+        """
+        mock_agent.submit_operator_intake.return_value = {
+            "status": "completed",
+            "job_kind": "build",
+            "job_id": "b789",
+            "qualification": {"resolved_work_type": "build", "risk_level": "low"},
+            "plan": {"budget": {"estimated_cost_usd": 3.0}},
+            "job": {"status": "completed", "metadata": {}},
+        }
+        # Concrete: mentions function, returns, raises, pytest, edge cases
+        result = await handler.handle(
+            '/build . --description '
+            'Add a pytest test that calls parse_csv() with empty input '
+            'and asserts it returns an empty list and raises ValueError '
+            'on malformed JSON header rows',
+            user_id=1, chat_id=1,
+        )
+        assert "b789" in result
+        mock_agent.submit_operator_intake.assert_called_once()
 
 
 class TestSettlementCommand:
