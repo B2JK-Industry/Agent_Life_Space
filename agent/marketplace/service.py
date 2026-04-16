@@ -329,6 +329,23 @@ class MarketplaceService:
         bid = connector.prepare_bid(opportunity, evaluation)
         return bid
 
+    def _resolve_my_wallet(self) -> str:
+        """Resolve John's Obolos wallet from env (preferred) or vault (fallback)."""
+        import os
+        cached = getattr(self, "_my_wallet_cached", None)
+        if cached is not None:
+            return cached
+        wallet = (os.environ.get("AGENT_OBOLOS_WALLET_ADDRESS", "") or "").strip()
+        if not wallet and self._gateway is not None:
+            lookup = getattr(self._gateway, "_secret_lookup", None)
+            if callable(lookup):
+                try:
+                    wallet = str(lookup("obolos.tech.wallet_address") or "").strip()
+                except Exception:
+                    wallet = ""
+        self._my_wallet_cached = wallet.lower()
+        return self._my_wallet_cached
+
     def get_listing_bid_eligibility(self, opportunity: Opportunity) -> tuple[bool, str]:
         """Return whether a listing is currently biddable on the platform."""
         if not opportunity.is_listing:
@@ -343,8 +360,7 @@ class MarketplaceService:
 
         # Same-wallet self-bidding check — Obolos rejects bids from the listing creator.
         # Skip locally to save approval cycles and platform calls.
-        import os
-        my_wallet = (os.environ.get("AGENT_OBOLOS_WALLET_ADDRESS", "") or "").strip().lower()
+        my_wallet = self._resolve_my_wallet()
         if my_wallet:
             for key in ("creator_wallet", "creator_address", "client_wallet",
                         "client_address", "owner_wallet", "owner_address"):

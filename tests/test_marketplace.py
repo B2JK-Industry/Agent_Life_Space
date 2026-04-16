@@ -2923,6 +2923,40 @@ class TestSameWalletProtection:
         await svc.close()
 
     @pytest.mark.asyncio
+    async def test_wallet_resolved_from_vault_when_env_empty(
+        self, tmp_path: Path, monkeypatch,
+    ):
+        """When AGENT_OBOLOS_WALLET_ADDRESS env is empty, resolve via gateway vault lookup."""
+        monkeypatch.delenv("AGENT_OBOLOS_WALLET_ADDRESS", raising=False)
+
+        # Mock gateway with a secret_lookup that returns a wallet
+        class FakeGateway:
+            def __init__(self):
+                self._secret_lookup = lambda name: (
+                    "0xVaultWallet" if name == "obolos.tech.wallet_address" else ""
+                )
+
+        svc = MarketplaceService(
+            gateway=FakeGateway(),
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            platform="obolos.tech",
+            platform_id="LV",
+            title="Vault wallet listing",
+            url="https://obolos.tech/api/listings/LV",
+            category="listing",
+            raw_data={"status": "open", "creator_wallet": "0xvaultwallet"},
+        )
+        biddable, reason = svc.get_listing_bid_eligibility(opp)
+        assert biddable is False, f"vault wallet lookup failed, got {biddable}: {reason}"
+        assert "own listing" in reason.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
     async def test_case_insensitive_wallet_match(
         self, tmp_path: Path, monkeypatch,
     ):
