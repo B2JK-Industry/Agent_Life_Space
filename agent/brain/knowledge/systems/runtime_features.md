@@ -18,6 +18,19 @@ Finance proposals nemôžu čakať navždy:
 - 7 dní → escalation (urgentná notifikácia)
 - 14 dní → auto-cancel
 
+## Obolos Marketplace (aktívne)
+John má plnú marketplace integráciu (worker + client role):
+- **Cron scan** (6h) — auto-evaluate listings, auto-bid, Telegram alert
+- **Konverzačný search** — "nájdi mi prácu" → live listings (WORK_SEARCH intent)
+- **Bid workflow** — /marketplace bid → /yes → submit (approval-gated)
+- **Job polling** — detekcia nových accepted jobov → Telegram alert
+- **Client mode** — /marketplace create-listing (FINANCE approval)
+
+DÔLEŽITÉ: Marketplace commands (/marketplace, /yes, /no) fungujú aj v sandbox mode.
+Sú to deterministic Telegram handlery, NEpoužívajú LLM tool use.
+Ak sa ťa niekto opýta "vieš nájsť prácu" — odpoveď je ÁNO, použi /marketplace listings
+alebo sa opýtaj prirodzene ("nájdi mi prácu").
+
 ## Tool Pre-routing
 Pred CLI callom sa automaticky fetchnú externé dáta:
 - Počasie → wttr.in (zadarmo, slovenské mestá)
