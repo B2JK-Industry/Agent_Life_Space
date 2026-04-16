@@ -1242,3 +1242,84 @@ class TestProjectTruthRegression:
         from agent.control.recurring import RecurringWorkflowManager
         source = inspect.getsource(RecurringWorkflowManager)
         assert "persist" in source.lower() or "save" in source.lower()
+
+
+class TestWorkSearchIntent:
+    """Detection + handler for 'find me work' / 'čo je na obolose?' intent."""
+
+    def test_detects_slovak_find_work(self):
+        from agent.brain.telegram_intents import detect_intent, WORK_SEARCH
+        assert detect_intent("nájdi mi prácu").intent == WORK_SEARCH
+
+    def test_detects_slovak_obolos_question(self):
+        from agent.brain.telegram_intents import detect_intent, WORK_SEARCH
+        assert detect_intent("čo je na obolose?").intent == WORK_SEARCH
+
+    def test_detects_english_find_work(self):
+        from agent.brain.telegram_intents import detect_intent, WORK_SEARCH
+        assert detect_intent("find me some work").intent == WORK_SEARCH
+
+    def test_detects_english_any_jobs(self):
+        from agent.brain.telegram_intents import detect_intent, WORK_SEARCH
+        assert detect_intent("any jobs available on obolos?").intent == WORK_SEARCH
+
+    def test_detects_bare_obolos(self):
+        from agent.brain.telegram_intents import detect_intent, WORK_SEARCH
+        assert detect_intent("obolos?").intent == WORK_SEARCH
+
+    def test_detects_show_listings(self):
+        from agent.brain.telegram_intents import detect_intent, WORK_SEARCH
+        assert detect_intent("ukáž mi listings na obolose").intent == WORK_SEARCH
+
+    def test_does_not_false_positive_on_obolos_in_sentence(self):
+        from agent.brain.telegram_intents import detect_intent
+        # Normal chat about Obolos should NOT trigger work search
+        # (requires interrogative or search-like verb)
+        result = detect_intent("obolos is a marketplace built on Base")
+        assert result is None or result.intent != "work_search"
+
+    @pytest.mark.asyncio
+    async def test_handler_returns_listings(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from agent.brain.telegram_intents import handle_work_search
+        from agent.marketplace.models import Opportunity
+
+        opp = Opportunity(
+            platform="obolos.tech", platform_id="L1",
+            title="Python code review",
+            url="https://obolos.tech/api/listings/L1",
+            category="listing", budget_max=10.0, currency="USD",
+            skills_required=["python", "code-review"],
+            raw_data={"status": "open"},
+        )
+        agent = MagicMock()
+        agent.marketplace.list_listings = AsyncMock(return_value=[opp])
+        agent.marketplace.list_bids = AsyncMock(return_value=[])
+        agent.marketplace.evaluate.return_value = MagicMock(
+            verdict=MagicMock(value="feasible"), confidence=0.8,
+        )
+
+        result = await handle_work_search(agent)
+        assert "Python code review" in result
+        assert "/marketplace bid" in result
+        assert "$10.00" in result
+
+    @pytest.mark.asyncio
+    async def test_handler_shows_empty_message(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from agent.brain.telegram_intents import handle_work_search
+
+        agent = MagicMock()
+        agent.marketplace.list_listings = AsyncMock(return_value=[])
+
+        result = await handle_work_search(agent)
+        assert "nie sú žiadne" in result.lower() or "no open" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_handler_no_marketplace(self):
+        from unittest.mock import MagicMock
+        from agent.brain.telegram_intents import handle_work_search
+
+        agent = MagicMock(spec=[])  # no marketplace attr
+        result = await handle_work_search(agent)
+        assert "nie je inicializovaný" in result.lower() or "not initialized" in result.lower()

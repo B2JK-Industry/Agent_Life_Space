@@ -982,6 +982,9 @@ class AgentBrain:
             if intent == telegram_intents.WEB_ACCESS_CAPABILITY:
                 return telegram_intents.handle_web_access_capability()
 
+            if intent == telegram_intents.WORK_SEARCH:
+                return await telegram_intents.handle_work_search(self._agent)
+
             if intent == telegram_intents.SELF_UPDATE_QUESTION:
                 return telegram_intents.handle_self_update_question()
 

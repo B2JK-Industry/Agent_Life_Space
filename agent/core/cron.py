@@ -690,6 +690,9 @@ class AgentCron:
         # ── Re-execute approved bids that cron prepared earlier ──
         await self._resubmit_approved_bids(mkt)
 
+        # ── Detect newly accepted jobs — alert operator to start work ──
+        await self._check_accepted_jobs(mkt, jobs_raw)
+
     @staticmethod
     def _is_expired(opp: Any) -> bool:
         deadline = str(getattr(opp, "deadline", "") or opp.raw_data.get("deadline", ""))
@@ -878,3 +881,89 @@ class AgentCron:
 
         if resubmitted:
             logger.info("cron_resubmit_approved_bids", count=resubmitted)
+
+    # ─── Accepted Job Detection ───
+
+    _KNOWN_JOB_IDS_KEY = "_cron_known_job_ids"
+
+    async def _check_accepted_jobs(
+        self, mkt: Any, jobs_raw: list[dict[str, Any]],
+    ) -> None:
+        """Detect new accepted/open jobs and alert operator via Telegram.
+
+        Compares current job list against a set of previously-seen job IDs
+        stored on self (in-memory, resets on restart — that's fine, first
+        scan after restart will re-notify for any active jobs).
+
+        When a new job appears in status "open" or "in_progress", it means
+        our bid was accepted and we need to start working on it.
+        """
+        if not jobs_raw:
+            return
+
+        known: set[str] = getattr(self, self._KNOWN_JOB_IDS_KEY, set())
+        new_active: list[dict[str, Any]] = []
+
+        for job in jobs_raw:
+            job_id = str(job.get("id", job.get("job_id", "")))
+            if not job_id:
+                continue
+            status = str(job.get("status", "")).strip().lower()
+            # "open" = newly created from accepted bid, "in_progress" = work started
+            if status in ("open", "in_progress") and job_id not in known:
+                new_active.append(job)
+            known.add(job_id)
+
+        setattr(self, self._KNOWN_JOB_IDS_KEY, known)
+
+        if not new_active:
+            return
+
+        for job in new_active:
+            await self._notify_new_job(job, mkt)
+        logger.info("cron_new_accepted_jobs", count=len(new_active))
+
+    async def _notify_new_job(self, job: dict[str, Any], mkt: Any) -> None:
+        """Send Telegram alert for a newly accepted job with action suggestions."""
+        if not self._bot or not self._owner_chat_id:
+            return
+
+        job_id = str(job.get("id", job.get("job_id", "?")))
+        title = str(job.get("title", job.get("description", "Untitled")))[:60]
+        status = str(job.get("status", "?"))
+        budget = job.get("budget", job.get("price", ""))
+        client = str(job.get("client_address", job.get("client", "")))[:12]
+
+        # Try to find linked bid/opportunity for richer context
+        linkage = await mkt._find_linkage_for_job(job_id) if hasattr(mkt, "_find_linkage_for_job") else {}
+
+        lines = [
+            "🎉 *Nový job bol prijatý!*",
+            "",
+            f"📋 *{title}*",
+        ]
+        if budget:
+            lines.append(f"💰 Budget: {budget}")
+        if client:
+            lines.append(f"👤 Klient: `{client}...`")
+        lines.append(f"📊 Status: {status}")
+        lines.append(f"🆔 Job ID: `{job_id}`")
+
+        if linkage.get("project_id"):
+            lines.append(f"📁 ALS project: `{linkage['project_id']}`")
+
+        lines.extend([
+            "",
+            "*Ďalšie kroky:*",
+            f"  `/marketplace job {job_id[:12]}` — detail jobu",
+            f"  `/build . --description \"<podľa zadania>\"` — spustiť prácu",
+            f"  `/marketplace job-submit {job_id[:12]}` — odoslať výsledok",
+            "",
+            "Alebo mi napíš čo treba a pomôžem s vykonaním.",
+        ])
+
+        msg = "\n".join(lines)
+        try:
+            await self._bot.send_message(self._owner_chat_id, msg)
+        except Exception:
+            logger.warning("cron_new_job_telegram_failed")

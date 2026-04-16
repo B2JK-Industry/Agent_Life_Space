@@ -3204,3 +3204,128 @@ class TestAutoScoutFailureNotification:
         assert "Nepodarilo sa" in msg or "RuntimeError" in msg
 
         await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Cron: Accepted Job Detection
+# ─────────────────────────────────────────────
+
+
+class TestAcceptedJobPolling:
+    """Cron detects newly accepted jobs and alerts operator."""
+
+    def _make_cron(self, agent, bot=None, chat_id=0):
+        from agent.core.cron import AgentCron
+        return AgentCron(agent, telegram_bot=bot, owner_chat_id=chat_id)
+
+    @pytest.mark.asyncio
+    async def test_new_open_job_triggers_alert(self, tmp_path: Path):
+        from unittest.mock import AsyncMock, MagicMock
+        from agent.core.approval import ApprovalQueue
+
+        svc = MarketplaceService(
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=ApprovalQueue(),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        jobs = [
+            {"id": "job-001", "status": "open", "title": "Python code review task"},
+            {"id": "job-002", "status": "completed", "title": "Old finished job"},
+        ]
+
+        await cron._check_accepted_jobs(svc, jobs)
+
+        # Only the open job should trigger a Telegram alert
+        assert bot.send_message.call_count == 1
+        msg = bot.send_message.call_args[0][1]
+        assert "job-001" in msg
+        assert "prijatý" in msg.lower() or "accepted" in msg.lower()
+        assert "/marketplace job" in msg
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_same_job_not_alerted_twice(self, tmp_path: Path):
+        from unittest.mock import AsyncMock, MagicMock
+        from agent.core.approval import ApprovalQueue
+
+        svc = MarketplaceService(
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=ApprovalQueue(),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        jobs = [{"id": "job-001", "status": "open", "title": "First scan"}]
+
+        # First scan — alerted
+        await cron._check_accepted_jobs(svc, jobs)
+        assert bot.send_message.call_count == 1
+
+        # Second scan — same job, no new alert
+        bot.reset_mock()
+        await cron._check_accepted_jobs(svc, jobs)
+        assert bot.send_message.call_count == 0
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_jobs_no_alert(self, tmp_path: Path):
+        from unittest.mock import AsyncMock, MagicMock
+        from agent.core.approval import ApprovalQueue
+
+        svc = MarketplaceService(
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=ApprovalQueue(),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        await cron._check_accepted_jobs(svc, [])
+        assert not bot.send_message.called
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_completed_jobs_ignored(self, tmp_path: Path):
+        from unittest.mock import AsyncMock, MagicMock
+        from agent.core.approval import ApprovalQueue
+
+        svc = MarketplaceService(
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=ApprovalQueue(),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        jobs = [
+            {"id": "j1", "status": "completed", "title": "Done"},
+            {"id": "j2", "status": "cancelled", "title": "Cancelled"},
+        ]
+
+        await cron._check_accepted_jobs(svc, jobs)
+        assert not bot.send_message.called
+
+        await svc.close()
