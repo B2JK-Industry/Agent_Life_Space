@@ -763,11 +763,11 @@ class AgentCron:
             # Submit bid — triggers approval queue, does NOT send money
             try:
                 result = await mkt.submit_bid(bid)
-            except Exception:
+            except Exception as exc:
                 logger.exception("cron_scout_submit_failed", opp_id=opp.id)
-                continue
+                result = {"ok": False, "error": f"Submit raised: {type(exc).__name__}: {exc}"[:200]}
 
-            # Send actionable Telegram notification
+            # Send actionable Telegram notification (success OR failure)
             await self._send_scout_notification(opp, evaluation, bid, result)
             scouted += 1
 

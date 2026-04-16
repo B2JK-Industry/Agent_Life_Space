@@ -86,6 +86,25 @@ class MarketplaceService:
                     created_at TEXT NOT NULL
                 )
             """)
+            # Indexes for hot-path lookups (auto-scout, dedup, terminal-state checks)
+            await self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_opp_platform ON opportunities(platform)",
+            )
+            await self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_opp_status ON opportunities(status)",
+            )
+            await self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_bids_opp ON bids(opportunity_id)",
+            )
+            await self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_bids_status ON bids(status)",
+            )
+            await self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_outcomes_job ON job_outcomes(external_job_id)",
+            )
+            await self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_outcomes_status ON job_outcomes(status)",
+            )
             await self._db.commit()
         self._initialized = True
         logger.info("marketplace_service_initialized", platforms=self._registry.list_platforms())
@@ -321,6 +340,17 @@ class MarketplaceService:
         market_status = str(opportunity.raw_data.get("status", "")).strip().lower()
         if market_status and market_status != "open":
             return False, f"Listing is not open for bids (platform status: {market_status})."
+
+        # Same-wallet self-bidding check — Obolos rejects bids from the listing creator.
+        # Skip locally to save approval cycles and platform calls.
+        import os
+        my_wallet = (os.environ.get("AGENT_OBOLOS_WALLET_ADDRESS", "") or "").strip().lower()
+        if my_wallet:
+            for key in ("creator_wallet", "creator_address", "client_wallet",
+                        "client_address", "owner_wallet", "owner_address"):
+                creator = str(opportunity.raw_data.get(key, "") or "").strip().lower()
+                if creator and creator == my_wallet:
+                    return False, "Cannot bid on your own listing (same wallet)."
         return True, ""
 
     async def submit_bid(self, bid: Bid) -> dict[str, Any]:

@@ -2861,3 +2861,142 @@ class TestCreateListing:
         assert "create-listing support" in result["error"].lower()
 
         await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Same-wallet self-bidding protection
+# ─────────────────────────────────────────────
+
+
+class TestSameWalletProtection:
+    """Tests for skipping bids on listings created by John's own wallet."""
+
+    @pytest.mark.asyncio
+    async def test_skips_listing_created_by_own_wallet(
+        self, tmp_path: Path, monkeypatch,
+    ):
+        """get_listing_bid_eligibility refuses listings with our wallet as creator."""
+        monkeypatch.setenv("AGENT_OBOLOS_WALLET_ADDRESS", "0xMyWallet")
+
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            platform="obolos.tech",
+            platform_id="L1",
+            title="Self listing",
+            url="https://obolos.tech/api/listings/L1",
+            category="listing",
+            raw_data={"status": "open", "creator_wallet": "0xMyWallet"},
+        )
+
+        biddable, reason = svc.get_listing_bid_eligibility(opp)
+        assert biddable is False
+        assert "own listing" in reason.lower()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_allows_listing_from_other_wallet(
+        self, tmp_path: Path, monkeypatch,
+    ):
+        """Listings created by a different wallet remain biddable."""
+        monkeypatch.setenv("AGENT_OBOLOS_WALLET_ADDRESS", "0xMyWallet")
+
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            platform="obolos.tech",
+            platform_id="L2",
+            title="Other person listing",
+            url="https://obolos.tech/api/listings/L2",
+            category="listing",
+            raw_data={"status": "open", "creator_wallet": "0xOther"},
+        )
+
+        biddable, reason = svc.get_listing_bid_eligibility(opp)
+        assert biddable is True
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_wallet_match(
+        self, tmp_path: Path, monkeypatch,
+    ):
+        """Wallet comparison is case-insensitive (0xABC == 0xabc)."""
+        monkeypatch.setenv("AGENT_OBOLOS_WALLET_ADDRESS", "0xABC123")
+
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            platform="obolos.tech",
+            platform_id="L3",
+            title="Mixed case",
+            url="https://obolos.tech/api/listings/L3",
+            category="listing",
+            raw_data={"status": "open", "client_wallet": "0xabc123"},
+        )
+
+        biddable, _ = svc.get_listing_bid_eligibility(opp)
+        assert biddable is False
+
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Auto-scout exception handling (notify on failure)
+# ─────────────────────────────────────────────
+
+
+class TestAutoScoutFailureNotification:
+    """Auto-scout must notify operator even when submit_bid raises."""
+
+    @pytest.mark.asyncio
+    async def test_notifies_operator_on_submit_exception(self, tmp_path: Path):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agent.core.approval import ApprovalQueue
+        from agent.core.cron import AgentCron
+
+        svc = MarketplaceService(
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=ApprovalQueue(),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = AgentCron(agent, telegram_bot=bot, owner_chat_id=123)
+
+        opp = Opportunity(
+            platform="obolos.tech",
+            platform_id="L9",
+            title="Will explode",
+            url="https://obolos.tech/api/listings/L9",
+            category="listing",
+            budget_max=10.0,
+            skills_required=["python"],
+            raw_data={"status": "open"},
+        )
+        await svc._persist_opportunity(opp)
+
+        # Patch submit_bid to raise
+        async def boom(_bid):
+            raise RuntimeError("network fire")
+        svc.submit_bid = boom  # type: ignore[assignment]
+
+        await cron._auto_scout_listings(svc, [opp])
+
+        # Operator MUST be told about the failure
+        assert bot.send_message.called
+        msg = bot.send_message.call_args[0][1]
+        assert "Nepodarilo sa" in msg or "RuntimeError" in msg
+
+        await svc.close()

@@ -2102,34 +2102,66 @@ class TelegramHandler:
         # /marketplace create-listing --title "..." --description "..." --budget N --deadline Nd
         # Optional: --approval-id <id> to execute after operator approval
         if action == "create-listing":
-            tokens = subargs.split("--")
+            # Use shlex for proper quote-aware tokenization (handles "Build *new* app", etc.)
+            import shlex
+            try:
+                tokens_raw = shlex.split(subargs)
+            except ValueError as exc:
+                return f"❌ Parsing error: {exc}. Použi úvodzovky správne."
+
             title = ""
             description = ""
             budget = 0.0
+            budget_provided = False
             deadline = "7d"
             approval_id = ""
-            for token in tokens:
-                token = token.strip()
-                if token.startswith("title "):
-                    title = token[6:].strip().strip('"').strip("'")
-                elif token.startswith("description "):
-                    description = token[12:].strip().strip('"').strip("'")
-                elif token.startswith("budget "):
+            i = 0
+            while i < len(tokens_raw):
+                tok = tokens_raw[i]
+                if tok == "--title" and i + 1 < len(tokens_raw):
+                    title = tokens_raw[i + 1]; i += 2; continue
+                if tok == "--description" and i + 1 < len(tokens_raw):
+                    description = tokens_raw[i + 1]; i += 2; continue
+                if tok == "--budget" and i + 1 < len(tokens_raw):
                     try:
-                        budget = float(token[7:].strip())
+                        budget = float(tokens_raw[i + 1])
+                        budget_provided = True
                     except ValueError:
-                        pass
-                elif token.startswith("deadline "):
-                    deadline = token[9:].strip()
-                elif token.startswith("approval-id"):
-                    rest = token[len("approval-id"):].lstrip("=").strip()
-                    approval_id = rest.strip('"').strip("'")
-            if not title or budget <= 0:
+                        return f"❌ --budget musí byť číslo, dostal som: `{tokens_raw[i + 1]}`"
+                    i += 2; continue
+                if tok == "--deadline" and i + 1 < len(tokens_raw):
+                    deadline = tokens_raw[i + 1]; i += 2; continue
+                if tok.startswith("--approval-id"):
+                    if "=" in tok:
+                        approval_id = tok.split("=", 1)[1]
+                        i += 1
+                    elif i + 1 < len(tokens_raw):
+                        approval_id = tokens_raw[i + 1]; i += 2
+                    else:
+                        i += 1
+                    continue
+                i += 1
+
+            if not title:
                 return (
+                    "❌ --title je povinný.\n"
                     "Usage: `/marketplace create-listing --title \"...\" "
-                    "--description \"...\" --budget 5 --deadline 7d`\n"
+                    "--description \"...\" --budget 5 --deadline 7d`"
+                )
+            if not budget_provided or budget <= 0:
+                return (
+                    "❌ --budget musí byť kladné číslo (USDC).\n"
+                    "Usage: `/marketplace create-listing --title \"...\" --budget 5`\n"
                     "_Spending USDC requires owner approval._"
                 )
+
+            # Markdown-safe rendering for echo (escape *, _, [, `)
+            def _md_escape(s: str) -> str:
+                for ch in ("\\", "`", "*", "_", "[", "]"):
+                    s = s.replace(ch, "\\" + ch)
+                return s
+            title_safe = _md_escape(title)
+
             result = await mkt.create_listing(
                 platform="obolos.tech",
                 title=title, description=description,
@@ -2142,16 +2174,15 @@ class TelegramHandler:
                     f"💰 *Listing potrebuje súhlas (až ${budget:.2f} USDC):*\n"
                     f"  `/queue approve {aid}` — schváliť\n"
                     f"  `/queue deny {aid}` — zamietnuť\n"
-                    f"\nPo schválení: `/marketplace create-listing --title \"{title}\" "
-                    f"--budget {budget} --approval-id={aid}`"
+                    f"\nPo schválení znova zavolaj rovnaký príkaz s `--approval-id={aid}`."
                 )
             if result.get("ok"):
                 data = result.get("data", {})
                 return (
                     f"✅ Listing vytvorený na obolos.tech:\n"
-                    f"  Title: *{title}*\n"
+                    f"  Title: *{title_safe}*\n"
                     f"  ID: `{data.get('id', '?')}`\n"
-                    f"  Budget: ${budget}\n"
+                    f"  Budget: ${budget:.2f}\n"
                     f"  Status: {data.get('status', 'open')}\n"
                     f"\n_Workeri budú bidovať. Pozri ich cez_ `/marketplace listings`."
                 )
