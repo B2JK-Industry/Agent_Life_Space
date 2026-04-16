@@ -240,6 +240,7 @@ class TelegramHandler:
             "/pipeline": self._cmd_pipeline,
             "/settlement": self._cmd_settlement,
             "/marketplace": self._cmd_marketplace,
+            "/spec": self._cmd_spec,
             "/help": self._cmd_help,
         }
 
@@ -280,7 +281,8 @@ class TelegramHandler:
             "/usage — spotreba tokenov a náklady\n"
             "/queue [pending|approve|deny] — stav pracovnej fronty a approvals\n"
             "/intake — spusti review alebo build cez unified intake\n"
-            "/build — shortcut pre build intake\n"
+            "/build — shortcut pre build intake (so spec quality gate)\n"
+            "/spec [idea] — spec coach: pomôže ti napísať dobrý popis pre /build\n"
             "/jobs — zoznam product jobov (review, build)\n"
             "/deliver — delivery status, filter, retry a odoslanie\n"
             "/telemetry — runtime telemetry dashboard\n"
@@ -1791,14 +1793,58 @@ class TelegramHandler:
         return "\n".join(lines)
 
     async def _cmd_build(self, args: str) -> str:
-        """Shortcut pre /intake --type build."""
+        """Shortcut pre /intake --type build with spec quality gate."""
         if not args.strip():
             return (
                 "*Použitie:*\n"
-                "`/build [cesta] --description \"čo chceš postaviť\"`\n"
-                "`/build agent/review/ --description \"add verification tests\"`\n\n"
-                "Skratka pre `/intake [cesta] --type build --description ...`"
+                "`/build [cesta] --description \"čo chceš postaviť\"`\n\n"
+                "*Príklad dobrého popisu:*\n"
+                "`/build /tmp/cli --description \"Python CLI s príkazmi add/list/sum, "
+                "ukladá expenses do JSON, vstup CSV, výstup tabuľka, pytest tests pre všetky "
+                "command paths\"`\n\n"
+                "*Príklad slabého popisu:*\n"
+                "`/build /tmp/x --description \"urob mi expense tracker\"` → "
+                "John ti odporučí `/spec` na vylepšenie.\n\n"
+                "*Tip:* Ak nevieš ako popísať, použi `/spec <tvoja predstava>` — "
+                "John ti pomôže napísať správny spec."
             )
+
+        # Spec quality gate: parse description and warn if too vague.
+        # Only fires on /build (not /intake) to keep power-user flow direct.
+        from agent.brain.spec_coach import score_spec_quality
+        # Extract the description for scoring (everything after --description)
+        description_part = ""
+        if "--description" in args:
+            after = args.split("--description", 1)[1].strip()
+            # Strip leading quote if present, and trailing flags
+            description_part = after.strip().strip('"').strip("'")
+            # Description in /build is everything after --description (no other flags after)
+        # Skip the gate when --no-coach explicitly opts out (power user)
+        skip_gate = "--no-coach" in args
+        if skip_gate:
+            args = args.replace("--no-coach", "").strip()
+
+        if description_part and not skip_gate:
+            quality = score_spec_quality(description_part)
+            if quality.is_too_vague:
+                # Don't block — warn and offer /spec, but allow /build with --no-coach
+                lines = [
+                    "⚠️ *Tvoj popis je trochu vágny* "
+                    f"(skóre {quality.score:.1f}/1.0).",
+                    "",
+                    "Problémy:",
+                ]
+                for issue in quality.issues[:4]:
+                    lines.append(f"  • {issue}")
+                lines.extend([
+                    "",
+                    "*Odporúčam:* `/spec " + description_part[:60] + "`",
+                    "→ John ti pomôže prepísať to na konkrétny spec.",
+                    "",
+                    "*Alebo* ak vieš čo robíš: pridaj `--no-coach` a build ide priamo.",
+                ])
+                return "\n".join(lines)
+
         # Inject --type build BEFORE --description so it gets parsed
         if "--type" not in args:
             if "--description" in args:
@@ -1806,6 +1852,54 @@ class TelegramHandler:
             else:
                 args = f"{args} --type build"
         return await self._cmd_intake(args)
+
+    async def _cmd_spec(self, args: str) -> str:
+        """Spec coach — turn vague idea into a structured build spec.
+
+        Usage:
+          /spec <vague idea about what you want to build>
+          /spec --path /tmp/foo <idea>   — specify target path
+        """
+        text = args.strip()
+        if not text:
+            return (
+                "*Použitie:*\n"
+                "`/spec <tvoja predstava o tom čo chceš>`\n\n"
+                "*Príklady:*\n"
+                "• `/spec expense tracker s CLI`\n"
+                "• `/spec script ktorý parsuje moje GitHub PRs`\n"
+                "• `/spec API pre TODO list s SQLite`\n\n"
+                "John ti vygeneruje konkrétny spec a pripravený `/build` príkaz.\n"
+                "Cestu môžeš prepísať: `/spec --path /tmp/myproj <idea>`"
+            )
+
+        # Optional --path override
+        target_path = "."
+        if text.startswith("--path "):
+            parts = text.split(None, 2)
+            if len(parts) >= 3:
+                target_path = parts[1]
+                text = parts[2]
+            else:
+                return "Použitie: `/spec --path <cesta> <idea>`"
+
+        from agent.brain.spec_coach import coach_spec
+        # Detect language from agent default — defaults to Slovak
+        import os
+        language = os.environ.get("AGENT_DEFAULT_LANGUAGE", "sk")
+
+        result = await coach_spec(text, target_path=target_path, language=language)
+        if not result.get("ok"):
+            return f"❌ Spec coach failed: {result.get('error', 'unknown')}"
+
+        spec = result.get("spec_markdown", "").strip()
+        cost = result.get("cost_usd", 0.0)
+        # Append a footer with cost transparency and next-step hint
+        footer = (
+            f"\n\n_(coach cost: ${cost:.4f}; "
+            f"skopíruj `/build` príkaz vyššie alebo uprav podľa potreby)_"
+        )
+        return spec + footer
 
     async def _cmd_jobs(self, args: str) -> str:
         """List recent product jobs or show detail for a specific job."""
