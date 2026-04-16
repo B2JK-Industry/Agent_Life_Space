@@ -2957,6 +2957,92 @@ class TestSameWalletProtection:
         await svc.close()
 
     @pytest.mark.asyncio
+    async def test_anp_id_and_evm_address_both_recognized(
+        self, tmp_path: Path, monkeypatch,
+    ):
+        """John has multiple identity formats (ANP id + EVM); both must match.
+
+        Vault stores ANP id under obolos.tech.wallet_address and EVM address
+        under ETH_ADDRESS. Listings reference creator by EVM address. Same-
+        wallet check must recognize both as 'me'.
+        """
+        monkeypatch.delenv("AGENT_OBOLOS_WALLET_ADDRESS", raising=False)
+
+        class FakeGateway:
+            def __init__(self):
+                secrets = {
+                    "obolos.tech.wallet_address": "als-john-b2jk",
+                    "ETH_ADDRESS": "0xa68603e12d0d7b4C6fb973fEB4b4EcCD3513FdB8",
+                }
+                self._secret_lookup = lambda name: secrets.get(name, "")
+
+        svc = MarketplaceService(
+            gateway=FakeGateway(),
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        # Listing with EVM creator → must be blocked (matches our ETH_ADDRESS)
+        opp_evm = Opportunity(
+            platform="obolos.tech", platform_id="LE",
+            title="EVM-creator listing",
+            url="https://obolos.tech/api/listings/LE",
+            category="listing",
+            raw_data={"status": "open",
+                      "client_address": "0xa68603e12d0d7b4c6fb973feb4b4eccd3513fdb8"},
+        )
+        biddable, reason = svc.get_listing_bid_eligibility(opp_evm)
+        assert not biddable, f"EVM match failed: {reason}"
+
+        # Listing with ANP id creator → also blocked
+        opp_anp = Opportunity(
+            platform="obolos.tech", platform_id="LA",
+            title="ANP-creator listing",
+            url="https://obolos.tech/api/listings/LA",
+            category="listing",
+            raw_data={"status": "open", "creator_wallet": "als-john-b2jk"},
+        )
+        biddable2, _ = svc.get_listing_bid_eligibility(opp_anp)
+        assert not biddable2, "ANP id match failed"
+
+        # Foreign EVM → biddable
+        opp_other = Opportunity(
+            platform="obolos.tech", platform_id="LO",
+            title="Other listing",
+            url="https://obolos.tech/api/listings/LO",
+            category="listing",
+            raw_data={"status": "open", "client_address": "0xdeadbeef0000"},
+        )
+        biddable3, _ = svc.get_listing_bid_eligibility(opp_other)
+        assert biddable3, "Foreign wallet incorrectly blocked"
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_resolve_my_wallets_returns_set(self, tmp_path: Path, monkeypatch):
+        """The plural API _resolve_my_wallets returns all known identities."""
+        monkeypatch.delenv("AGENT_OBOLOS_WALLET_ADDRESS", raising=False)
+
+        class FakeGateway:
+            def __init__(self):
+                secrets = {
+                    "obolos.tech.wallet_address": "als-john-b2jk",
+                    "ETH_ADDRESS": "0xABC123",
+                    "obolos.tech.client_address": "0xDEF456",
+                }
+                self._secret_lookup = lambda name: secrets.get(name, "")
+
+        svc = MarketplaceService(gateway=FakeGateway(),
+                                 db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        wallets = svc._resolve_my_wallets()
+        assert wallets == {"als-john-b2jk", "0xabc123", "0xdef456"}
+        await svc.close()
+
+    @pytest.mark.asyncio
     async def test_case_insensitive_wallet_match(
         self, tmp_path: Path, monkeypatch,
     ):

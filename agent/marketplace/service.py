@@ -329,22 +329,61 @@ class MarketplaceService:
         bid = connector.prepare_bid(opportunity, evaluation)
         return bid
 
-    def _resolve_my_wallet(self) -> str:
-        """Resolve John's Obolos wallet from env (preferred) or vault (fallback)."""
+    def _resolve_my_wallets(self) -> set[str]:
+        """Resolve all of John's identities/addresses on Obolos (lowercase set).
+
+        John has multiple representations of the same identity:
+        - ANP id (e.g. "als-john-b2jk") used in x-wallet-address auth header
+        - EVM address (e.g. "0x...") used as listing client_address on-chain
+
+        Both come from the vault. Either one matching a listing's creator
+        means "this is my listing → cannot bid on it (same-wallet rule)".
+        """
         import os
-        cached = getattr(self, "_my_wallet_cached", None)
+        cached = getattr(self, "_my_wallets_cached", None)
         if cached is not None:
             return cached
-        wallet = (os.environ.get("AGENT_OBOLOS_WALLET_ADDRESS", "") or "").strip()
-        if not wallet and self._gateway is not None:
+
+        ids: set[str] = set()
+
+        # Source 1: env override (rarely set in production)
+        env_val = (os.environ.get("AGENT_OBOLOS_WALLET_ADDRESS", "") or "").strip()
+        if env_val:
+            ids.add(env_val.lower())
+
+        # Source 2: vault — Obolos auth (typically ANP id like "als-john-b2jk")
+        if self._gateway is not None:
             lookup = getattr(self._gateway, "_secret_lookup", None)
             if callable(lookup):
                 try:
-                    wallet = str(lookup("obolos.tech.wallet_address") or "").strip()
+                    anp = str(lookup("obolos.tech.wallet_address") or "").strip()
+                    if anp:
+                        ids.add(anp.lower())
                 except Exception:
-                    wallet = ""
-        self._my_wallet_cached = wallet.lower()
-        return self._my_wallet_cached
+                    pass
+
+                # Source 3: vault EVM address (Obolos uses this on-chain).
+                # First try the dedicated key, then derive from ETH_PRIVATE_KEY.
+                try:
+                    evm = str(lookup("obolos.tech.client_address") or "").strip()
+                    if evm:
+                        ids.add(evm.lower())
+                except Exception:
+                    pass
+                try:
+                    eth_addr = str(lookup("ETH_ADDRESS") or "").strip()
+                    if eth_addr:
+                        ids.add(eth_addr.lower())
+                except Exception:
+                    pass
+
+        self._my_wallets_cached = ids
+        return ids
+
+    # Backwards compat — single-wallet API kept for any external callers/tests.
+    def _resolve_my_wallet(self) -> str:
+        wallets = self._resolve_my_wallets()
+        return next(iter(wallets), "") if wallets else ""
 
     def get_listing_bid_eligibility(self, opportunity: Opportunity) -> tuple[bool, str]:
         """Return whether a listing is currently biddable on the platform."""
@@ -358,14 +397,14 @@ class MarketplaceService:
         if market_status and market_status != "open":
             return False, f"Listing is not open for bids (platform status: {market_status})."
 
-        # Same-wallet self-bidding check — Obolos rejects bids from the listing creator.
-        # Skip locally to save approval cycles and platform calls.
-        my_wallet = self._resolve_my_wallet()
-        if my_wallet:
+        # Same-wallet self-bidding check — match against any of John's known
+        # identities (ANP id + EVM address, both stored in vault).
+        my_wallets = self._resolve_my_wallets()
+        if my_wallets:
             for key in ("creator_wallet", "creator_address", "client_wallet",
                         "client_address", "owner_wallet", "owner_address"):
                 creator = str(opportunity.raw_data.get(key, "") or "").strip().lower()
-                if creator and creator == my_wallet:
+                if creator and creator in my_wallets:
                     return False, "Cannot bid on your own listing (same wallet)."
         return True, ""
 
