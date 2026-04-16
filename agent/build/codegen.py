@@ -172,6 +172,14 @@ def _parse_operations(
         text = text[:-3]
     text = text.strip()
 
+    # Strip preamble/postamble text around the JSON array.
+    # Opus sometimes prefixes explanations like "The fix is..." before the JSON.
+    # Find the first '[' and matching last ']' to extract just the array.
+    if not text.startswith("[") and "[" in text:
+        text = text[text.index("["):]
+    if not text.endswith("]") and "]" in text:
+        text = text[:text.rindex("]") + 1]
+
     # Try parsing as JSON array
     try:
         data = json.loads(text, strict=False)

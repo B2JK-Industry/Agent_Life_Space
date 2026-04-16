@@ -115,12 +115,18 @@ async def run_project_in_docker(
             result.error = "No files to build"
             return result
 
-        # Phase 1: Install dependencies + ruff (with network, single phase)
+        # Phase 1: Install dependencies + ruff into project_dir/.deps so the
+        # next phase (no network) sees them.  Each Docker phase uses --rm so
+        # site-packages installed inside the container are lost; we install
+        # to a target dir that lives in the writable bind-mounted project_dir.
         has_requirements = (Path(project_dir) / "requirements.txt").exists()
         if has_requirements:
             deps_result = await _docker_run_phase(
                 project_dir=project_dir,
-                script="pip install -q -r /work/requirements.txt ruff 2>&1",
+                script=(
+                    "pip install -q --target=/work/.deps "
+                    "-r /work/requirements.txt ruff 2>&1"
+                ),
                 network=True,
                 timeout=120,
                 memory=memory,
@@ -134,6 +140,15 @@ async def run_project_in_docker(
                                output=deps_result["output"][:500])
                 # Continue anyway — tests might reveal the issue
         else:
+            # Always install ruff so lint phase has it available.
+            await _docker_run_phase(
+                project_dir=project_dir,
+                script="pip install -q --target=/work/.deps ruff 2>&1",
+                network=True,
+                timeout=60,
+                memory=memory,
+                phase="deps",
+            )
             result.deps_installed = True
 
         # Phase 2: Run tests (no network)
@@ -142,10 +157,14 @@ async def run_project_in_docker(
         result.test_output = test_result["output"]
         result.exit_code = test_result.get("exit_code", 1)
 
-        # Phase 3: Lint (no network — ruff installed in deps phase)
+        # Phase 3: Lint (no network — ruff installed in deps phase to /work/.deps)
         lint_result = await _docker_run_phase(
             project_dir=project_dir,
-            script="cd /work && ruff check --select E,F,W . 2>&1 || true",
+            script=(
+                "cd /work && export PATH=/work/.deps/bin:$PATH && "
+                "export PYTHONPATH=/work/.deps:/work && "
+                "python -m ruff check --select E,F,W . 2>&1 || true"
+            ),
             network=False,
             timeout=60,
             memory=memory,
@@ -224,19 +243,31 @@ async def _run_tests_in_docker(
     memory: str,
     timeout: int,
 ) -> dict[str, Any]:
-    """Run pytest in Docker container. No network."""
-    # Discover test command
-    has_pytest = (Path(project_dir) / "requirements.txt").exists() and \
-        "pytest" in (Path(project_dir) / "requirements.txt").read_text()
+    """Run pytest in Docker container. No network.
+
+    Deps were installed into /work/.deps in the previous phase via --target,
+    so PYTHONPATH must include it for `python -m pytest` to find pytest.
+    """
+    # Detect pytest requirement (heuristic: requirements.txt mentions pytest
+    # OR a tests/ dir exists).  Either way the deps phase already installed it.
+    req_path = Path(project_dir) / "requirements.txt"
+    tests_dir = Path(project_dir) / "tests"
+    has_pytest = (
+        (req_path.exists() and "pytest" in req_path.read_text())
+        or tests_dir.is_dir()
+    )
 
     if has_pytest:
         script = (
-            "cd /work && "
+            "cd /work && export PYTHONPATH=/work/.deps:/work && "
             "python -m pytest tests/ -v --tb=short --no-header 2>&1 || "
             "python -m pytest . -v --tb=short --no-header 2>&1"
         )
     else:
-        script = "cd /work && python -m pytest -v --tb=short --no-header 2>&1"
+        script = (
+            "cd /work && export PYTHONPATH=/work/.deps:/work && "
+            "python -m pytest -v --tb=short --no-header 2>&1"
+        )
 
     return await _docker_run_phase(
         project_dir=project_dir,
@@ -270,11 +301,12 @@ async def _docker_run_phase(
         f"--network={network_flag}",
         "--pids-limit=100",
         "--security-opt=no-new-privileges",
-        # Mount project read-only, copy to /work for writable execution
-        "-v", f"{project_dir}:/project:ro",
+        # Mount project writable so /work/.deps (pip --target install)
+        # persists across deps → test → lint phases (each phase is --rm).
+        "-v", f"{project_dir}:/work",
         _DOCKER_IMAGE,
         "bash", "-c",
-        f"mkdir -p /work && cp -a /project/. /work/ && cd /work && {script}",
+        f"cd /work && {script}",
     ]
 
     docker_cmd = f"sg docker -c {shlex.quote(' '.join(shlex.quote(a) for a in docker_args))}"
