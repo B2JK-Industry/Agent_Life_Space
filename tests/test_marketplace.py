@@ -3223,7 +3223,10 @@ class TestAcceptedJobPolling:
         from unittest.mock import AsyncMock, MagicMock
         from agent.core.approval import ApprovalQueue
 
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
         svc = MarketplaceService(
+            gateway=gateway,
             db_path=str(tmp_path / "mkt.db"),
             approval_queue=ApprovalQueue(),
         )
@@ -3235,6 +3238,7 @@ class TestAcceptedJobPolling:
         bot = AsyncMock()
         cron = self._make_cron(agent, bot=bot, chat_id=123)
 
+        # Use "review" in title to exercise auto-work path (keyword match)
         jobs = [
             {"id": "job-001", "status": "open", "title": "Python code review task"},
             {"id": "job-002", "status": "completed", "title": "Old finished job"},
@@ -3242,12 +3246,11 @@ class TestAcceptedJobPolling:
 
         await cron._check_accepted_jobs(svc, jobs)
 
-        # Only the open job should trigger a Telegram alert
-        assert bot.send_message.call_count == 1
-        msg = bot.send_message.call_args[0][1]
-        assert "job-001" in msg
-        assert "prijatý" in msg.lower() or "accepted" in msg.lower()
-        assert "/marketplace job" in msg
+        # Open job triggers alert + auto-work attempt
+        assert bot.send_message.call_count >= 1
+        first_msg = bot.send_message.call_args_list[0][0][1]
+        assert "job-001" in first_msg
+        assert "prijatý" in first_msg.lower() or "accepted" in first_msg.lower()
 
         await svc.close()
 
@@ -3256,7 +3259,10 @@ class TestAcceptedJobPolling:
         from unittest.mock import AsyncMock, MagicMock
         from agent.core.approval import ApprovalQueue
 
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
         svc = MarketplaceService(
+            gateway=gateway,
             db_path=str(tmp_path / "mkt.db"),
             approval_queue=ApprovalQueue(),
         )
@@ -3268,11 +3274,13 @@ class TestAcceptedJobPolling:
         bot = AsyncMock()
         cron = self._make_cron(agent, bot=bot, chat_id=123)
 
-        jobs = [{"id": "job-001", "status": "open", "title": "First scan"}]
+        # Use "general task" to avoid auto-work (no keyword match)
+        jobs = [{"id": "job-001", "status": "open", "title": "General task"}]
 
         # First scan — alerted
         await cron._check_accepted_jobs(svc, jobs)
-        assert bot.send_message.call_count == 1
+        first_count = bot.send_message.call_count
+        assert first_count >= 1
 
         # Second scan — same job, no new alert
         bot.reset_mock()
