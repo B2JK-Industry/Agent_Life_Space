@@ -2351,24 +2351,32 @@ class TelegramHandler:
             while i < len(tokens_raw):
                 tok = tokens_raw[i]
                 if tok == "--title" and i + 1 < len(tokens_raw):
-                    title = tokens_raw[i + 1]; i += 2; continue
+                    title = tokens_raw[i + 1]
+                    i += 2
+                    continue
                 if tok == "--description" and i + 1 < len(tokens_raw):
-                    description = tokens_raw[i + 1]; i += 2; continue
+                    description = tokens_raw[i + 1]
+                    i += 2
+                    continue
                 if tok == "--budget" and i + 1 < len(tokens_raw):
                     try:
                         budget = float(tokens_raw[i + 1])
                         budget_provided = True
                     except ValueError:
                         return f"❌ --budget musí byť číslo, dostal som: `{tokens_raw[i + 1]}`"
-                    i += 2; continue
+                    i += 2
+                    continue
                 if tok == "--deadline" and i + 1 < len(tokens_raw):
-                    deadline = tokens_raw[i + 1]; i += 2; continue
+                    deadline = tokens_raw[i + 1]
+                    i += 2
+                    continue
                 if tok.startswith("--approval-id"):
                     if "=" in tok:
                         approval_id = tok.split("=", 1)[1]
                         i += 1
                     elif i + 1 < len(tokens_raw):
-                        approval_id = tokens_raw[i + 1]; i += 2
+                        approval_id = tokens_raw[i + 1]
+                        i += 2
                     else:
                         i += 1
                     continue

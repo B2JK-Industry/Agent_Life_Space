@@ -1723,6 +1723,8 @@ class TestRuntimeModel:
             "approval_before_gateway",
             "owner_api_call",
             "owner_api_call_optional_auth",
+            "owner_api_call_wallet_header",
+            "owner_api_call_optional_wallet_header",
         }
         approval_gateway_policy = next(
             item

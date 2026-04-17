@@ -737,6 +737,7 @@ class AgentCron:
         try:
             existing_bids = await mkt.list_bids(limit=200)
         except Exception:
+            logger.warning("cron_scout_list_bids_failed")
             existing_bids = []
         bid_opp_ids = {b.opportunity_id for b in existing_bids}
 
@@ -755,6 +756,8 @@ class AgentCron:
                 if not biddable:
                     continue
             except Exception:
+                logger.warning("cron_scout_eligibility_check_failed",
+                               opp_id=opp.id, title=getattr(opp, "title", "")[:50])
                 continue
 
             # Evaluate feasibility (local, no network)

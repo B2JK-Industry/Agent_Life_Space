@@ -178,6 +178,7 @@ def setup_tiered_logging(
     for h in list(root.handlers):
         if isinstance(h, _TierRouter):
             root.removeHandler(h)
+            h.close()  # release underlying file handles
         elif isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
             root.removeHandler(h)
     root.addHandler(router)
