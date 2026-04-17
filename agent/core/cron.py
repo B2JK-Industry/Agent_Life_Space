@@ -985,10 +985,10 @@ class AgentCron:
 
         # Classify: can I auto-work this?
         can_reject = any(kw in combined for kw in self._REJECT_KEYWORDS)
-        can_auto = (
-            not can_reject
-            and any(kw in combined for kw in self._AUTO_WORK_KEYWORDS)
-        )
+        can_auto = any(kw in combined for kw in self._AUTO_WORK_KEYWORDS)
+        # Jobs outside direct capabilities might still be doable via x402
+        # sub-contracting (e.g. video job → call x402 video API)
+        can_subcontract = can_reject and not can_auto
 
         # Build notification
         lines = [
@@ -1011,11 +1011,11 @@ class AgentCron:
                 "🔧 *Automaticky začínam pracovať...*",
                 "Pošlem výsledok keď budem hotový.",
             ])
-        elif can_reject:
+        elif can_subcontract:
             lines.extend([
                 "",
-                "❌ *Toto nie je v mojich schopnostiach* (video/design/frontend).",
-                "Automaticky odmietam...",
+                "🔄 *Nie je to moja priama schopnosť, ale skúsim nájsť*",
+                "*x402 API sub-contractor* na Obolose...",
             ])
         else:
             lines.extend([
@@ -1032,11 +1032,11 @@ class AgentCron:
         except Exception:
             logger.warning("cron_new_job_telegram_failed")
 
-        # Auto-execute if capable, auto-reject if incapable
+        # Auto-execute if capable, try sub-contracting if not
         if can_auto:
             await self._auto_execute_job(job_id, title, description, mkt)
-        elif can_reject:
-            await self._auto_reject_job(job_id, title, mkt)
+        elif can_subcontract:
+            await self._try_subcontract_job(job_id, title, description, mkt)
 
     async def _auto_execute_job(
         self,
@@ -1047,10 +1047,31 @@ class AgentCron:
     ) -> None:
         """Attempt to automatically execute an accepted job and submit the result.
 
-        For code-review type jobs: uses the review pipeline.
-        For code-generation type jobs: would need /build (not yet wired).
-        Falls back to a structured text deliverable based on the description.
+        Checks ACP funding status first — unfunded jobs cannot accept deliverables.
         """
+        # ── Pre-flight: check job is funded ──
+        try:
+            job_detail = await mkt.get_job_detail("obolos.tech", job_id)
+            if job_detail:
+                job_status = str(job_detail.get("status", "")).lower()
+                funded = job_detail.get("funded", job_detail.get("is_funded"))
+                # If the platform tells us it's not funded, wait
+                if funded is False or job_status in ("pending_funding", "unfunded"):
+                    logger.info("cron_auto_work_waiting_funding", job_id=job_id)
+                    if self._bot and self._owner_chat_id:
+                        try:
+                            await self._bot.send_message(
+                                self._owner_chat_id,
+                                f"⏳ Job `{job_id[:12]}` ešte nie je funded.\n"
+                                f"Počkám na ďalší scan. Keď klient zaplatí escrow, začnem pracovať.",
+                            )
+                        except Exception:
+                            pass
+                    return
+        except Exception:
+            # Can't check — proceed anyway, submit will fail if unfunded
+            logger.warning("cron_auto_work_funding_check_failed", job_id=job_id)
+
         combined = f"{title} {description}".lower()
         deliverable = ""
 
@@ -1128,6 +1149,63 @@ class AgentCron:
                     )
                 except Exception:
                     pass
+
+    async def _try_subcontract_job(
+        self, job_id: str, title: str, description: str, mkt: Any,
+    ) -> None:
+        """Try to fulfill a job by finding and calling an x402 API sub-contractor.
+
+        If a suitable API exists on Obolos, call it and submit the result.
+        If not, auto-reject the job.
+        """
+        connector = mkt.registry.get("obolos.tech")
+        if not connector or not hasattr(connector, "search_apis"):
+            await self._auto_reject_job(job_id, title, mkt)
+            return
+
+        # Search for relevant APIs
+        search_terms = []
+        combined = f"{title} {description}".lower()
+        for term in ("video", "image", "audio", "scraping", "design", "generate"):
+            if term in combined:
+                search_terms.append(term)
+        query = " ".join(search_terms) if search_terms else title[:30]
+
+        try:
+            search_result = await connector.search_apis(query)
+        except Exception:
+            logger.warning("cron_subcontract_search_failed", job_id=job_id)
+            await self._auto_reject_job(job_id, title, mkt)
+            return
+
+        apis = search_result.get("data", {}).get("apis", []) if search_result.get("ok") else []
+        if not apis:
+            logger.info("cron_subcontract_no_api_found", job_id=job_id, query=query)
+            await self._auto_reject_job(job_id, title, mkt)
+            return
+
+        # Found potential sub-contractor — notify operator for approval
+        # (spending USDC on x402 call requires human approval)
+        best_api = apis[0]
+        api_name = best_api.get("name", best_api.get("slug", "?"))
+        api_price = best_api.get("price", "?")
+
+        if self._bot and self._owner_chat_id:
+            try:
+                await self._bot.send_message(
+                    self._owner_chat_id,
+                    f"🔄 *Našiel som x402 sub-contractor pre job:*\n"
+                    f"Job: `{job_id[:12]}` — {title[:50]}\n"
+                    f"API: *{api_name}* (cena: {api_price})\n\n"
+                    f"Toto by stálo USDC. Chceš aby som to zavolal?\n"
+                    f"  `/yes` — zavolaj API a odošli výsledok\n"
+                    f"  `/no` — odmietni job",
+                )
+            except Exception:
+                pass
+
+        logger.info("cron_subcontract_found",
+                    job_id=job_id, api=api_name, price=str(api_price))
 
     async def _auto_reject_job(
         self, job_id: str, title: str, mkt: Any,

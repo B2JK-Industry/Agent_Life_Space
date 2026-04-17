@@ -34,6 +34,12 @@ from agent.marketplace.models import (
 from agent.marketplace.obolos_cli import (
     cli_anp_bid,
     cli_anp_list,
+    cli_anp_message,
+    cli_anp_thread,
+    cli_api_call,
+    cli_api_categories,
+    cli_api_info,
+    cli_api_search,
     cli_available,
     cli_job_complete,
     cli_job_info,
@@ -453,6 +459,54 @@ class ObolosConnector:
         if not result.get("ok"):
             return None
         return result.get("normalized_response", {})
+
+    # ─── x402 Pay-per-call APIs (sub-contracting) ───
+
+    async def search_apis(self, query: str = "", *, category: str = "") -> dict[str, Any]:
+        """Search x402 marketplace for pay-per-call APIs."""
+        if not _use_cli():
+            return {"ok": False, "error": "CLI required for API search"}
+        return await cli_api_search(query, category=category)
+
+    async def get_api_info(self, api_slug: str) -> dict[str, Any]:
+        """Get API detail (schema, pricing, example)."""
+        if not _use_cli():
+            return {"ok": False, "error": "CLI required"}
+        return await cli_api_info(api_slug)
+
+    async def call_api(
+        self, api_slug: str, *, method: str = "GET", body: str = "",
+    ) -> dict[str, Any]:
+        """Call an x402 API, paying USDC per request. Sub-contracting capability."""
+        if not _use_cli():
+            return {"ok": False, "error": "CLI required for API calls"}
+        result = await cli_api_call(api_slug, method=method, body=body)
+        if result["ok"]:
+            logger.info("obolos_x402_api_called", api=api_slug, method=method)
+        return result
+
+    async def get_api_categories(self) -> dict[str, Any]:
+        """List all x402 API categories."""
+        if not _use_cli():
+            return {"ok": False, "error": "CLI required"}
+        return await cli_api_categories()
+
+    # ─── ANP Messages (client communication) ───
+
+    async def send_anp_message(self, job_id: str, *, content: str) -> dict[str, Any]:
+        """Send a signed message to a job's client/counterparty."""
+        if not _use_cli():
+            return {"ok": False, "error": "CLI required for ANP messages"}
+        result = await cli_anp_message(job_id, content=content)
+        if result["ok"]:
+            logger.info("obolos_anp_message_sent", job_id=job_id)
+        return result
+
+    async def get_anp_thread(self, job_id: str) -> dict[str, Any]:
+        """Get the message thread for a job."""
+        if not _use_cli():
+            return {"ok": False, "error": "CLI required"}
+        return await cli_anp_thread(job_id)
 
     # ─── Evaluation (local, no network) ───
 

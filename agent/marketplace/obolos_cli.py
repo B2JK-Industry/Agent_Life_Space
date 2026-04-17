@@ -198,3 +198,51 @@ async def cli_job_reject(job_id: str, *, reason: str = "") -> dict[str, Any]:
 
 async def cli_reputation_check(address: str) -> dict[str, Any]:
     return await run_cli("reputation", "check", address)
+
+
+# ─── x402 Pay-per-call APIs ───
+
+
+async def cli_api_search(query: str = "", *, category: str = "", limit: int = 25) -> dict[str, Any]:
+    args = ["search"]
+    if query:
+        args.append(query)
+    if category:
+        args.extend(["--category", category])
+    if limit != 25:
+        args.extend(["--limit", str(limit)])
+    return await run_cli(*args)
+
+
+async def cli_api_categories() -> dict[str, Any]:
+    return await run_cli("categories")
+
+
+async def cli_api_info(api_slug: str) -> dict[str, Any]:
+    return await run_cli("info", api_slug)
+
+
+async def cli_api_call(
+    api_slug: str,
+    *,
+    method: str = "GET",
+    body: str = "",
+) -> dict[str, Any]:
+    """Call an x402 API, paying USDC if required."""
+    args = ["call", api_slug]
+    if method != "GET":
+        args.extend(["--method", method])
+    if body:
+        args.extend(["--body", body])
+    return await run_cli(*args, timeout=60.0)
+
+
+# ─── ANP Messages ───
+
+
+async def cli_anp_message(job_id: str, *, content: str) -> dict[str, Any]:
+    return await run_cli("anp", "message", job_id, "--content", content)
+
+
+async def cli_anp_thread(job_id: str) -> dict[str, Any]:
+    return await run_cli("anp", "thread", job_id)
