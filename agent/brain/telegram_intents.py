@@ -79,6 +79,7 @@ MEDIUM_REASONING = "medium_reasoning"  # "what is still missing for X?"
 WEATHER_REPORT_SETUP = "weather_report_setup"  # "every morning send me weather in X"
 WEATHER_REPORT_CITY_REPLY = "weather_report_city_reply"  # plain city after follow-up
 WORK_SEARCH = "work_search"  # "nájdi mi prácu", "čo je na obolose?", "find work"
+WORK_STATUS = "work_status"  # "prihlásil si sa?", "bidoval si?", "stav bidu"
 
 
 @dataclass
@@ -792,6 +793,21 @@ _WORK_SEARCH_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"^\s*(obolos|marketplace)\s*\??\s*$", re.IGNORECASE),
 )
 
+# Work status — "prihlásil si sa?", "bidoval si?", "stav mojich bidov"
+# Questions about marketplace activity — bids, jobs, applications.
+_WORK_STATUS_REGEXES: tuple[re.Pattern[str], ...] = (
+    # Slovak: "prihlásil si sa?", "bidoval si?", "poslal si ponuku?"
+    re.compile(r"\b(prihlásil|prihlasil|bidoval|ponúkol|ponukol|poslal)\s+(si|som)\s+(sa\s+)?(o|na|k)?\b", re.IGNORECASE),
+    re.compile(r"\b(stav|status)\s+.{0,15}(bid|ponuk|prác|prac|job|prihláš|prihlas)\b", re.IGNORECASE),
+    re.compile(r"\b(aký|aky|jaky|jaký)\s+(je\s+)?(stav|status).{0,15}(bid|ponuk|prihláš|prihlas|prác|prac)\b", re.IGNORECASE),
+    re.compile(r"\b(koľko|kolko)\s+(bidov|ponúk|ponuk|prihlásení|prihlaseni)\b", re.IGNORECASE),
+    # English: "did you bid?", "did you apply?", "bid status?"
+    re.compile(r"\bdid\s+you\s+(bid|apply|submit|send)\b", re.IGNORECASE),
+    re.compile(r"\bhave\s+you\s+(bid|applied|submitted|sent)\b", re.IGNORECASE),
+    re.compile(r"\b(bid|application|submission)\s+status\b", re.IGNORECASE),
+    re.compile(r"\b(my|your)\s+(bids?|applications?|submissions?)\b", re.IGNORECASE),
+)
+
 # Review request — "sprav review", "urob code review", "review this repo"
 _REVIEW_REQUEST_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(sprav|urob|run|do)\s+.{0,10}review\b", re.IGNORECASE),
@@ -1047,7 +1063,11 @@ def detect_intent(text: str) -> IntentMatch | None:
     if _matches_any(stripped, _PROJECT_DECOMPOSITION_REGEXES):
         return IntentMatch(intent=PROJECT_DECOMPOSITION, payload={})
 
-    # 13.11. Work search — "nájdi mi prácu", "čo je na obolose?", "find work"
+    # 13.11. Work status — "prihlásil si sa?", "bidoval si?", "stav bidov"
+    if _matches_any(stripped, _WORK_STATUS_REGEXES):
+        return IntentMatch(intent=WORK_STATUS, payload={})
+
+    # 13.12. Work search — "nájdi mi prácu", "čo je na obolose?", "find work"
     if _matches_any(stripped, _WORK_SEARCH_REGEXES):
         return IntentMatch(intent=WORK_SEARCH, payload={})
 
@@ -2065,6 +2085,70 @@ def handle_weather_report_setup(city: str, agent: Any) -> str:
     return "\n".join(lines)
 
 
+async def handle_work_status(agent: Any) -> str:
+    """Show current marketplace bid/job activity — real data only.
+
+    Answers "prihlásil si sa?", "bidoval si?", "stav bidov".
+    Never fabricates. Pulls from local SQLite persistence.
+    """
+    mkt = getattr(agent, "marketplace", None)
+    if mkt is None:
+        return "Marketplace nie je inicializovaný."
+
+    try:
+        bids = await mkt.list_bids(limit=20)
+    except Exception:
+        bids = []
+    try:
+        outcomes = await mkt.list_outcomes(limit=20)
+    except Exception:
+        outcomes = []
+
+    if not bids and not outcomes:
+        return (
+            "Zatiaľ žiadna marketplace aktivita — žiadne bidy ani joby.\n"
+            "Použi `/marketplace listings` alebo sa opýtaj *nájdi mi prácu*."
+        )
+
+    lines = ["📊 *Stav marketplace aktivity:*", ""]
+
+    if bids:
+        by_status: dict[str, int] = {}
+        for b in bids:
+            by_status[b.status.value] = by_status.get(b.status.value, 0) + 1
+        status_parts = [f"{count}× {status}" for status, count in sorted(by_status.items())]
+        lines.append(f"🏷 *Bidy:* {len(bids)} celkom ({', '.join(status_parts)})")
+
+        # Show last 3 bids with detail
+        for b in bids[:3]:
+            opp = None
+            try:
+                opp = await mkt.get_opportunity(b.opportunity_id)
+            except Exception:
+                pass
+            title = opp.title[:40] if opp else b.title[:40]
+            lines.append(f"  `{b.id[:8]}` {b.status.value} ${b.price_usd:.2f} — {title}")
+
+    if outcomes:
+        by_status_o: dict[str, int] = {}
+        for o in outcomes:
+            by_status_o[o.status.value] = by_status_o.get(o.status.value, 0) + 1
+        parts = [f"{c}× {s}" for s, c in sorted(by_status_o.items())]
+        lines.append(f"\n📈 *Outcomes:* {len(outcomes)} ({', '.join(parts)})")
+        revenue = sum(o.revenue_amount or 0 for o in outcomes if o.revenue_amount)
+        if revenue:
+            lines.append(f"💰 Revenue: ${revenue:.2f}")
+
+    lines.extend([
+        "",
+        "`/marketplace bids` — detail bidov",
+        "`/marketplace report` — kompletný report",
+        "`/marketplace listings` — hľadať novú prácu",
+    ])
+
+    return "\n".join(lines)
+
+
 async def handle_work_search(agent: Any) -> str:
     """Scan Obolos marketplace and present biddable listings to operator.
 
@@ -2251,4 +2335,5 @@ __all__ = [
     "handle_web_monitor_capability",
     "handle_web_open",
     "handle_work_search",
+    "handle_work_status",
 ]
