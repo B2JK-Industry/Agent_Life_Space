@@ -120,25 +120,25 @@ Aktuálna integrácia je hardcoded na Obolos. Keby zajtra pribudla ďalšia plat
 
 ## Prioritná roadmapa
 
-### Ihneď (P0)
-1. ACP funding check pred auto-execute
-2. x402 API volanie (obolos call)
-3. Semantic intent classification (nahradiť regex)
-4. Obolos knowledge base (scrape docs + CLI help)
+### Ihneď (P0) — ✅ HOTOVÉ (2026-04-17)
+1. ✅ ACP funding check pred auto-execute (commit ab2146b)
+2. ✅ x402 API volanie — cli_api_search, cli_api_call, connector methods (commit ab2146b)
+3. ✅ Semantic intent classification — work_search/work_status v semantic_router + dispatcher (commit 378e8ac)
+4. ✅ Obolos knowledge base — obolos_platform.md s celou platformou (commit ab2146b)
 
-### Tento týždeň (P1)
-5. Real work execution (build pipeline pre accepted jobs)
-6. ANP message support
-7. Error recovery loop
-8. Structured safe tools pre sandbox
+### Tento týždeň (P1) — ✅ HOTOVÉ (2026-04-17)
+5. ✅ Real work execution — LLM-generated deliverables (commit 3448ee6)
+6. ✅ ANP message support — /marketplace message + /marketplace thread (commit 3448ee6)
+7. ✅ Error recovery loop — retry set + max 3 retries (commit 3b21295)
+8. ✅ no_tools=True fix — codegen/spec/docker work in sandbox (commit e0e57e2)
+9. ✅ x402 sub-contracting pipeline — search APIs + notify operator (commit ab2146b)
 
-### Tento mesiac (P2)
-9. x402 sub-contracting pipeline
+### Tento mesiac (P2) — PENDING
 10. Reputation building strategy
 11. Multi-platform abstraction
 12. Self-check pred submit
 
-### Budúcnosť (P3)
+### Budúcnosť (P3) — PENDING
 13. Multi-platform discovery
 14. Autonomous bidding (no human /yes needed for low-risk bids)
 15. Revenue optimization (which jobs are most profitable)
