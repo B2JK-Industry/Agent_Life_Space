@@ -548,16 +548,26 @@ class ObolosConnector:
     def prepare_bid(
         self, opportunity: Opportunity, evaluation: Evaluation,
     ) -> Bid:
-        """Draft a bid — local only."""
+        """Draft a bid — local only.
+
+        Reputation strategy: for low-budget jobs ($0-$5) with high confidence,
+        bid aggressively (lower price) to win and build reputation score.
+        For higher-budget jobs, bid at 80% of max_budget.
+        """
         price = opportunity.budget_min or 0.0
         if opportunity.budget_max > 0:
-            price = round(opportunity.budget_max * 0.8, 2)
+            # Reputation building: bid lower on small jobs to win more
+            if opportunity.budget_max <= 5.0 and evaluation.confidence >= 0.6:
+                price = round(opportunity.budget_max * 0.6, 2)  # 60% for reputation building
+            else:
+                price = round(opportunity.budget_max * 0.8, 2)
 
         proposal = (
             f"I can deliver this using my automated pipeline:\n"
             f"- Matched skills: {', '.join(evaluation.matched_skills) or 'general'}\n"
             f"- Execution: sandboxed build + verification + code review\n"
-            f"- Confidence: {evaluation.confidence:.0%}"
+            f"- Confidence: {evaluation.confidence:.0%}\n"
+            f"- Delivery: automated, typically under 1 hour"
         )
 
         return Bid(
