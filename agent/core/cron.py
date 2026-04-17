@@ -900,23 +900,23 @@ class AgentCron:
     # ─── Accepted Job Detection ───
 
     _KNOWN_JOB_IDS_KEY = "_cron_known_job_ids"
+    _RETRY_JOB_IDS_KEY = "_cron_retry_job_ids"  # jobs to retry on next cycle
+    _MAX_JOB_RETRIES = 3
 
     async def _check_accepted_jobs(
         self, mkt: Any, jobs_raw: list[dict[str, Any]],
     ) -> None:
-        """Detect new accepted/open jobs and alert operator via Telegram.
+        """Detect new/retryable accepted jobs and attempt work.
 
-        Compares current job list against a set of previously-seen job IDs
-        stored on self (in-memory, resets on restart — that's fine, first
-        scan after restart will re-notify for any active jobs).
-
-        When a new job appears in status "open" or "in_progress", it means
-        our bid was accepted and we need to start working on it.
+        New jobs: notify + auto-execute.
+        Retry jobs: re-attempt auto-execute silently (failed on prior cycle,
+        typically due to unfunded escrow).
         """
         if not jobs_raw:
             return
 
         known: set[str] = getattr(self, self._KNOWN_JOB_IDS_KEY, set())
+        retry_jobs: dict[str, int] = getattr(self, self._RETRY_JOB_IDS_KEY, {})
         new_active: list[dict[str, Any]] = []
 
         for job in jobs_raw:
@@ -936,7 +936,33 @@ class AgentCron:
 
         for job in new_active:
             await self._notify_and_attempt_job(job, mkt)
-        logger.info("cron_new_accepted_jobs", count=len(new_active))
+        if new_active:
+            logger.info("cron_new_accepted_jobs", count=len(new_active))
+
+        # Retry previously-failed jobs (e.g. unfunded on prior cycle)
+        for job in jobs_raw:
+            job_id = str(job.get("id", job.get("job_id", "")))
+            if job_id in retry_jobs and job_id not in {
+                str(j.get("id", j.get("job_id", ""))) for j in new_active
+            }:
+                status = str(job.get("status", "")).lower()
+                if status not in ("open", "in_progress"):
+                    retry_jobs.pop(job_id, None)
+                    continue
+                retries = retry_jobs[job_id]
+                if retries >= self._MAX_JOB_RETRIES:
+                    retry_jobs.pop(job_id, None)
+                    logger.warning("cron_job_retry_exhausted", job_id=job_id, retries=retries)
+                    continue
+                logger.info("cron_job_retry_attempt", job_id=job_id, attempt=retries + 1)
+                title = str(job.get("title", job.get("description", "")))[:80]
+                description = str(job.get("description", ""))
+                combined = f"{title} {description}".lower()
+                can_auto = any(kw in combined for kw in self._AUTO_WORK_KEYWORDS)
+                if can_auto:
+                    await self._auto_execute_job(job_id, title, description, mkt)
+
+        setattr(self, self._RETRY_JOB_IDS_KEY, retry_jobs)
 
     # Capabilities John can auto-execute (lowercase keywords in title/description)
     _AUTO_WORK_KEYWORDS = frozenset({
@@ -1102,20 +1128,29 @@ class AgentCron:
                 error = result.get("error", "unknown")
                 logger.warning("cron_auto_work_submit_failed",
                                job_id=job_id, error=error[:200])
+                # Schedule for retry on next cron cycle
+                retry_jobs = getattr(self, self._RETRY_JOB_IDS_KEY, {})
+                retry_count = retry_jobs.get(job_id, 0) + 1
+                retry_jobs[job_id] = retry_count
+                setattr(self, self._RETRY_JOB_IDS_KEY, retry_jobs)
                 if self._bot and self._owner_chat_id:
                     try:
                         await self._bot.send_message(
                             self._owner_chat_id,
-                            f"⚠️ *Auto-work submit zlyhal:*\n"
+                            f"⚠️ *Auto-work submit zlyhal (retry {retry_count}/{self._MAX_JOB_RETRIES}):*\n"
                             f"Job ID: `{job_id}`\n"
-                            f"Error: {error[:200]}\n"
-                            f"Použi `/marketplace job-submit {job_id[:12]}` manuálne.",
+                            f"Error: {error[:150]}\n"
+                            f"Skúsim znova pri ďalšom scane.",
                         )
                     except Exception:
                         pass
 
         except Exception:
             logger.exception("cron_auto_work_failed", job_id=job_id)
+            # Also schedule for retry
+            retry_jobs = getattr(self, self._RETRY_JOB_IDS_KEY, {})
+            retry_jobs[job_id] = retry_jobs.get(job_id, 0) + 1
+            setattr(self, self._RETRY_JOB_IDS_KEY, retry_jobs)
             if self._bot and self._owner_chat_id:
                 try:
                     await self._bot.send_message(
