@@ -2150,10 +2150,15 @@ async def handle_work_status(agent: Any) -> str:
 
 
 async def handle_work_search(agent: Any) -> str:
-    """Scan Obolos marketplace and present biddable listings to operator.
+    """Scan Obolos marketplace (regular + ANP) and proactively propose bids.
 
-    Deterministic — calls real Obolos API, no LLM. Returns a formatted
-    list of open listings the operator can select from with /marketplace bid.
+    Instead of just showing a passive menu, John:
+    1. Scans both regular listings AND ANP listings
+    2. Filters to open, unbid, feasible ones
+    3. Auto-prepares bid drafts for the best matches
+    4. Presents them with /yes to approve or /no to skip
+
+    The operator sees concrete proposals, not a catalog.
     """
     mkt = getattr(agent, "marketplace", None)
     if mkt is None:
@@ -2162,58 +2167,117 @@ async def handle_work_search(agent: Any) -> str:
             "Skontroluj `/status` alebo reštartuj agenta."
         )
 
+    # Scan both regular and ANP listings
+    all_listings: list[Any] = []
     try:
-        listings = await mkt.list_listings(platform="obolos.tech", limit=10)
-    except Exception as exc:
-        logger.exception("work_search_listings_failed")
-        return f"Nepodarilo sa načítať listings: {type(exc).__name__}"
+        regular = await mkt.list_listings(platform="obolos.tech", limit=10)
+        all_listings.extend(regular)
+    except Exception:
+        logger.warning("work_search_regular_failed")
 
-    # Filter to open only
+    connector = mkt.registry.get("obolos.tech")
+    if connector and hasattr(connector, "list_anp_listings"):
+        try:
+            anp = await connector.list_anp_listings(mkt._gateway, limit=10)
+            all_listings.extend(anp)
+        except Exception:
+            logger.warning("work_search_anp_failed")
+
+    # Filter: open only
     open_listings = [
-        o for o in listings
+        o for o in all_listings
         if str(o.raw_data.get("status", "")).strip().lower() == "open"
     ]
 
     if not open_listings:
         return (
-            "Na Obolos.tech momentálne nie sú žiadne otvorené listings.\n"
-            "Cron automaticky skenuje každých 6h a upozorní ťa keď sa niečo objaví.\n"
-            "Alebo skús neskôr: `/marketplace listings`"
+            "Momentálne nie sú žiadne otvorené ponuky na Obolos.tech.\n"
+            "Skenujme každých 6h — upozorním ťa keď sa niečo objaví."
         )
 
-    # Check which ones already have bids from us
+    # Filter: skip already-bid
     try:
         existing_bids = await mkt.list_bids(limit=200)
     except Exception:
         existing_bids = []
     bid_opp_ids = {b.opportunity_id for b in existing_bids}
+    new_listings = [o for o in open_listings if o.id not in bid_opp_ids]
 
-    lines = [f"📋 *Otvorené listings na Obolos.tech* ({len(open_listings)}):"]
-    lines.append("")
+    if not new_listings:
+        bid_count = len([b for b in existing_bids if b.status.value in ("submitted", "ready", "draft")])
+        return (
+            f"Všetky otvorené listings už mám pokryté ({bid_count} aktívnych bidov).\n"
+            f"Čakám na akceptáciu od klientov.\n"
+            f"`/marketplace bids` — stav bidov\n"
+            f"`/marketplace report` — kompletný prehľad"
+        )
 
-    for i, opp in enumerate(open_listings, 1):
-        budget = f" — ${opp.budget_max:.2f} {opp.currency}" if opp.budget_max else ""
-        already_bid = " _(bid submitted)_" if opp.id in bid_opp_ids else ""
-
-        # Evaluate feasibility
+    # Evaluate and pick the best new opportunities
+    proposals: list[tuple[Any, Any]] = []  # (opp, evaluation)
+    for opp in new_listings:
         try:
+            biddable, reason = mkt.get_listing_bid_eligibility(opp)
+            if not biddable:
+                continue
             ev = mkt.evaluate(opp)
-            fit = f"{'✅' if ev.verdict.value == 'feasible' else '🟡' if ev.verdict.value == 'partial' else '❌'} {ev.verdict.value} ({ev.confidence:.0%})"
+            if ev.verdict.value != "infeasible":
+                proposals.append((opp, ev))
         except Exception:
-            fit = "❓"
+            continue
 
-        lines.append(f"{i}. *{opp.title[:55]}*{budget}")
-        lines.append(f"   {fit}{already_bid}")
-        lines.append(f"   `/marketplace bid {opp.id[:12]}`")
+    if not proposals:
+        return (
+            f"Našiel som {len(new_listings)} nových listings, "
+            f"ale žiadny nie je v mojich schopnostiach alebo je zablokovaný.\n"
+            f"`/marketplace listings` — celý zoznam"
+        )
+
+    # Sort: feasible first, then by budget desc
+    proposals.sort(key=lambda x: (
+        0 if x[1].verdict.value == "feasible" else 1,
+        -(x[0].budget_max or 0),
+    ))
+
+    # Auto-prepare bids for top proposals
+    lines = ["🔍 *Našiel som prácu na Obolose!*", ""]
+    prepared_count = 0
+
+    for opp, ev in proposals[:3]:
+        budget = f"${opp.budget_max:.2f}" if opp.budget_max else "?"
+        verdict_emoji = "✅" if ev.verdict.value == "feasible" else "🟡"
+        is_anp = "/anp/" in (opp.url or "")
+
+        lines.append(f"📋 *{opp.title[:55]}* — {budget} USDC")
         if opp.description:
-            lines.append(f"   _{opp.description[:80]}_")
+            lines.append(f"   _{opp.description[:100]}_")
+        lines.append(f"   {verdict_emoji} {ev.verdict.value} ({ev.confidence:.0%})")
+
+        # Auto-prepare bid
+        try:
+            bid = mkt.prepare_bid(opp, ev)
+            await mkt._persist_bid(bid)
+            await mkt._persist_opportunity(opp)
+
+            if is_anp:
+                # ANP bids go directly, no approval needed for draft
+                lines.append(f"   💰 Navrhovaná cena: ${bid.price_usd:.2f}")
+                lines.append(f"   `/marketplace submit {bid.id[:12]}` → potom `/yes`")
+            else:
+                lines.append(f"   💰 Navrhovaná cena: ${bid.price_usd:.2f}")
+                lines.append(f"   `/marketplace submit {bid.id[:12]}` → potom `/yes`")
+            prepared_count += 1
+        except Exception:
+            lines.append(f"   `/marketplace bid {opp.id[:12]}` — pripraviť manuálne")
         lines.append("")
 
-    lines.append("*Ďalšie kroky:*")
-    lines.append("  `/marketplace bid <id>` — pripraviť ponuku")
-    lines.append("  `/marketplace eval <id>` — detailné vyhodnotenie")
-    lines.append("  `/marketplace show <id>` — celý popis")
-    lines.append("  Potom `/yes` na schválenie bidu.")
+    if prepared_count:
+        lines.append(f"Pripravil som {prepared_count} ponúk. Pošli ich cez `/marketplace submit <id>` a potom `/yes`.")
+    else:
+        lines.append("Vyber si z ponúk vyššie a použi `/marketplace bid <id>`.")
+
+    remaining = len(proposals) - 3
+    if remaining > 0:
+        lines.append(f"_(+ {remaining} ďalších — `/marketplace listings`)_")
 
     return "\n".join(lines)
 

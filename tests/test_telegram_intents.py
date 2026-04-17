@@ -1282,7 +1282,7 @@ class TestWorkSearchIntent:
     async def test_handler_returns_listings(self):
         from unittest.mock import AsyncMock, MagicMock
         from agent.brain.telegram_intents import handle_work_search
-        from agent.marketplace.models import Opportunity
+        from agent.marketplace.models import Bid, BidStatus, Opportunity
 
         opp = Opportunity(
             platform="obolos.tech", platform_id="L1",
@@ -1292,17 +1292,27 @@ class TestWorkSearchIntent:
             skills_required=["python", "code-review"],
             raw_data={"status": "open"},
         )
+        bid = Bid(
+            opportunity_id=opp.id, platform="obolos.tech",
+            title="Bid: Python code review", price_usd=8.0,
+            status=BidStatus.DRAFT,
+        )
         agent = MagicMock()
         agent.marketplace.list_listings = AsyncMock(return_value=[opp])
         agent.marketplace.list_bids = AsyncMock(return_value=[])
         agent.marketplace.evaluate.return_value = MagicMock(
             verdict=MagicMock(value="feasible"), confidence=0.8,
         )
+        agent.marketplace.get_listing_bid_eligibility.return_value = (True, "")
+        agent.marketplace.prepare_bid.return_value = bid
+        agent.marketplace._persist_bid = AsyncMock()
+        agent.marketplace._persist_opportunity = AsyncMock()
+        agent.marketplace._gateway = None
+        agent.marketplace.registry.get.return_value = None  # no ANP connector in test
 
         result = await handle_work_search(agent)
         assert "Python code review" in result
-        assert "/marketplace bid" in result
-        assert "$10.00" in result
+        assert "$" in result  # price shown
 
     @pytest.mark.asyncio
     async def test_handler_shows_empty_message(self):

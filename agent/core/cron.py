@@ -597,11 +597,23 @@ class AgentCron:
         if mkt is None or not getattr(mkt, "_initialized", False):
             return
 
-        # Scan listings + jobs
+        # Scan listings + ANP listings + jobs
         try:
             listings = await mkt.list_listings(platform="obolos.tech", limit=20)
         except Exception:
             listings = []
+        # Include ANP listings (wider opportunity pool)
+        connector = mkt.registry.get("obolos.tech")
+        if connector and hasattr(connector, "list_anp_listings"):
+            try:
+                anp_listings = await connector.list_anp_listings(mkt._gateway, limit=10)
+                # Deduplicate by platform_id
+                known_ids = {o.platform_id for o in listings}
+                for anp in anp_listings:
+                    if anp.platform_id not in known_ids:
+                        listings.append(anp)
+            except Exception:
+                pass
         try:
             jobs_raw = await mkt.list_jobs(platform="obolos.tech", limit=20)
         except Exception:

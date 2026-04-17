@@ -104,6 +104,25 @@ async def cli_search(query: str = "") -> dict[str, Any]:
     return await run_cli(*args)
 
 
+async def cli_anp_list() -> dict[str, Any]:
+    return await run_cli("anp", "list")
+
+
+async def cli_anp_bid(
+    listing_cid: str,
+    *,
+    price: float,
+    delivery: str = "24h",
+    message: str = "",
+) -> dict[str, Any]:
+    args = ["anp", "bid", listing_cid, "--price", str(price)]
+    if delivery:
+        args.extend(["--delivery", delivery])
+    if message:
+        args.extend(["--message", message])
+    return await run_cli(*args)
+
+
 async def cli_balance() -> dict[str, Any]:
     return await run_cli("balance")
 

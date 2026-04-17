@@ -32,6 +32,8 @@ from agent.marketplace.models import (
     stable_marketplace_id,
 )
 from agent.marketplace.obolos_cli import (
+    cli_anp_bid,
+    cli_anp_list,
     cli_available,
     cli_job_complete,
     cli_job_info,
@@ -155,6 +157,61 @@ class ObolosConnector:
             return None
         raw = result.get("response_json", {})
         return self._normalize_api_to_opportunity(raw, platform_id=platform_id)
+
+    # ─── ANP Listings (Agent Negotiation Protocol — wider pool) ───
+
+    async def list_anp_listings(
+        self, gateway: Any, *, limit: int = 20,
+    ) -> list[Opportunity]:
+        """Browse ANP listings. CLI: obolos anp list; no REST fallback."""
+        if not _use_cli():
+            return []
+        result = await cli_anp_list()
+        if not result["ok"]:
+            logger.warning("obolos_cli_anp_list_failed", error=result.get("error", ""))
+            return []
+        raw_listings = result["data"].get("listings", [])
+        opps: list[Opportunity] = []
+        for item in raw_listings[:limit]:
+            if str(item.get("status", "")).lower() != "open":
+                continue
+            opp = self._normalize_anp_to_opportunity(item)
+            if opp:
+                opps.append(opp)
+        return opps
+
+    async def submit_anp_bid(
+        self, listing_cid: str, *, price: float, message: str = "",
+    ) -> dict[str, Any]:
+        """Submit ANP bid via CLI. Returns CLI result dict."""
+        if not _use_cli():
+            return {"ok": False, "error": "Obolos CLI not available for ANP bids"}
+        return await cli_anp_bid(listing_cid, price=price, message=message)
+
+    def _normalize_anp_to_opportunity(self, item: dict[str, Any]) -> Opportunity | None:
+        """Normalize an ANP listing to Opportunity model."""
+        cid = str(item.get("cid", ""))
+        if not cid:
+            return None
+        title = str(item.get("title", f"ANP {cid[:12]}"))[:200]
+        description = str(item.get("description", ""))[:500]
+        min_price = _to_float(item.get("min_price", 0))
+        max_price = _to_float(item.get("max_price", 0))
+        return Opportunity(
+            id=stable_marketplace_id("obolos.tech", cid, kind="anp"),
+            platform="obolos.tech",
+            platform_id=cid,
+            title=title,
+            description=description,
+            url=f"https://obolos.tech/anp/{cid[:16]}",
+            category="listing",
+            budget_min=min_price,
+            budget_max=max_price or min_price,
+            currency="USDC",
+            skills_required=[],
+            status=OpportunityStatus.DISCOVERED,
+            raw_data=item,
+        )
 
     # ─── Listings (provider-side work) ───
 
