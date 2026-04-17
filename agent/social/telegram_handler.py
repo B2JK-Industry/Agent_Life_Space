@@ -2724,6 +2724,83 @@ class TelegramHandler:
                 return f"Job `{job_id}` rejected.\nOutcome ID: `{result.get('outcome_id', '?')}`"
             return f"Job rejection failed: {result.get('error', 'unknown')}"
 
+        # /marketplace message <job_id> <text> — send ANP message to client
+        if action == "message" and subargs:
+            tokens = subargs.split(None, 1)
+            if len(tokens) < 2:
+                return "Použi: `/marketplace message <job_id> <správa>`"
+            job_id = tokens[0]
+            content = tokens[1]
+            connector = mkt.registry.get("obolos.tech")
+            if not connector or not hasattr(connector, "send_anp_message"):
+                return "ANP messaging nie je dostupné."
+            result = await connector.send_anp_message(job_id, content=content)
+            if result.get("ok"):
+                return f"✉️ Správa odoslaná klientovi jobu `{job_id[:12]}`."
+            return f"Odoslanie zlyhalo: {result.get('error', 'unknown')}"
+
+        # /marketplace thread <job_id> — view ANP message thread
+        if action == "thread" and subargs:
+            job_id = subargs.split()[0]
+            connector = mkt.registry.get("obolos.tech")
+            if not connector or not hasattr(connector, "get_anp_thread"):
+                return "ANP thread nie je dostupné."
+            result = await connector.get_anp_thread(job_id)
+            if not result.get("ok"):
+                return f"Thread failed: {result.get('error', 'unknown')}"
+            messages = result.get("data", {}).get("messages", [])
+            if not messages:
+                return f"Žiadne správy v jobu `{job_id[:12]}`."
+            lines = [f"💬 *Thread jobu `{job_id[:12]}`* ({len(messages)} správ):"]
+            for m in messages[:10]:
+                sender = str(m.get("sender", "?"))[:12]
+                text = str(m.get("content", m.get("message", "")))[:100]
+                lines.append(f"  `{sender}...`: {text}")
+            return "\n".join(lines)
+
+        # /marketplace apis [query] — search x402 pay-per-call APIs
+        if action == "apis":
+            connector = mkt.registry.get("obolos.tech")
+            if not connector or not hasattr(connector, "search_apis"):
+                return "x402 API search nie je dostupné."
+            result = await connector.search_apis(subargs or "")
+            if not result.get("ok"):
+                return f"API search failed: {result.get('error', 'unknown')}"
+            apis = result.get("data", {}).get("apis", [])
+            if not apis:
+                return "Žiadne x402 APIs nájdené." + (f" (query: {subargs})" if subargs else "")
+            lines = [f"🔌 *x402 APIs* ({len(apis)} nájdených):"]
+            for api in apis[:8]:
+                name = api.get("name", api.get("slug", "?"))
+                price = api.get("price", "?")
+                desc = str(api.get("description", ""))[:60]
+                lines.append(f"  • *{name}* — {price}")
+                if desc:
+                    lines.append(f"    _{desc}_")
+            lines.append(f"\n`/marketplace call <api-slug>` — zavolaj API (platí USDC)")
+            return "\n".join(lines)
+
+        # /marketplace call <api-slug> [--body JSON] — call x402 API
+        if action == "call" and subargs:
+            connector = mkt.registry.get("obolos.tech")
+            if not connector or not hasattr(connector, "call_api"):
+                return "x402 API call nie je dostupné."
+            tokens = subargs.split(None, 1)
+            api_slug = tokens[0]
+            body = ""
+            if len(tokens) > 1 and "--body" in tokens[1]:
+                body = tokens[1].replace("--body", "").strip()
+            result = await connector.call_api(api_slug, body=body)
+            if result.get("ok"):
+                data = result.get("data", {})
+                raw = result.get("raw", "")
+                return (
+                    f"✅ *x402 API call úspešný:*\n"
+                    f"API: `{api_slug}`\n"
+                    f"Response: {str(data or raw)[:500]}"
+                )
+            return f"❌ API call failed: {result.get('error', 'unknown')}"
+
         # /marketplace reputation <agent_id>
         if action == "reputation" and subargs:
             agent_id = subargs.split()[0]
@@ -2851,6 +2928,12 @@ class TelegramHandler:
             "*Client — Hire others:*\n"
             "  `/marketplace create-listing --title \"...\" --budget 5` — post paid work\n"
             "    _(spends USDC, FINANCE approval required)_\n"
+            "*Communication:*\n"
+            "  `/marketplace message <job_id> <text>` — ANP message to client\n"
+            "  `/marketplace thread <job_id>` — view message history\n"
+            "*x402 APIs (sub-contracting):*\n"
+            "  `/marketplace apis [query]` — search pay-per-call APIs\n"
+            "  `/marketplace call <slug>` — call API (pays USDC)\n"
             "*Tracking:*\n"
             "  `/marketplace track <id>` — track as ALS project\n"
             "  `/marketplace link-job <bid_id> <job_id>` — link job to bid\n"
