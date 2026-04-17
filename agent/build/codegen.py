@@ -104,7 +104,8 @@ async def generate_build_operations(
         ],
         model=model,
         timeout=timeout,
-        max_turns=1,  # Single-turn text generation, no tool use needed
+        max_turns=1,
+        no_tools=True,  # Pure text-in/JSON-out — no file access needed
     ))
 
     if not response.success:

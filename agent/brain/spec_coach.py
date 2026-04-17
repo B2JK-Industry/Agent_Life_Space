@@ -264,6 +264,7 @@ async def coach_spec(
             model=model,
             timeout=timeout,
             max_turns=1,
+            no_tools=True,  # Pure text generation, no file access needed
         ))
     except Exception as exc:
         logger.exception("spec_coach_llm_failed")

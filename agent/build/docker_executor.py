@@ -418,6 +418,7 @@ async def _ask_opus_to_fix(
             model=OPUS.model_id,
             timeout=300,
             max_turns=1,
+            no_tools=True,  # Pure text-in/JSON-out fix generation
         ))
 
         if not response.success or not response.text:
