@@ -75,9 +75,6 @@ _INTENTS: dict[str, list[str]] = {
         "najdi robotu", "hladaj pracu", "sú nejaké joby",
         "pozri obolos", "show listings", "browse jobs",
         "zapoj sa do nejakej prace", "najdi si pracu",
-        "aké apis sú dostupné", "x402 apis", "marketplace apis",
-        "aké služby ponúkaš", "čo vieš robiť na obolose",
-        "vieš urobiť obrázok", "vieš generovať image",
     ],
     "work_status": [
         "prihlásil si sa", "bidoval si", "stav bidov",
