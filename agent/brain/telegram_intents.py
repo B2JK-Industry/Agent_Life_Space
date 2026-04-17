@@ -789,6 +789,10 @@ _WORK_SEARCH_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(any|what)\s+.{0,10}(jobs?|listings?|work|gigs?)\s+.{0,10}(on|available|open)", re.IGNORECASE),
     re.compile(r"\bwhat.{0,10}(on|at)\s+obolos", re.IGNORECASE),
     re.compile(r"\b(show|list|check)\s+.{0,10}(open|available)\s+.{0,10}(listing|job|work)", re.IGNORECASE),
+    # Action: "zapoj sa do práce", "začni pracovať", "chcem zarábať"
+    re.compile(r"\b(zapoj|zapojit)\s+sa\s+.{0,20}(prác|prac|rob|job|listing)", re.IGNORECASE),
+    re.compile(r"\b(začni|zacni|start|pusť sa|pust sa)\s+.{0,10}(pracov|prac|rob|zaráb|zarab|hľad|hlad)", re.IGNORECASE),
+    re.compile(r"\b(chcem|chci)\s+.{0,10}(zaráb|zarab|pracov|rob|job|zarob)", re.IGNORECASE),
     # Minimal: "práca?", "jobs?", "obolos?"
     re.compile(r"^\s*(obolos|marketplace)\s*\??\s*$", re.IGNORECASE),
 )
