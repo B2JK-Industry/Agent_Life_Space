@@ -1011,9 +1011,8 @@ class AgentCron:
         elif can_reject:
             lines.extend([
                 "",
-                "❌ *Toto neviem urobiť automaticky* (video/design/frontend).",
-                "Odmietni job ak nie je relevantný:",
-                f"  `/marketplace job-reject {job_id[:12]}`",
+                "❌ *Toto nie je v mojich schopnostiach* (video/design/frontend).",
+                "Automaticky odmietam...",
             ])
         else:
             lines.extend([
@@ -1030,9 +1029,11 @@ class AgentCron:
         except Exception:
             logger.warning("cron_new_job_telegram_failed")
 
-        # Auto-execute if capable
+        # Auto-execute if capable, auto-reject if incapable
         if can_auto:
             await self._auto_execute_job(job_id, title, description, mkt)
+        elif can_reject:
+            await self._auto_reject_job(job_id, title, mkt)
 
     async def _auto_execute_job(
         self,
@@ -1124,3 +1125,31 @@ class AgentCron:
                     )
                 except Exception:
                     pass
+
+    async def _auto_reject_job(
+        self, job_id: str, title: str, mkt: Any,
+    ) -> None:
+        """Automatically reject a job that is outside John's capabilities."""
+        reason = (
+            f"Automatic rejection: '{title}' requires capabilities I don't have "
+            f"(video/design/frontend). Agent: als-john-b2jk."
+        )
+        try:
+            result = await mkt.reject_job("obolos.tech", job_id, reason=reason)
+            if result.get("ok"):
+                logger.info("cron_auto_reject_submitted", job_id=job_id)
+                if self._bot and self._owner_chat_id:
+                    try:
+                        await self._bot.send_message(
+                            self._owner_chat_id,
+                            f"🚫 *Job automaticky odmietnutý:*\n"
+                            f"Job: {title[:50]}\n"
+                            f"Dôvod: nie je v mojich schopnostiach.",
+                        )
+                    except Exception:
+                        pass
+            else:
+                logger.warning("cron_auto_reject_failed",
+                               job_id=job_id, error=result.get("error", "")[:200])
+        except Exception:
+            logger.exception("cron_auto_reject_error", job_id=job_id)
