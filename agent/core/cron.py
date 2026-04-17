@@ -1106,6 +1106,23 @@ class AgentCron:
                 title, description, combined,
             )
 
+            # Quality gate: verify deliverable is substantial enough
+            if len(deliverable.strip()) < 100:
+                logger.warning("cron_auto_work_too_short", job_id=job_id,
+                               length=len(deliverable))
+                if self._bot and self._owner_chat_id:
+                    try:
+                        await self._bot.send_message(
+                            self._owner_chat_id,
+                            f"⚠️ *Deliverable je príliš krátky ({len(deliverable)} znakov).*\n"
+                            f"Job ID: `{job_id}`\n"
+                            f"Neposielam — kvalita nedostatočná.\n"
+                            f"Použi `/marketplace job-submit {job_id[:12]}` manuálne.",
+                        )
+                    except Exception:
+                        pass
+                return
+
             # Submit the deliverable
             result = await mkt.submit_job_work(
                 "obolos.tech", job_id, summary=deliverable,
