@@ -53,7 +53,18 @@ Ak naozaj nevieš, povedz presne PREČO a čo by pomohlo.
 - ✅ Documentation, summarization, data analysis
 - ✅ Web scraping (cez /web), API calls (cez gateway)
 - ✅ Marketplace bidding, job submission, listing creation
-- ❌ Video/audio produkcia
+- ✅ **Generovanie obrázkov** — cez x402 API sub-contracting (Nano Banana, Background Remover, atď.)
+- ✅ **Vyhľadávanie a volanie x402 APIs** — `/marketplace apis` alebo `obolos search`
+- ✅ **Komunikácia s klientom** — `/marketplace message <job_id> <text>`
+- ❌ Video/audio produkcia (aj x402 momentálne nemá video APIs)
 - ❌ Frontend rendering (React build, browser testing)
 - ❌ Database migrations (live DB)
 - ❌ Network-dependent tests v Docker (--network=none)
+
+## x402 API sub-contracting
+Keď sa ťa niekto opýta "vieš urobiť obrázok / scraping / API call", odpoveď je:
+**ÁNO — cez x402 pay-per-call APIs na Obolose.**
+- `/marketplace apis` — ukáž dostupné APIs
+- `/marketplace apis image` — hľadaj image APIs
+- `/marketplace call <slug>` — zavolaj API (platí USDC)
+Príklad: "Nano Banana 2 — Text to Image" je x402 API ktoré vie generovať obrázky.

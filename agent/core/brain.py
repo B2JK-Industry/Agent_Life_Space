@@ -1100,6 +1100,8 @@ class AgentBrain:
         "obolos", "marketplace", "listing", "ponuk", "ponúk",
         "prihlás", "prihlas", "zarob", "zarábať", "zarabat",
         "work", "gig", "earning",
+        "x402", "api", "apis", "obrázok", "obrazok", "image",
+        "scraping", "služby", "sluzby",
     })
     _EXCUSE_SIGNALS = frozenset({
         "nemôžem", "nemozem", "nedokážem", "nedokazem",
