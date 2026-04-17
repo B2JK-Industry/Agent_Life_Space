@@ -77,8 +77,14 @@ class InternalDispatcher:
             from agent.brain.semantic_router import classify_intent, is_available
             if is_available():
                 intent, confidence = await _aio.to_thread(classify_intent, text_lower)
-                # Zvýšený threshold — 0.55 bol príliš nízky, matchoval konverzačné otázky
-                if confidence >= 0.75 and len(text_lower.split()) <= 6:
+                # Marketplace intents have a lower threshold (0.6) and no word
+                # limit — natural questions like "zapoj sa do nejakej prace"
+                # are longer than 6 words but are still clear marketplace intent.
+                marketplace_intents = {"work_search", "work_status"}
+                threshold = 0.6 if intent in marketplace_intents else 0.75
+                word_ok = intent in marketplace_intents or len(text_lower.split()) <= 6
+
+                if confidence >= threshold and word_ok:
                     intent_handler_map = {
                         "status": self._handle_status,
                         "health": self._handle_health,
@@ -92,6 +98,18 @@ class InternalDispatcher:
                         result = await handler_opt()
                         if result:
                             logger.info("dispatch_semantic", intent=intent, confidence=confidence)
+                            return result
+
+                    # Marketplace intents → delegate to telegram_intents handlers
+                    if intent in marketplace_intents:
+                        from agent.brain import telegram_intents
+                        if intent == "work_search":
+                            result = await telegram_intents.handle_work_search(self._agent)
+                        elif intent == "work_status":
+                            result = await telegram_intents.handle_work_status(self._agent)
+                        if result:
+                            logger.info("dispatch_semantic_marketplace",
+                                        intent=intent, confidence=round(confidence, 3))
                             return result
         except Exception as e:
             logger.error("semantic_router_error", error=str(e))
