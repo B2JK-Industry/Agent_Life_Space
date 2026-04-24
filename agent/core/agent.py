@@ -128,6 +128,8 @@ class AgentOrchestrator:
         )
         self.workspaces = WorkspaceManager()
         self.agent_loop: Any = None
+        # Initiative engine — wired up v initialize() po llm provider setup
+        self.initiative: Any = None
         self._secrets_manager: Any = None
         self._secrets_lookup_disabled = False
         self.control_plane = ControlPlaneStateService(
@@ -278,6 +280,45 @@ class AgentOrchestrator:
         self.build.initialize()
         self.review.initialize()
         self.control_plane.initialize()
+
+        # InitiativeEngine — autonómna multi-step orchestrácia (post-store init,
+        # provider sa bere lazy cez get_provider() pri prvom plánovaní)
+        try:
+            from agent.core.identity import get_agent_identity
+            from agent.core.llm_provider import get_provider
+            from agent.core.paths import get_project_root
+            from agent.initiative.engine import InitiativeEngine
+            from agent.initiative.executor import StepExecutor
+            from agent.initiative.planner import InitiativePlanner
+
+            identity = get_agent_identity()
+            provider = get_provider()
+            planner = InitiativePlanner(
+                provider=provider,
+                agent_name=identity.agent_name,
+                owner_name=identity.owner_name,
+                project_root=str(get_project_root()),
+                data_root=str(self._data_dir),
+            )
+            executor = StepExecutor(
+                provider=provider,
+                agent_name=identity.agent_name,
+                project_root=str(get_project_root()),
+                data_root=str(self._data_dir),
+                telegram_bot=None,  # set later v start() po Telegram init
+                task_manager=self.tasks,
+                approval_queue=self.approval_queue,
+            )
+            self.initiative = InitiativeEngine(
+                planner=planner,
+                executor=executor,
+                project_manager=self.projects,
+                task_manager=self.tasks,
+                data_root=str(self._data_dir),
+            )
+            logger.info("initiative_engine_initialized")
+        except Exception:  # noqa: BLE001
+            logger.exception("initiative_engine_init_failed")
 
         # Register message handlers
         self.router.register_handler(ModuleID.BRAIN, self._handle_brain_message)

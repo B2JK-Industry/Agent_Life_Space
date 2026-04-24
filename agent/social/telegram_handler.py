@@ -244,6 +244,8 @@ class TelegramHandler:
             "/yes": self._cmd_yes,
             "/no": self._cmd_no,
             "/help": self._cmd_help,
+            "/initiative": self._cmd_initiative,
+            "/initiatives": self._cmd_initiatives,
         }
 
         handler = handlers.get(command)
@@ -3395,3 +3397,105 @@ class TelegramHandler:
                     logger.info("auto_task_created", name=first_sentence[:50])
                 except Exception:
                     pass
+
+    # --- Initiative commands ---
+
+    async def _cmd_initiative(self, args: str) -> str:
+        """`/initiative <goal>` — vytvor; `/initiative <id>` — detail;
+        `/initiative pause|resume|cancel <id>` — control.
+        """
+        engine = getattr(self._agent, "initiative", None)
+        if engine is None:
+            return (
+                "Initiative engine nie je k dispozícii (init zlyhal). "
+                "Skontroluj logy: `journalctl --user -u agent-life-space | grep initiative`."
+            )
+
+        args = (args or "").strip()
+        if not args:
+            return await self._cmd_initiatives("")
+
+        # Pause/resume/cancel
+        parts = args.split(maxsplit=1)
+        verb = parts[0].lower()
+        if verb in {"pause", "resume", "cancel"}:
+            if len(parts) < 2:
+                return f"Usage: `/initiative {verb} <id>`"
+            target = parts[1].strip()
+            ok = (
+                await engine.pause(target) if verb == "pause"
+                else await engine.resume(target) if verb == "resume"
+                else await engine.cancel(target, reason="manual cancel via Telegram")
+            )
+            return (
+                f"✅ Iniciatíva `{target}` — {verb} OK"
+                if ok
+                else f"❌ Iniciatíva `{target}` — {verb} zlyhal"
+            )
+
+        # Status query — ak je arg krátky a vyzerá ako id (12 hex chars)
+        if len(args) <= 16 and all(c in "0123456789abcdef" for c in args):
+            status = await engine.get_status(args)
+            if status.get("error"):
+                return f"❌ Iniciatíva `{args}` neexistuje."
+            steps_lines = []
+            for s in status.get("steps", []):
+                icon = (
+                    "✅" if s["status"] == "completed"
+                    else "❌" if s["status"] == "failed"
+                    else "⏸" if s["status"] == "blocked"
+                    else "⏳"
+                )
+                steps_lines.append(
+                    f"{icon} #{s['step_idx']} [{s['kind']}] {s['name'][:60]} — {s['status']}"
+                )
+            text = (
+                f"*Iniciatíva* `{status['id']}`\n"
+                f"*Title:* {status['title']}\n"
+                f"*Status:* {status['status']}\n"
+                f"*Pattern:* {(status.get('meta') or {}).get('pattern', {}).get('pattern_id', '?')}\n"
+                f"*Started:* {status.get('started_at', '-')}\n\n"
+                f"*Kroky:*\n" + "\n".join(steps_lines or ["(žiadne)"])
+            )
+            return text[:3900]
+
+        # Inak: vytvor novú iniciatívu z args ako NL goalu
+        try:
+            info = await engine.start_initiative(
+                goal_nl=args,
+                chat_id=self._owner_chat_id or 0,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return f"❌ Plánovanie zlyhalo: `{exc!s}`[:300]"
+        return (
+            f"🚀 *Iniciatíva spustená*\n\n"
+            f"`{info['initiative_id']}` — {info['title'][:80]}\n"
+            f"Pattern: `{info['pattern']}`\n"
+            f"Krokov: {info['steps_total']}\n"
+            f"Long-running: {info['is_long_running']}\n\n"
+            f"Driver beží na pozadí (~30s tick). Status: `/initiative {info['initiative_id']}`"
+        )
+
+    async def _cmd_initiatives(self, args: str) -> str:
+        """`/initiatives` — zoznam aktívnych iniciatív."""
+        engine = getattr(self._agent, "initiative", None)
+        if engine is None:
+            return "Initiative engine nie je k dispozícii."
+        actives = await engine.list_active()
+        if not actives:
+            return (
+                "Žiadne aktívne iniciatívy. "
+                "Vytvor: `/initiative <NL goal>`\n\n"
+                "Príklad: `/initiative urob mi denný scraper na sreality.cz, "
+                "byty 2+kk Praha pod 8M Kč, pošli notifikáciu pri novej`."
+            )
+        lines = ["*Aktívne iniciatívy:*"]
+        for it in actives:
+            tags = " ".join(f"`{t}`" for t in it["tags"] if t != "initiative")
+            prog = it.get("progress", {})
+            lines.append(
+                f"- `{it['id']}` {it['title'][:70]} {tags} "
+                f"— {prog.get('completed', 0)}/{prog.get('total_tasks', 0)}"
+            )
+        lines.append("\n`/initiative <id>` pre detail | `/initiative pause|resume|cancel <id>`")
+        return "\n".join(lines)[:3900]

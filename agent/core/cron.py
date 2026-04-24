@@ -62,7 +62,8 @@ class AgentCron:
         self._tasks.append(asyncio.create_task(self._data_cleanup_loop()))
         self._tasks.append(asyncio.create_task(self._log_retention_loop()))
         self._tasks.append(asyncio.create_task(self._marketplace_monitor_loop()))
-        logger.info("cron_started", jobs=13)
+        self._tasks.append(asyncio.create_task(self._initiative_driver_loop()))
+        logger.info("cron_started", jobs=14)
 
     async def stop(self) -> None:
         self._running = False
@@ -1314,6 +1315,43 @@ class AgentCron:
 
         logger.info("cron_subcontract_found",
                     job_id=job_id, api=api_name, price=str(api_price))
+
+    # --- Initiative driver loop ---
+
+    _INITIATIVE_TICK_INTERVAL = 30  # sekúnd
+    _INITIATIVE_BOT_ATTACHED = False  # one-time attach guard
+
+    async def _initiative_driver_loop(self) -> None:
+        """Drive InitiativeEngine — každých N sekúnd vyžiada tick().
+
+        Engine sám rozhoduje koľko krokov spracuje (typicky 1 per active iniciatíva
+        per tick, aby sa rovnomerne distribuovala práca).
+        """
+        await asyncio.sleep(60)  # let agent settle, give Telegram bot time
+        while self._running:
+            try:
+                engine = getattr(self._agent, "initiative", None)
+                if engine is None:
+                    await asyncio.sleep(self._INITIATIVE_TICK_INTERVAL)
+                    continue
+                # One-time: attach Telegram bot do executora (až teraz je k dispozícii)
+                if not self._INITIATIVE_BOT_ATTACHED and self._bot is not None:
+                    try:
+                        engine._executor._bot = self._bot  # noqa: SLF001
+                        self._INITIATIVE_BOT_ATTACHED = True
+                        logger.info("initiative_driver_bot_attached")
+                    except Exception:  # noqa: BLE001
+                        logger.exception("initiative_driver_bot_attach_failed")
+
+                processed = await engine.tick()
+                if processed:
+                    logger.info("initiative_driver_processed", count=processed)
+                await asyncio.sleep(self._INITIATIVE_TICK_INTERVAL)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("initiative_driver_error")
+                await asyncio.sleep(self._INITIATIVE_TICK_INTERVAL)
 
     async def _auto_reject_job(
         self, job_id: str, title: str, mkt: Any,
