@@ -144,6 +144,7 @@ class InitiativePlanner:
                     max_turns=max_turns,
                     timeout=timeout,
                     allow_file_access=False,
+                    no_tools=True,  # planner returns JSON; tools spawn extra turns
                     cwd=self._project_root,
                 )
             )
