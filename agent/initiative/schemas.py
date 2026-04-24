@@ -78,10 +78,10 @@ class InitiativePlan(BaseModel):
 
     goal_summary: str = Field(min_length=5, max_length=400)
     pattern: PatternRef
-    success_criteria: list[str] = Field(min_length=1, max_length=10)
+    success_criteria: list[str] = Field(min_length=1, max_length=25)
     steps: list[PlannedStep] = Field(min_length=1, max_length=40)
     estimated_total_minutes: int = Field(ge=1, le=10000)
-    risk_notes: list[str] = Field(default_factory=list, max_length=10)
+    risk_notes: list[str] = Field(default_factory=list, max_length=20)
     is_long_running: bool = Field(
         default=False,
         description=(
