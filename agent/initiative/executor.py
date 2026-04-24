@@ -35,6 +35,42 @@ from agent.initiative.schemas import (
 logger = structlog.get_logger(__name__)
 
 
+# Per-kind turn budget. Research-heavy kroky (analyze/design) potrebujú výrazne viac
+# turnov ako jednorázové kódenie, lebo Claude CLI iteratívne volá WebFetch/Read/Grep.
+# Tieto sú DEFAULT — engine ich pri retry škáluje (× 1.5, cap pri 40).
+_TURNS_BY_KIND: dict[StepKind, int] = {
+    StepKind.ANALYZE: 20,
+    StepKind.DESIGN: 15,
+    StepKind.CODE: 18,
+    StepKind.TEST: 12,
+    StepKind.VERIFY: 4,
+    StepKind.DEPLOY: 6,
+    StepKind.SCHEDULE: 1,
+    StepKind.NOTIFY: 1,
+    StepKind.MONITOR: 1,
+    StepKind.APPROVAL: 1,
+}
+
+_TURN_RETRY_MULTIPLIER = 1.5
+_TURN_CAP = 40
+
+# Markery max-turns chyby z Claude CLI / API providerov. Detect cez substring,
+# nie regex (rýchlejšie, robustnejšie pri mírne odlišnom formáte).
+_MAX_TURNS_MARKERS = (
+    "error_max_turns",
+    "max_turns",
+    "max turns",
+    "iteration limit",
+)
+
+
+def _is_max_turns_error(text: str) -> bool:
+    if not text:
+        return False
+    low = text.lower()
+    return any(m in low for m in _MAX_TURNS_MARKERS)
+
+
 class StepExecutor:
     """Vykonávač jedného kroku iniciatívy."""
 
@@ -67,6 +103,12 @@ class StepExecutor:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def _turns_for(self, kind: StepKind, attempt: int) -> int:
+        """Per-kind base + exponenciálny boost pri retry."""
+        base = _TURNS_BY_KIND.get(kind, self._max_turns)
+        boosted = int(base * (_TURN_RETRY_MULTIPLIER ** max(attempt - 1, 0)))
+        return min(max(boosted, 1), _TURN_CAP)
+
     async def execute(
         self,
         *,
@@ -78,6 +120,7 @@ class StepExecutor:
         prior_outputs: list[StepExecutionResult],
         owner_chat_id: int,
         total_steps: int,
+        attempt: int = 1,
     ) -> StepExecutionResult:
         """Vykonaj krok. Routing podľa kind."""
         kind = step.kind
@@ -129,6 +172,7 @@ class StepExecutor:
             step=step,
             prior_outputs=prior_outputs,
             total_steps=total_steps,
+            attempt=attempt,
         )
 
     async def _handle_llm_step(
@@ -141,6 +185,7 @@ class StepExecutor:
         step: PlannedStep,
         prior_outputs: list[StepExecutionResult],
         total_steps: int,
+        attempt: int = 1,
     ) -> StepExecutionResult:
         prior_summary = "\n".join(
             f"- step {i}: {r.summary[:300]}"
@@ -171,28 +216,69 @@ class StepExecutor:
 
         from agent.core.llm_provider import GenerateRequest
 
+        turns = self._turns_for(step.kind, attempt)
         response = await self._provider.generate(
             GenerateRequest(
                 messages=[{"role": "user", "content": prompt}],
                 model=self._model_id,
-                max_turns=self._max_turns,
+                max_turns=turns,
                 timeout=self._timeout,
                 allow_file_access=step.kind in FILE_TOUCHING_KINDS,
                 cwd=self._project_root,
             )
         )
 
+        produced_text = (response.text or "").strip()
+        max_turns_hit = _is_max_turns_error(response.error or "") or _is_max_turns_error(produced_text)
+
         if not response.success:
+            # Špeciálny case: max_turns hit. Ak agent stihol vyprodukovať text, ber to
+            # ako PARTIAL success (zachytíme čo má), inak fail s hintom pre retry.
+            if max_turns_hit and len(produced_text) > 200:
+                logger.info(
+                    "initiative_step_partial_max_turns",
+                    initiative_id=initiative_id,
+                    step_idx=step.idx,
+                    kind=step.kind.value,
+                    turns_used=turns,
+                    text_len=len(produced_text),
+                )
+                return StepExecutionResult(
+                    success=True,
+                    summary=(
+                        f"[PARTIAL — max_turns={turns} reached at attempt {attempt}]\n\n"
+                        + produced_text[:3700]
+                    ),
+                    metadata={
+                        "model": self._model_id,
+                        "kind": step.kind.value,
+                        "max_turns_hit": True,
+                        "turns_used": turns,
+                        "attempt": attempt,
+                    },
+                )
+            err_msg = (response.error or "LLM provider error")[:1900]
+            if max_turns_hit:
+                err_msg = (
+                    f"max_turns={turns} vyčerpané (attempt {attempt}). Pri retry "
+                    f"executor zvýši turn budget na {self._turns_for(step.kind, attempt + 1)}."
+                )
             return StepExecutionResult(
                 success=False,
-                error=(response.error or "LLM provider error")[:1900],
+                error=err_msg,
                 summary=f"LLM zlyhal pri kroku {step.idx} ({step.kind.value}).",
+                metadata={"max_turns_hit": max_turns_hit, "turns_used": turns, "attempt": attempt},
             )
 
         return StepExecutionResult(
             success=True,
-            summary=(response.text or "")[:3900],
-            metadata={"model": self._model_id, "kind": step.kind.value},
+            summary=produced_text[:3900],
+            metadata={
+                "model": self._model_id,
+                "kind": step.kind.value,
+                "turns_used": turns,
+                "attempt": attempt,
+            },
         )
 
     async def _handle_verify(

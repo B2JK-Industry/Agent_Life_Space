@@ -398,6 +398,7 @@ class InitiativeEngine:
             attempt=(next_task.metadata or {}).get("attempts", 0) + 1,
         )
 
+        attempt_num = (next_task.metadata or {}).get("attempts", 0) + 1
         result = await self._executor.execute(
             initiative_id=initiative_id,
             initiative_title=project.name,
@@ -407,6 +408,7 @@ class InitiativeEngine:
             prior_outputs=prior_results,
             owner_chat_id=owner_chat_id,
             total_steps=len(plan.steps),
+            attempt=attempt_num,
         )
 
         # Persist artifact (raw result) + log udalosti
