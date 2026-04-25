@@ -516,9 +516,13 @@ class InitiativeEngine:
 
         if plan.is_long_running and not any_failed:
             # Long-running iniciatíva — zostáva v MONITORING (interpretované ako ACTIVE
-            # s tagom "monitoring"; cron-task ktorý vznikol v SCHEDULE kroku už beží)
-            if "monitoring" not in project.tags:
-                project.tags.append("monitoring")
+            # s tagom "monitoring"; cron-task ktorý vznikol v SCHEDULE kroku už beží).
+            # IDEMPOTENCY: dream + tag set len raz. Driver tick sa volá opakovane,
+            # ale finalizácia nesmie spamovať dream module.
+            already_finalized = "monitoring" in project.tags
+            if already_finalized:
+                return  # nothing to do; long-running stays ACTIVE+monitoring
+            project.tags.append("monitoring")
             project.notes = (project.notes or "") + "\n[entered MONITORING mode]"
             await self._projects.update(project)
             await self._dream_completed_initiative(plan, project, idx_to_task, monitoring=True)
