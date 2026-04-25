@@ -87,7 +87,8 @@ class AgentCron:
         self._tasks.append(asyncio.create_task(self._log_retention_loop()))
         self._tasks.append(asyncio.create_task(self._marketplace_monitor_loop()))
         self._tasks.append(asyncio.create_task(self._initiative_driver_loop()))
-        logger.info("cron_started", jobs=14)
+        self._tasks.append(asyncio.create_task(self._self_improvement_loop()))
+        logger.info("cron_started", jobs=15)
 
     async def stop(self) -> None:
         self._running = False
@@ -1407,6 +1408,95 @@ class AgentCron:
 
         logger.info("cron_subcontract_found",
                     job_id=job_id, api=api_name, price=str(api_price))
+
+    # --- Self-improvement loop ---
+
+    # Týždenný interval pre self-audit + improvement initiative
+    _SELF_IMPROVEMENT_INTERVAL = 7 * 24 * 3600  # 7 days
+
+    async def _self_improvement_loop(self) -> None:
+        """Weekly: spawn an Initiative kde ALS audituje sám seba.
+
+        Pattern: "review last 7 days actions, find anti-patterns, propose fixes".
+        Beží ako Initiative cez InitiativeEngine — ALS sám rozkladá na kroky a
+        exekvuje. Nie je to direct LLM call — je to plnohodnotný plan+verify
+        cyklus.
+
+        Skips ak už existuje recent self_improvement initiative (do 6 dní).
+        """
+        # Wait first iteration: 1 hour po štarte (let agent settle + accumulate data)
+        await asyncio.sleep(3600)
+        while self._running:
+            try:
+                await self._do_self_improvement()
+                await asyncio.sleep(self._SELF_IMPROVEMENT_INTERVAL)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("cron_self_improvement_error")
+
+    async def _do_self_improvement(self) -> None:
+        engine = getattr(self._agent, "initiative", None)
+        if engine is None:
+            logger.info("self_improvement_skipped_no_engine")
+            return
+
+        # Skip ak existuje recent self-improvement initiative (tag check)
+        try:
+            actives = await self._agent.projects.list_projects()
+            from datetime import timedelta
+            cutoff = datetime.now(UTC) - timedelta(days=6)
+            for p in actives:
+                if "self_improvement" not in p.tags:
+                    continue
+                try:
+                    created = datetime.fromisoformat(p.created_at)
+                    if created >= cutoff:
+                        logger.info(
+                            "self_improvement_skipped_recent_exists",
+                            project_id=p.id,
+                            age_hours=(datetime.now(UTC) - created).total_seconds() / 3600,
+                        )
+                        return
+                except (ValueError, TypeError):
+                    continue
+        except Exception:
+            logger.exception("self_improvement_skip_check_failed")
+
+        # Spawn the initiative
+        goal = (
+            "Self-improvement audit za posledných 7 dní. Toto je týždenný cron-spawned "
+            "initiative. Si ALS — autonómny agent. Tvoja úloha:\n\n"
+            "1. ANALYZE: prečítaj posledných 7 dní activity:\n"
+            "   - agent/logs/long/agent-long.log (filter za posledných 168h)\n"
+            "   - agent/brain/knowledge/initiatives/ (dream files completed)\n"
+            "   - agent/projects/projects.db (initiatives ABANDONED|FAILED|PAUSED)\n"
+            "   - tests/ (test failures recorded)\n"
+            "   Hľadaj anti-patterns, opakované chyby, neefektivity.\n\n"
+            "2. DESIGN: zoznam top 3-5 konkrétnych improvements (file:line, fix description).\n\n"
+            "3. CODE (allow_file_access=True): implementuj 1-3 najjednoduchšie improvements ktoré "
+            "majú vysoké hodnotenie / nízky risk. Žiadne zmeny v agent/core/agent.py "
+            "(self-modification risk).\n\n"
+            "4. TEST: pridaj testy pre fix-y, spusti pytest.\n\n"
+            "5. NOTIFY (chat_id=6698890771): krátky report — čo si našiel, čo si opravil, "
+            "čo zostalo na manual review."
+        )
+        try:
+            info = await engine.start_initiative(goal_nl=goal, chat_id=self._owner_chat_id or 0)
+            logger.info(
+                "self_improvement_initiative_started",
+                initiative_id=info.get("initiative_id"),
+                steps=info.get("steps_total"),
+            )
+            # Mark project ako self_improvement (engine doesn't know that tag)
+            pid = info.get("initiative_id")
+            if pid:
+                p = await self._agent.projects.get(pid)
+                if p and "self_improvement" not in p.tags:
+                    p.tags.append("self_improvement")
+                    await self._agent.projects.update(p)
+        except Exception:
+            logger.exception("self_improvement_initiative_start_failed")
 
     # --- Initiative driver loop ---
 
