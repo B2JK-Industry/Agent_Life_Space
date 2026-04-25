@@ -125,8 +125,11 @@ def _check_pidfile() -> None:
     častý failure mode kde systemd reštart agenta zlyhá kvôli Telegram getUpdates
     conflict s previous orphan instance.
     """
-    # Defenzívny cleanup orphan procesov (silent if žiadne)
-    _kill_orphan_agent_processes()
+    # POZN: _kill_orphan_agent_processes() bolo dočasne vypnuté — spôsobilo
+    # restart bomb (každý nový daemon zabil predchádzajúci → systemd restart loop).
+    # Lepšie: spustenie cez systemd s `KillMode=process` a manuálny kill <pid>
+    # pri orphan situácii. Refactor neskôr.
+    # _kill_orphan_agent_processes()
 
     if os.path.exists(PIDFILE):
         try:
