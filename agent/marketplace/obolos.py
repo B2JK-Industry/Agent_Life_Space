@@ -1,20 +1,18 @@
 """
 Agent Life Space — Obolos.tech Marketplace Connector
 
-First concrete connector. Normalizes the obolos.tech API
-(marketplace catalog, API details) into the common
-Opportunity/Bid models.
+CLI-first connector: uses the `obolos` CLI binary when available,
+falls back to REST API via ExternalGatewayService when CLI is missing.
 
-All HTTP calls go through the existing ExternalGatewayService
-which handles auth (AGENT_OBOLOS_WALLET_ADDRESS), rate limiting,
-retries, and 402 payment flows.
+CLI advantages (per skill.md v4.0.0):
+- Stable --json contract
+- Handles x402/USDC payments automatically
+- EIP-712 signing for ANP
+- Same surface as MCP server
 
-Scope:
-- Discovery (catalog → slugs → detail for each)
-- Evaluation (deterministic feasibility)
-- Bid preparation (draft)
-- Bid submission via marketplace_api_call_v1 POST to opportunity slug
-  (seller_publish_v1 is for registering your own APIs, NOT for bidding)
+REST fallback advantages:
+- Works without npm/node
+- Uses existing gateway auth/rate-limit/audit infrastructure
 """
 
 from __future__ import annotations
@@ -31,11 +29,33 @@ from agent.marketplace.models import (
     FeasibilityVerdict,
     Opportunity,
     OpportunityStatus,
+    stable_marketplace_id,
+)
+from agent.marketplace.obolos_cli import (
+    cli_anp_bid,
+    cli_anp_list,
+    cli_anp_message,
+    cli_anp_thread,
+    cli_api_call,
+    cli_api_categories,
+    cli_api_info,
+    cli_api_search,
+    cli_available,
+    cli_job_complete,
+    cli_job_info,
+    cli_job_list,
+    cli_job_reject,
+    cli_job_submit,
+    cli_listing_bid,
+    cli_listing_create,
+    cli_listing_info,
+    cli_listing_list,
+    cli_reputation_check,
+    cli_search,
 )
 
 logger = structlog.get_logger(__name__)
 
-# Skills the ALS agent can realistically offer
 _ALS_CAPABILITIES = frozenset({
     "code-review", "code-generation", "python", "api", "data-analysis",
     "text-generation", "summarization", "testing", "linting",
@@ -43,8 +63,24 @@ _ALS_CAPABILITIES = frozenset({
 })
 
 
+def _to_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _use_cli() -> bool:
+    """Decide whether to use CLI (preferred) or REST fallback."""
+    return cli_available()
+
+
 class ObolosConnector:
-    """Connector for obolos.tech x402 marketplace."""
+    """Connector for obolos.tech x402 marketplace.
+
+    Strategy: CLI-first, REST gateway fallback.
+    Each method tries CLI, catches failure, falls back to gateway.
+    """
 
     @property
     def platform_id(self) -> str:
@@ -54,15 +90,48 @@ class ObolosConnector:
     def display_name(self) -> str:
         return "Obolos.tech"
 
+    @property
+    def transport(self) -> str:
+        return "cli" if _use_cli() else "gateway"
+
+    # ─── Create listing (offer services) ───
+
+    async def create_listing(
+        self,
+        *,
+        title: str,
+        description: str = "",
+        max_budget: float = 0,
+        deadline: str = "7d",
+    ) -> dict[str, Any]:
+        """Create a work listing on obolos.tech via CLI."""
+        if not _use_cli():
+            return {"ok": False, "error": "Obolos CLI not available. Install with: npm install -g @obolos_tech/cli"}
+        result = await cli_listing_create(
+            title=title, description=description,
+            max_budget=max_budget, deadline=deadline,
+        )
+        if result["ok"]:
+            logger.info("obolos_listing_created", title=title[:50], id=result["data"].get("id", ""))
+        return result
+
+    # ─── API Marketplace (discovery) ───
+
     async def fetch_opportunities(
         self, gateway: Any, *, category: str = "", limit: int = 20,
     ) -> list[Opportunity]:
-        """Fetch marketplace catalog, then detail for each slug.
+        """Search API marketplace. CLI: obolos search; fallback: gateway catalog."""
+        if _use_cli():
+            result = await cli_search(category)
+            if result["ok"]:
+                apis = result["data"].get("apis", [])
+                return [
+                    opp for api in apis[:limit]
+                    if (opp := self._normalize_api_to_opportunity(api)) is not None
+                ]
+            logger.warning("obolos_cli_search_failed", error=result.get("error", ""))
 
-        Two-step flow:
-        1. marketplace_catalog_v1 → normalized_response.slugs (list of IDs)
-        2. For each slug: marketplace_api_call_v1 GET → response_json (full listing)
-        """
+        # REST fallback
         catalog = await gateway.call_api_via_capability(
             capability_id="marketplace_catalog_v1",
             provider_id="obolos.tech",
@@ -71,36 +140,19 @@ class ObolosConnector:
             query_params={"category": category} if category else None,
         )
         if not catalog.get("ok"):
-            logger.warning(
-                "obolos_catalog_fetch_failed",
-                error=catalog.get("error", "unknown"),
-            )
             return []
-
-        normalized = catalog.get("normalized_response", {})
-        slugs = normalized.get("slugs", [])
-        if not slugs:
-            logger.info("obolos_catalog_empty")
-            return []
-
+        slugs = catalog.get("normalized_response", {}).get("slugs", [])
         opportunities: list[Opportunity] = []
         for slug in slugs[:limit]:
             opp = await self.fetch_opportunity_detail(gateway, slug)
             if opp:
                 opportunities.append(opp)
-
-        logger.info("obolos_catalog_fetched", count=len(opportunities))
         return opportunities
 
     async def fetch_opportunity_detail(
         self, gateway: Any, platform_id: str,
     ) -> Opportunity | None:
-        """Fetch single API detail via marketplace_api_call capability.
-
-        Uses response_json (raw provider payload) because the gateway
-        normalizer for this route only returns top_level_keys, not the
-        full listing object.
-        """
+        """Fetch single API detail. CLI not applicable here; uses gateway."""
         result = await gateway.call_api_via_capability(
             capability_id="marketplace_api_call_v1",
             provider_id="obolos.tech",
@@ -109,17 +161,360 @@ class ObolosConnector:
         )
         if not result.get("ok"):
             return None
-
-        # Use raw response_json — normalized_response only has top_level_keys
         raw = result.get("response_json", {})
         return self._normalize_api_to_opportunity(raw, platform_id=platform_id)
+
+    # ─── ANP Listings (Agent Negotiation Protocol — wider pool) ───
+
+    async def list_anp_listings(
+        self, gateway: Any, *, limit: int = 20,
+    ) -> list[Opportunity]:
+        """Browse ANP listings. CLI: obolos anp list; no REST fallback."""
+        if not _use_cli():
+            return []
+        result = await cli_anp_list()
+        if not result["ok"]:
+            logger.warning("obolos_cli_anp_list_failed", error=result.get("error", ""))
+            return []
+        raw_listings = result["data"].get("listings", [])
+        opps: list[Opportunity] = []
+        for item in raw_listings[:limit]:
+            if str(item.get("status", "")).lower() != "open":
+                continue
+            opp = self._normalize_anp_to_opportunity(item)
+            if opp:
+                opps.append(opp)
+        return opps
+
+    async def submit_anp_bid(
+        self, listing_cid: str, *, price: float, message: str = "",
+    ) -> dict[str, Any]:
+        """Submit ANP bid via CLI. Returns CLI result dict."""
+        if not _use_cli():
+            return {"ok": False, "error": "Obolos CLI not available for ANP bids"}
+        return await cli_anp_bid(listing_cid, price=price, message=message)
+
+    def _normalize_anp_to_opportunity(self, item: dict[str, Any]) -> Opportunity | None:
+        """Normalize an ANP listing to Opportunity model."""
+        cid = str(item.get("cid", ""))
+        if not cid:
+            return None
+        title = str(item.get("title", f"ANP {cid[:12]}"))[:200]
+        description = str(item.get("description", ""))[:500]
+        min_price = _to_float(item.get("min_price", 0))
+        max_price = _to_float(item.get("max_price", 0))
+        return Opportunity(
+            id=stable_marketplace_id("obolos.tech", cid, kind="anp"),
+            platform="obolos.tech",
+            platform_id=cid,
+            title=title,
+            description=description,
+            url=f"https://obolos.tech/anp/{cid[:16]}",
+            category="listing",
+            budget_min=min_price,
+            budget_max=max_price or min_price,
+            currency="USDC",
+            skills_required=[],
+            status=OpportunityStatus.DISCOVERED,
+            raw_data=item,
+        )
+
+    # ─── Listings (provider-side work) ───
+
+    async def list_listings(
+        self, gateway: Any, *, limit: int = 20,
+    ) -> list[Opportunity]:
+        """Browse work listings. CLI: obolos listing list; fallback: gateway."""
+        if _use_cli():
+            result = await cli_listing_list(status="open")
+            if result["ok"]:
+                raw_listings = result["data"].get("listings", [])
+                return [
+                    opp for item in raw_listings[:limit]
+                    if (opp := self._normalize_listing_to_opportunity(item)) is not None
+                ]
+            logger.warning("obolos_cli_listing_list_failed", error=result.get("error", ""))
+
+        # REST fallback
+        result = await gateway.call_api_via_capability(
+            capability_id="listings_list_v1",
+            provider_id="obolos.tech",
+            resource="",
+            method="GET",
+        )
+        if not result.get("ok"):
+            return []
+        raw_listings = result.get("normalized_response", {}).get("listings", [])
+        return [
+            opp for item in raw_listings[:limit]
+            if (opp := self._normalize_listing_to_opportunity(item)) is not None
+        ]
+
+    async def get_listing(
+        self, gateway: Any, listing_id: str,
+    ) -> Opportunity | None:
+        """Listing detail. CLI: obolos listing info; fallback: gateway."""
+        if _use_cli():
+            result = await cli_listing_info(listing_id)
+            if result["ok"]:
+                return self._normalize_listing_to_opportunity(
+                    result["data"], listing_id=listing_id,
+                )
+            logger.warning("obolos_cli_listing_info_failed", error=result.get("error", ""))
+
+        # REST fallback
+        result = await gateway.call_api_via_capability(
+            capability_id="listings_detail_v1",
+            provider_id="obolos.tech",
+            resource=listing_id,
+            method="GET",
+        )
+        if not result.get("ok"):
+            return None
+        return self._normalize_listing_to_opportunity(
+            result.get("normalized_response", {}).get("listing", {}),
+            listing_id=listing_id,
+        )
+
+    async def submit_listing_bid(
+        self, gateway: Any, listing_id: str, bid: Bid,
+    ) -> dict[str, Any]:
+        """Submit bid on listing. CLI: obolos listing bid; fallback: gateway REST."""
+        if _use_cli():
+            result = await cli_listing_bid(
+                listing_id,
+                price=bid.price_usd,
+                delivery_hours=bid.delivery_days * 24 if bid.delivery_days else 0,
+                message=bid.proposal_text,
+            )
+            if result["ok"]:
+                bid.status = BidStatus.SUBMITTED
+                bid.submitted_at = datetime.now(UTC).isoformat()
+                bid.metadata["platform_bid_id"] = result["data"].get("id", "")
+                bid.metadata["transport"] = "cli"
+                logger.info("obolos_listing_bid_submitted_cli", listing_id=listing_id)
+                return {"ok": True, "normalized_response": result["data"], "transport": "cli"}
+            logger.warning("obolos_cli_listing_bid_failed", error=result.get("error", ""))
+            # Fall through to REST
+
+        # REST fallback — Obolos requires string values
+        payload = {
+            "price": str(bid.price_usd),
+            "delivery_time": str(bid.delivery_days),
+            "message": bid.proposal_text,
+        }
+        result = await gateway.call_api_via_capability(
+            capability_id="listings_bid_v1",
+            provider_id="obolos.tech",
+            resource=listing_id,
+            method="POST",
+            json_payload=payload,
+        )
+        if result.get("ok"):
+            bid.status = BidStatus.SUBMITTED
+            bid.submitted_at = datetime.now(UTC).isoformat()
+            normalized = result.get("normalized_response", {})
+            bid.metadata["platform_bid_id"] = normalized.get("bid_id", "")
+            bid.metadata["transport"] = "gateway"
+            logger.info("obolos_listing_bid_submitted_gateway", listing_id=listing_id)
+        else:
+            logger.warning("obolos_listing_bid_failed", error=result.get("error", ""))
+        return result
+
+    # ─── Jobs (ERC-8183 ACP) ───
+
+    async def list_jobs(
+        self, gateway: Any, *, limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """List jobs. CLI: obolos job list; fallback: gateway."""
+        if _use_cli():
+            result = await cli_job_list()
+            if result["ok"]:
+                return result["data"].get("jobs", [])[:limit]
+            logger.warning("obolos_cli_job_list_failed", error=result.get("error", ""))
+
+        result = await gateway.call_api_via_capability(
+            capability_id="jobs_list_v1",
+            provider_id="obolos.tech",
+            resource="",
+            method="GET",
+        )
+        if not result.get("ok"):
+            return []
+        return result.get("normalized_response", {}).get("jobs", [])[:limit]
+
+    async def get_job(
+        self, gateway: Any, job_id: str,
+    ) -> dict[str, Any] | None:
+        """Job detail. CLI: obolos job info; fallback: gateway."""
+        if _use_cli():
+            result = await cli_job_info(job_id)
+            if result["ok"]:
+                return result["data"]
+            logger.warning("obolos_cli_job_info_failed", error=result.get("error", ""))
+
+        result = await gateway.call_api_via_capability(
+            capability_id="jobs_detail_v1",
+            provider_id="obolos.tech",
+            resource=job_id,
+            method="GET",
+        )
+        if not result.get("ok"):
+            return None
+        return result.get("normalized_response", {}).get("job", {})
+
+    async def submit_job_work(
+        self, gateway: Any, job_id: str, *,
+        summary: str = "", proof: str = "", artifact_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Submit deliverable. CLI: obolos job submit; fallback: gateway."""
+        deliverable = summary or "Work completed."
+
+        if _use_cli():
+            result = await cli_job_submit(job_id, deliverable=deliverable)
+            if result["ok"]:
+                logger.info("obolos_job_work_submitted_cli", job_id=job_id)
+                return {"ok": True, "normalized_response": result["data"], "transport": "cli"}
+            logger.warning("obolos_cli_job_submit_failed", error=result.get("error", ""))
+
+        # REST fallback
+        payload: dict[str, Any] = {"deliverable": deliverable}
+        if proof:
+            payload["proof"] = proof
+        if artifact_ids:
+            payload["artifact_ids"] = artifact_ids
+        result = await gateway.call_api_via_capability(
+            capability_id="jobs_submit_v1",
+            provider_id="obolos.tech",
+            resource=job_id,
+            method="POST",
+            json_payload=payload,
+        )
+        if result.get("ok"):
+            logger.info("obolos_job_work_submitted_gateway", job_id=job_id)
+        else:
+            logger.warning("obolos_job_submit_failed", job_id=job_id, error=result.get("error", ""))
+        return result
+
+    async def complete_job(
+        self, gateway: Any, job_id: str, *, notes: str = "",
+    ) -> dict[str, Any]:
+        """Mark completed. CLI: obolos job complete; fallback: gateway."""
+        if _use_cli():
+            result = await cli_job_complete(job_id, reason=notes)
+            if result["ok"]:
+                logger.info("obolos_job_completed_cli", job_id=job_id)
+                return {"ok": True, "normalized_response": result["data"], "transport": "cli"}
+            logger.warning("obolos_cli_job_complete_failed", error=result.get("error", ""))
+
+        result = await gateway.call_api_via_capability(
+            capability_id="jobs_complete_v1",
+            provider_id="obolos.tech",
+            resource=job_id,
+            method="POST",
+            json_payload={"notes": notes} if notes else None,
+        )
+        if result.get("ok"):
+            logger.info("obolos_job_completed_gateway", job_id=job_id)
+        return result
+
+    async def reject_job(
+        self, gateway: Any, job_id: str, *, reason: str = "",
+    ) -> dict[str, Any]:
+        """Reject job. CLI: obolos job reject; fallback: gateway."""
+        if _use_cli():
+            result = await cli_job_reject(job_id, reason=reason)
+            if result["ok"]:
+                logger.info("obolos_job_rejected_cli", job_id=job_id)
+                return {"ok": True, "normalized_response": result["data"], "transport": "cli"}
+            logger.warning("obolos_cli_job_reject_failed", error=result.get("error", ""))
+
+        result = await gateway.call_api_via_capability(
+            capability_id="jobs_reject_v1",
+            provider_id="obolos.tech",
+            resource=job_id,
+            method="POST",
+            json_payload={"reason": reason} if reason else None,
+        )
+        if result.get("ok"):
+            logger.info("obolos_job_rejected_gateway", job_id=job_id)
+        return result
+
+    async def get_reputation(
+        self, gateway: Any, agent_id: str,
+    ) -> dict[str, Any] | None:
+        """Reputation check. CLI: obolos reputation check; fallback: gateway."""
+        if _use_cli():
+            result = await cli_reputation_check(agent_id)
+            if result["ok"]:
+                return result["data"]
+            logger.warning("obolos_cli_reputation_failed", error=result.get("error", ""))
+
+        result = await gateway.call_api_via_capability(
+            capability_id="anp_reputation_v1",
+            provider_id="obolos.tech",
+            resource=agent_id,
+            method="GET",
+        )
+        if not result.get("ok"):
+            return None
+        return result.get("normalized_response", {})
+
+    # ─── x402 Pay-per-call APIs (sub-contracting) ───
+
+    async def search_apis(self, query: str = "", *, category: str = "") -> dict[str, Any]:
+        """Search x402 marketplace for pay-per-call APIs."""
+        if not _use_cli():
+            return {"ok": False, "error": "CLI required for API search"}
+        return await cli_api_search(query, category=category)
+
+    async def get_api_info(self, api_slug: str) -> dict[str, Any]:
+        """Get API detail (schema, pricing, example)."""
+        if not _use_cli():
+            return {"ok": False, "error": "CLI required"}
+        return await cli_api_info(api_slug)
+
+    async def call_api(
+        self, api_slug: str, *, method: str = "GET", body: str = "",
+    ) -> dict[str, Any]:
+        """Call an x402 API, paying USDC per request. Sub-contracting capability."""
+        if not _use_cli():
+            return {"ok": False, "error": "CLI required for API calls"}
+        result = await cli_api_call(api_slug, method=method, body=body)
+        if result["ok"]:
+            logger.info("obolos_x402_api_called", api=api_slug, method=method)
+        return result
+
+    async def get_api_categories(self) -> dict[str, Any]:
+        """List all x402 API categories."""
+        if not _use_cli():
+            return {"ok": False, "error": "CLI required"}
+        return await cli_api_categories()
+
+    # ─── ANP Messages (client communication) ───
+
+    async def send_anp_message(self, job_id: str, *, content: str) -> dict[str, Any]:
+        """Send a signed message to a job's client/counterparty."""
+        if not _use_cli():
+            return {"ok": False, "error": "CLI required for ANP messages"}
+        result = await cli_anp_message(job_id, content=content)
+        if result["ok"]:
+            logger.info("obolos_anp_message_sent", job_id=job_id)
+        return result
+
+    async def get_anp_thread(self, job_id: str) -> dict[str, Any]:
+        """Get the message thread for a job."""
+        if not _use_cli():
+            return {"ok": False, "error": "CLI required"}
+        return await cli_anp_thread(job_id)
+
+    # ─── Evaluation (local, no network) ───
 
     def evaluate_opportunity(
         self, opportunity: Opportunity, agent_capabilities: list[str],
     ) -> Evaluation:
-        """Deterministic feasibility check."""
+        """Deterministic feasibility check — no CLI/network needed."""
         caps = set(agent_capabilities) | _ALS_CAPABILITIES
-
         required = set(opportunity.skills_required)
         matched = required & caps
         missing = required - caps
@@ -153,16 +548,26 @@ class ObolosConnector:
     def prepare_bid(
         self, opportunity: Opportunity, evaluation: Evaluation,
     ) -> Bid:
-        """Draft a bid for a feasible opportunity."""
+        """Draft a bid — local only.
+
+        Reputation strategy: for low-budget jobs ($0-$5) with high confidence,
+        bid aggressively (lower price) to win and build reputation score.
+        For higher-budget jobs, bid at 80% of max_budget.
+        """
         price = opportunity.budget_min or 0.0
         if opportunity.budget_max > 0:
-            price = round(opportunity.budget_max * 0.8, 2)
+            # Reputation building: bid lower on small jobs to win more
+            if opportunity.budget_max <= 5.0 and evaluation.confidence >= 0.6:
+                price = round(opportunity.budget_max * 0.6, 2)  # 60% for reputation building
+            else:
+                price = round(opportunity.budget_max * 0.8, 2)
 
         proposal = (
             f"I can deliver this using my automated pipeline:\n"
             f"- Matched skills: {', '.join(evaluation.matched_skills) or 'general'}\n"
             f"- Execution: sandboxed build + verification + code review\n"
-            f"- Confidence: {evaluation.confidence:.0%}"
+            f"- Confidence: {evaluation.confidence:.0%}\n"
+            f"- Delivery: automated, typically under 1 hour"
         )
 
         return Bid(
@@ -174,149 +579,14 @@ class ObolosConnector:
             status=BidStatus.DRAFT,
         )
 
+    # Legacy generic submit (not used for listings)
     async def submit_bid(
         self, gateway: Any, bid: Bid, opportunity: Opportunity | None = None,
     ) -> dict[str, Any]:
-        """Submit bid via marketplace_api_call_v1 POST to opportunity slug.
-
-        Uses the generic marketplace API call capability which POSTs to
-        the opportunity's slug endpoint. This is the correct route —
-        seller_publish_v1 is for registering YOUR OWN APIs, not for
-        applying to existing opportunities.
-
-        Requires: opportunity.platform_id (the slug to POST to).
-        """
+        """Generic submit — only for non-listing opportunities (API marketplace)."""
         if not opportunity or not opportunity.platform_id:
-            return {
-                "ok": False,
-                "error": "Cannot submit: opportunity platform_id (slug) is required.",
-            }
-
-        result = await gateway.call_api_via_capability(
-            capability_id="marketplace_api_call_v1",
-            provider_id="obolos.tech",
-            resource=opportunity.platform_id,
-            method="POST",
-            json_payload={
-                "action": "bid",
-                "title": bid.title,
-                "description": bid.proposal_text,
-                "price": bid.price_usd,
-                "delivery_days": bid.delivery_days,
-            },
-        )
-        if result.get("ok"):
-            bid.status = BidStatus.SUBMITTED
-            bid.submitted_at = datetime.now(UTC).isoformat()
-            logger.info("obolos_bid_submitted", bid_id=bid.id, slug=opportunity.platform_id)
-        else:
-            logger.warning(
-                "obolos_bid_submit_failed",
-                bid_id=bid.id,
-                error=result.get("error", ""),
-            )
-
-        return result
-
-    # ─── Listings (documented provider-side work) ───
-
-    async def list_listings(
-        self, gateway: Any, *, limit: int = 20,
-    ) -> list[Opportunity]:
-        """GET /api/listings — browse available work listings."""
-        result = await gateway.call_api_via_capability(
-            capability_id="listings_list_v1",
-            provider_id="obolos.tech",
-            resource="",
-            method="GET",
-        )
-        if not result.get("ok"):
-            logger.warning("obolos_listings_fetch_failed", error=result.get("error", ""))
-            return []
-
-        normalized = result.get("normalized_response", {})
-        raw_listings = normalized.get("listings", [])
-
-        opportunities: list[Opportunity] = []
-        for item in raw_listings[:limit]:
-            opp = self._normalize_listing_to_opportunity(item)
-            if opp:
-                opportunities.append(opp)
-        logger.info("obolos_listings_fetched", count=len(opportunities))
-        return opportunities
-
-    async def get_listing(
-        self, gateway: Any, listing_id: str,
-    ) -> Opportunity | None:
-        """GET /api/listings/{id} — full listing detail."""
-        result = await gateway.call_api_via_capability(
-            capability_id="listings_detail_v1",
-            provider_id="obolos.tech",
-            resource=listing_id,
-            method="GET",
-        )
-        if not result.get("ok"):
-            return None
-        normalized = result.get("normalized_response", {})
-        listing_data = normalized.get("listing", {})
-        return self._normalize_listing_to_opportunity(listing_data, listing_id=listing_id)
-
-    async def submit_listing_bid(
-        self, gateway: Any, listing_id: str, bid: Bid,
-    ) -> dict[str, Any]:
-        """POST /api/listings/{id}/bid — submit bid to a work listing."""
-        result = await gateway.call_api_via_capability(
-            capability_id="listings_bid_v1",
-            provider_id="obolos.tech",
-            resource=listing_id,
-            method="POST",
-            json_payload={
-                "price": bid.price_usd,
-                "delivery_time": bid.delivery_days,
-                "message": bid.proposal_text,
-            },
-        )
-        if result.get("ok"):
-            bid.status = BidStatus.SUBMITTED
-            bid.submitted_at = datetime.now(UTC).isoformat()
-            normalized = result.get("normalized_response", {})
-            bid.metadata["platform_bid_id"] = normalized.get("bid_id", "")
-            logger.info("obolos_listing_bid_submitted", listing_id=listing_id)
-        else:
-            logger.warning("obolos_listing_bid_failed", error=result.get("error", ""))
-        return result
-
-    # ─── Jobs (ERC-8183 ACP) ───
-
-    async def list_jobs(
-        self, gateway: Any, *, limit: int = 20,
-    ) -> list[dict[str, Any]]:
-        """GET /api/jobs — list accepted work."""
-        result = await gateway.call_api_via_capability(
-            capability_id="jobs_list_v1",
-            provider_id="obolos.tech",
-            resource="",
-            method="GET",
-        )
-        if not result.get("ok"):
-            logger.warning("obolos_jobs_fetch_failed", error=result.get("error", ""))
-            return []
-        normalized = result.get("normalized_response", {})
-        return normalized.get("jobs", [])[:limit]
-
-    async def get_job(
-        self, gateway: Any, job_id: str,
-    ) -> dict[str, Any] | None:
-        """GET /api/jobs/{id} — job detail."""
-        result = await gateway.call_api_via_capability(
-            capability_id="jobs_detail_v1",
-            provider_id="obolos.tech",
-            resource=job_id,
-            method="GET",
-        )
-        if not result.get("ok"):
-            return None
-        return result.get("normalized_response", {}).get("job", {})
+            return {"ok": False, "error": "Cannot submit: opportunity platform_id is required."}
+        return {"ok": False, "error": "Generic API marketplace bidding is not supported. Use listings."}
 
     # ─── Internal normalization ───
 
@@ -329,24 +599,33 @@ class ObolosConnector:
             return None
         title = listing.get("title") or listing.get("name") or f"Listing {lid[:8]}"
         description = listing.get("description", "")
+        budget_min = _to_float(listing.get("min_budget"))
+        budget_max = _to_float(listing.get("max_budget"))
         budget = listing.get("budget", listing.get("price", 0))
         if isinstance(budget, dict):
             budget = budget.get("amount", budget.get("max", 0))
+        budget_fallback = _to_float(budget)
+        if not budget_min:
+            budget_min = budget_fallback
+        if not budget_max:
+            budget_max = budget_fallback or budget_min
         tags = listing.get("skills", listing.get("tags", []))
         if isinstance(tags, str):
             tags = [t.strip() for t in tags.split(",") if t.strip()]
 
         return Opportunity(
+            id=stable_marketplace_id("obolos.tech", lid),
             platform="obolos.tech",
             platform_id=str(lid),
             title=str(title)[:200],
             description=str(description)[:500],
             url=f"https://obolos.tech/api/listings/{lid}",
-            category=tags[0] if tags else "listing",
-            budget_min=float(budget) if budget else 0.0,
-            budget_max=float(budget) if budget else 0.0,
-            currency="USD",
+            category="listing",
+            budget_min=budget_min,
+            budget_max=budget_max,
+            currency=str(listing.get("currency", "USD")),
             skills_required=tags[:10] if isinstance(tags, list) else [],
+            deadline=str(listing.get("deadline", "")),
             status=OpportunityStatus.DISCOVERED,
             raw_data=listing,
         )
@@ -354,14 +633,13 @@ class ObolosConnector:
     def _normalize_api_to_opportunity(
         self, api: dict[str, Any], platform_id: str = "",
     ) -> Opportunity | None:
-        """Normalize a single obolos.tech API listing to Opportunity."""
+        """Normalize a single obolos.tech API marketplace entry."""
         slug = api.get("slug") or api.get("id") or platform_id
         if not slug:
             return None
 
         title = api.get("name") or api.get("title") or slug
         description = api.get("description", "")
-
         price = api.get("price", 0)
         price_obj = api.get("pricing", {})
         if isinstance(price_obj, dict):
@@ -372,6 +650,7 @@ class ObolosConnector:
             tags = [t.strip() for t in tags.split(",") if t.strip()]
 
         return Opportunity(
+            id=stable_marketplace_id("obolos.tech", str(slug)),
             platform="obolos.tech",
             platform_id=slug,
             title=str(title),

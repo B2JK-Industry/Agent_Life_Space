@@ -115,26 +115,38 @@ async def run_project_in_docker(
             result.error = "No files to build"
             return result
 
-        # Phase 1: Install dependencies + ruff (with network, single phase)
-        has_requirements = (Path(project_dir) / "requirements.txt").exists()
-        if has_requirements:
-            deps_result = await _docker_run_phase(
-                project_dir=project_dir,
-                script="pip install -q -r /work/requirements.txt ruff 2>&1",
-                network=True,
-                timeout=120,
-                memory=memory,
-                phase="deps",
-            )
-            result.deps_installed = deps_result["success"]
-            result.deps_output = deps_result["output"]
-            if not deps_result["success"]:
-                result.error = f"Dependency install failed: {deps_result['output'][:300]}"
-                logger.warning("docker_executor_deps_failed",
-                               output=deps_result["output"][:500])
-                # Continue anyway — tests might reveal the issue
-        else:
-            result.deps_installed = True
+        # Phase 1: Install dependencies into project_dir/.deps so the next
+        # phases (no network) see them. Each Docker phase uses --rm so
+        # site-packages installed inside the container are lost; we install
+        # to a target dir that lives in the writable bind-mounted project_dir.
+        #
+        # Always install pytest+ruff so test/lint phases have their tools,
+        # regardless of whether codegen put them in requirements.txt
+        # (Opus often splits runtime vs dev deps).  Then layer any project
+        # requirements files on top.
+        deps_script_parts = [
+            "pip install -q --target=/work/.deps pytest ruff 2>&1",
+        ]
+        for req_name in ("requirements.txt", "requirements-dev.txt", "requirements-test.txt"):
+            if (Path(project_dir) / req_name).exists():
+                deps_script_parts.append(
+                    f"pip install -q --target=/work/.deps -r /work/{req_name} 2>&1 || true",
+                )
+        deps_result = await _docker_run_phase(
+            project_dir=project_dir,
+            script=" && ".join(deps_script_parts),
+            network=True,
+            timeout=180,
+            memory=memory,
+            phase="deps",
+        )
+        result.deps_installed = deps_result["success"]
+        result.deps_output = deps_result["output"]
+        if not deps_result["success"]:
+            result.error = f"Dependency install failed: {deps_result['output'][:300]}"
+            logger.warning("docker_executor_deps_failed",
+                           output=deps_result["output"][:500])
+            # Continue anyway — tests might reveal the issue
 
         # Phase 2: Run tests (no network)
         test_result = await _run_tests_in_docker(project_dir, memory, timeout)
@@ -142,10 +154,17 @@ async def run_project_in_docker(
         result.test_output = test_result["output"]
         result.exit_code = test_result.get("exit_code", 1)
 
-        # Phase 3: Lint (no network — ruff installed in deps phase)
+        # Phase 3: Lint (no network — ruff installed in deps phase to /work/.deps)
+        # Exclude .deps/ since it contains installed third-party packages
+        # whose lint warnings would dominate output (1MB+ of noise).
         lint_result = await _docker_run_phase(
             project_dir=project_dir,
-            script="cd /work && ruff check --select E,F,W . 2>&1 || true",
+            script=(
+                "cd /work && export PATH=/work/.deps/bin:$PATH && "
+                "export PYTHONPATH=/work/.deps:/work && "
+                "python -m ruff check --select E,F,W "
+                "--exclude .deps --exclude __pycache__ . 2>&1 || true"
+            ),
             network=False,
             timeout=60,
             memory=memory,
@@ -176,12 +195,22 @@ async def run_project_in_docker(
                 operations = fixed_ops
                 _write_project_files(project_dir, operations)
 
-                if has_requirements:
-                    await _docker_run_phase(
-                        project_dir=project_dir,
-                        script="pip install -q -r /work/requirements.txt 2>&1",
-                        network=True, timeout=120, memory=memory, phase="deps_retry",
-                    )
+                # Reinstall deps in case the fix changed requirements files.
+                # Same logic as initial deps phase: always pytest+ruff plus
+                # whichever requirements files exist now.
+                retry_parts = [
+                    "pip install -q --target=/work/.deps pytest ruff 2>&1",
+                ]
+                for req_name in ("requirements.txt", "requirements-dev.txt", "requirements-test.txt"):
+                    if (Path(project_dir) / req_name).exists():
+                        retry_parts.append(
+                            f"pip install -q --target=/work/.deps -r /work/{req_name} 2>&1 || true",
+                        )
+                await _docker_run_phase(
+                    project_dir=project_dir,
+                    script=" && ".join(retry_parts),
+                    network=True, timeout=180, memory=memory, phase="deps_retry",
+                )
 
                 test_result = await _run_tests_in_docker(project_dir, memory, timeout)
                 result.test_passed = test_result["success"]
@@ -224,19 +253,31 @@ async def _run_tests_in_docker(
     memory: str,
     timeout: int,
 ) -> dict[str, Any]:
-    """Run pytest in Docker container. No network."""
-    # Discover test command
-    has_pytest = (Path(project_dir) / "requirements.txt").exists() and \
-        "pytest" in (Path(project_dir) / "requirements.txt").read_text()
+    """Run pytest in Docker container. No network.
+
+    Deps were installed into /work/.deps in the previous phase via --target,
+    so PYTHONPATH must include it for `python -m pytest` to find pytest.
+    """
+    # Detect pytest requirement (heuristic: requirements.txt mentions pytest
+    # OR a tests/ dir exists).  Either way the deps phase already installed it.
+    req_path = Path(project_dir) / "requirements.txt"
+    tests_dir = Path(project_dir) / "tests"
+    has_pytest = (
+        (req_path.exists() and "pytest" in req_path.read_text())
+        or tests_dir.is_dir()
+    )
 
     if has_pytest:
         script = (
-            "cd /work && "
+            "cd /work && export PYTHONPATH=/work/.deps:/work && "
             "python -m pytest tests/ -v --tb=short --no-header 2>&1 || "
             "python -m pytest . -v --tb=short --no-header 2>&1"
         )
     else:
-        script = "cd /work && python -m pytest -v --tb=short --no-header 2>&1"
+        script = (
+            "cd /work && export PYTHONPATH=/work/.deps:/work && "
+            "python -m pytest -v --tb=short --no-header 2>&1"
+        )
 
     return await _docker_run_phase(
         project_dir=project_dir,
@@ -270,11 +311,12 @@ async def _docker_run_phase(
         f"--network={network_flag}",
         "--pids-limit=100",
         "--security-opt=no-new-privileges",
-        # Mount project read-only, copy to /work for writable execution
-        "-v", f"{project_dir}:/project:ro",
+        # Mount project writable so /work/.deps (pip --target install)
+        # persists across deps → test → lint phases (each phase is --rm).
+        "-v", f"{project_dir}:/work",
         _DOCKER_IMAGE,
         "bash", "-c",
-        f"mkdir -p /work && cp -a /project/. /work/ && cd /work && {script}",
+        f"cd /work && {script}",
     ]
 
     docker_cmd = f"sg docker -c {shlex.quote(' '.join(shlex.quote(a) for a in docker_args))}"
@@ -376,6 +418,7 @@ async def _ask_opus_to_fix(
             model=OPUS.model_id,
             timeout=300,
             max_turns=1,
+            no_tools=True,  # Pure text-in/JSON-out fix generation
         ))
 
         if not response.success or not response.text:

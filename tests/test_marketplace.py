@@ -22,6 +22,7 @@ from agent.marketplace.models import (
     FeasibilityVerdict,
     Opportunity,
     OpportunityStatus,
+    stable_marketplace_id,
 )
 from agent.marketplace.obolos import ObolosConnector
 from agent.marketplace.service import MarketplaceService
@@ -407,26 +408,19 @@ class TestObolosConnectorGatewayContract:
         assert opp.skills_required == ["python"]
 
     @pytest.mark.asyncio
-    async def test_submit_bid_uses_marketplace_api_call(self):
-        """submit_bid must POST to marketplace_api_call_v1 with opportunity slug."""
+    async def test_generic_submit_bid_returns_not_supported(self):
+        """Generic submit_bid for API marketplace items returns not-supported."""
         from unittest.mock import AsyncMock
 
         gateway = AsyncMock()
-        gateway.call_api_via_capability.return_value = {"ok": True, "status_code": 200}
-
         c = ObolosConnector()
         opp = Opportunity(platform="obolos.tech", platform_id="test-slug", title="Test")
-        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=10.0, title="My Bid")
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=10.0)
 
         result = await c.submit_bid(gateway, bid, opp)
-        assert result["ok"] is True
-        assert bid.status == BidStatus.SUBMITTED
-
-        call_kwargs = gateway.call_api_via_capability.call_args.kwargs
-        assert call_kwargs["capability_id"] == "marketplace_api_call_v1"
-        assert call_kwargs["resource"] == "test-slug"
-        assert call_kwargs["method"] == "POST"
-        assert "json_payload" in call_kwargs
+        assert result["ok"] is False
+        assert "not supported" in result["error"].lower()
+        gateway.call_api_via_capability.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_submit_bid_without_opportunity_fails(self):
@@ -1189,7 +1183,10 @@ class TestObolosConnectorListings:
             "ok": True,
             "normalized_response": {
                 "listings": [
-                    {"id": "L1", "title": "Build an API", "budget": 100, "skills": ["python"]},
+                    {
+                        "id": "L1", "title": "Build an API",
+                        "min_budget": "50", "max_budget": "100", "skills": ["python"],
+                    },
                     {"id": "L2", "title": "Review code", "budget": 50},
                 ],
             },
@@ -1199,10 +1196,45 @@ class TestObolosConnectorListings:
         assert len(opps) == 2
         assert opps[0].platform_id == "L1"
         assert opps[0].title == "Build an API"
+        assert opps[0].budget_min == 50.0
+        assert opps[0].budget_max == 100.0
         assert opps[1].platform_id == "L2"
 
         call_kwargs = gateway.call_api_via_capability.call_args.kwargs
         assert call_kwargs["capability_id"] == "listings_list_v1"
+        assert opps[0].id == stable_marketplace_id("obolos.tech", "L1")
+
+    @pytest.mark.asyncio
+    async def test_listings_ids_are_stable_across_fetches(self):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {
+                "listings": [{"id": "L1", "title": "Build an API", "budget": 100}],
+            },
+        }
+        c = ObolosConnector()
+        opps_a = await c.list_listings(gateway, limit=10)
+        opps_b = await c.list_listings(gateway, limit=10)
+        assert opps_a[0].id == opps_b[0].id
+
+    def test_normalize_listing_uses_budget_range_and_deadline(self):
+        c = ObolosConnector()
+        opp = c._normalize_listing_to_opportunity({
+            "id": "L3",
+            "title": "Budgeted work",
+            "min_budget": "1.25",
+            "max_budget": "5.75",
+            "deadline": "2026-04-21T00:00:00Z",
+            "status": "open",
+        })
+        assert opp is not None
+        assert opp.budget_min == 1.25
+        assert opp.budget_max == 5.75
+        assert opp.deadline == "2026-04-21T00:00:00Z"
+        assert opp.category == "listing"
 
     @pytest.mark.asyncio
     async def test_get_listing_detail(self):
@@ -1245,7 +1277,7 @@ class TestObolosConnectorListings:
         call_kwargs = gateway.call_api_via_capability.call_args.kwargs
         assert call_kwargs["capability_id"] == "listings_bid_v1"
         assert call_kwargs["resource"] == "L1"
-        assert call_kwargs["json_payload"]["price"] == 80.0
+        assert call_kwargs["json_payload"]["price"] == "80.0"
 
     @pytest.mark.asyncio
     async def test_list_jobs(self):
@@ -1308,6 +1340,15 @@ class TestMarketplaceTelegramListingsJobs:
         await svc.close()
 
     @pytest.mark.asyncio
+    async def test_direct_help_lists_marketplace(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_help("")
+        assert "/marketplace" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
     async def test_listings_empty(self, tmp_path: Path):
         from unittest.mock import AsyncMock
         gateway = AsyncMock()
@@ -1337,6 +1378,49 @@ class TestMarketplaceTelegramListingsJobs:
         await svc.initialize()
         handler = self._make_handler(svc)
         result = await handler._cmd_marketplace("listings")
+        assert "Build API" in result
+        assert "[open]" in result.lower() or "[unknown]" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_show_resolves_short_id_prefix(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {
+                "listings": [{"id": "L1", "title": "Build API", "budget": 100, "status": "open"}],
+            },
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+
+        listings_result = await handler._cmd_marketplace("listings")
+        short_id = stable_marketplace_id("obolos.tech", "L1")[:8]
+        assert short_id in listings_result
+
+        show_result = await handler._cmd_marketplace(f"show {short_id}")
+        assert "Build API" in show_result
+        assert "Platform status: open" in show_result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_discover_falls_back_to_listings(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.side_effect = [
+            {"ok": False, "error": "route unavailable"},
+            {"ok": True, "normalized_response": {"listings": [{"id": "L1", "title": "Build API", "status": "open"}]}},
+        ]
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("discover")
         assert "Build API" in result
         await svc.close()
 
@@ -1435,6 +1519,32 @@ class TestBidEligibility:
         gateway.call_api_via_capability.assert_called_once()
         await svc.close()
 
+    @pytest.mark.asyncio
+    async def test_service_submit_rejects_non_open_listing(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+        gateway = AsyncMock()
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="Accepted Listing",
+            platform="obolos.tech",
+            platform_id="L1",
+            url="https://obolos.tech/api/listings/L1",
+            raw_data={"status": "accepted"},
+        )
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=50.0)
+        await svc._persist_bid(bid)
+
+        result = await svc.submit_bid(bid)
+        assert result["ok"] is False
+        assert "not open for bids" in result["error"].lower()
+        gateway.call_api_via_capability.assert_not_called()
+        await svc.close()
+
 
 class TestTelegramBidEligibility:
     """Telegram /marketplace bid rejects non-listing opportunities."""
@@ -1445,8 +1555,10 @@ class TestTelegramBidEligibility:
         from agent.social.telegram_handler import TelegramHandler
         agent = MagicMock()
         agent.marketplace = marketplace_svc
+        agent.approval_queue = getattr(marketplace_svc, "_approval_queue", None)
         handler = TelegramHandler.__new__(TelegramHandler)
         handler._agent = agent
+        handler._work_loop = None
         return handler
 
     @pytest.mark.asyncio
@@ -1484,4 +1596,1744 @@ class TestTelegramBidEligibility:
         result = await handler._cmd_marketplace(f"bid {opp.id}")
         assert "bid draft created" in result.lower()
         assert "/marketplace submit" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_bid_on_non_open_listing_rejected(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="Taken Work", platform="obolos.tech", platform_id="W2",
+            url="https://obolos.tech/api/listings/W2",
+            raw_data={"status": "accepted"},
+        )
+        await svc._persist_opportunity(opp)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"bid {opp.id[:8]}")
+        assert "not open for bids" in result.lower()
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Provider lifecycle: complete, reject, reputation, outcomes
+# ─────────────────────────────────────────────
+
+
+class TestJobLifecycleRoutes:
+    """Routes exist for job complete/reject/reputation."""
+
+    def test_jobs_complete_route(self):
+        from agent.control.policy import get_external_capability_route
+        route = get_external_capability_route("obolos_jobs_complete_primary")
+        assert route is not None
+        assert route.capability_id == "jobs_complete_v1"
+
+    def test_jobs_reject_route(self):
+        from agent.control.policy import get_external_capability_route
+        route = get_external_capability_route("obolos_jobs_reject_primary")
+        assert route is not None
+        assert route.capability_id == "jobs_reject_v1"
+
+    def test_anp_reputation_route(self):
+        from agent.control.policy import get_external_capability_route
+        route = get_external_capability_route("obolos_anp_reputation_primary")
+        assert route is not None
+        assert route.capability_id == "anp_reputation_v1"
+
+
+class TestObolosConnectorLifecycle:
+    """Connector lifecycle methods use correct capabilities."""
+
+    @pytest.mark.asyncio
+    async def test_submit_job_work(self):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        c = ObolosConnector()
+        result = await c.submit_job_work(gateway, "J1", summary="Done", proof="hash123")
+        assert result["ok"] is True
+        kw = gateway.call_api_via_capability.call_args.kwargs
+        assert kw["capability_id"] == "jobs_submit_v1"
+        assert kw["resource"] == "J1"
+        assert kw["json_payload"]["deliverable"] == "Done"
+
+    @pytest.mark.asyncio
+    async def test_complete_job(self):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {"revenue": 50, "currency": "USD"}}
+        c = ObolosConnector()
+        result = await c.complete_job(gateway, "J1", notes="All good")
+        assert result["ok"] is True
+        kw = gateway.call_api_via_capability.call_args.kwargs
+        assert kw["capability_id"] == "jobs_complete_v1"
+
+    @pytest.mark.asyncio
+    async def test_reject_job(self):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        c = ObolosConnector()
+        result = await c.reject_job(gateway, "J1", reason="Cannot deliver")
+        assert result["ok"] is True
+        kw = gateway.call_api_via_capability.call_args.kwargs
+        assert kw["capability_id"] == "jobs_reject_v1"
+
+    @pytest.mark.asyncio
+    async def test_get_reputation(self):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"agent_id": "ag1", "score": 85, "jobs_completed": 10},
+        }
+        c = ObolosConnector()
+        rep = await c.get_reputation(gateway, "ag1")
+        assert rep is not None
+        assert rep["score"] == 85
+
+
+class TestJobOutcomeModel:
+    """JobOutcome model serialization."""
+
+    def test_defaults(self):
+        from agent.marketplace.models import JobOutcome, JobOutcomeStatus
+        o = JobOutcome(external_job_id="J1")
+        assert o.status == JobOutcomeStatus.UNKNOWN
+        assert o.revenue_amount is None
+
+    def test_roundtrip(self):
+        from agent.marketplace.models import JobOutcome, JobOutcomeStatus
+        o = JobOutcome(
+            external_job_id="J1", status=JobOutcomeStatus.COMPLETED,
+            revenue_amount=100.0, revenue_currency="USD",
+        )
+        d = o.to_dict()
+        o2 = JobOutcome.from_dict(d)
+        assert o2.status == JobOutcomeStatus.COMPLETED
+        assert o2.revenue_amount == 100.0
+
+
+class TestServiceJobLifecycle:
+    """Service-level job lifecycle with outcome recording."""
+
+    @pytest.mark.asyncio
+    async def test_complete_job_records_outcome(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True, "normalized_response": {"revenue": 75, "currency": "USD"},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        result = await svc.complete_job("obolos.tech", "J1", notes="Done")
+        assert result["ok"] is True
+        assert result.get("outcome_id")
+
+        outcomes = await svc.list_outcomes()
+        assert len(outcomes) == 1
+        assert outcomes[0].external_job_id == "J1"
+        assert outcomes[0].status.value == "completed"
+        assert outcomes[0].revenue_amount == 75
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_reject_job_records_outcome(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        result = await svc.reject_job("obolos.tech", "J1", reason="Cannot do")
+        assert result["ok"] is True
+        outcomes = await svc.list_outcomes()
+        assert outcomes[0].status.value == "rejected"
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_stats_includes_outcomes(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True, "normalized_response": {},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        await svc.complete_job("obolos.tech", "J1")
+        stats = await svc.get_stats()
+        assert stats["outcomes"] == 1
+        await svc.close()
+
+
+class TestTelegramJobLifecycle:
+    """Telegram commands for job lifecycle."""
+
+    def _make_handler(self, marketplace_svc):
+        from unittest.mock import MagicMock
+
+        from agent.social.telegram_handler import TelegramHandler
+        agent = MagicMock()
+        agent.marketplace = marketplace_svc
+        handler = TelegramHandler.__new__(TelegramHandler)
+        handler._agent = agent
+        return handler
+
+    @pytest.mark.asyncio
+    async def test_job_complete_success(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True, "normalized_response": {"revenue": 50, "currency": "USD"},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("job-complete J1 Great work")
+        assert "completed" in result.lower()
+        assert "50" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_job_reject_success(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("job-reject J1 Cannot deliver")
+        assert "rejected" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_reputation_success(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"agent_id": "ag1", "score": 90, "jobs_completed": 5, "jobs_failed": 0},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("reputation ag1")
+        assert "90" in result
+        assert "ag1" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_report_empty(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("report")
+        assert "no marketplace activity" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_report_with_data(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True, "normalized_response": {"revenue": 100, "currency": "USD"},
+        }
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        await svc.complete_job("obolos.tech", "J1")
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("report")
+        assert "1 completed" in result
+        assert "100" in result  # revenue
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_help_includes_lifecycle_commands(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("unknowncmd")
+        assert "job-submit" in result
+        assert "job-complete" in result
+        assert "job-reject" in result
+        assert "reputation" in result
+        assert "report" in result
+        assert "link-job" in result
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Final stretch: linkage, reporting, edge cases, reload
+# ─────────────────────────────────────────────
+
+
+class TestBidJobLinkage:
+    """Linking external job IDs to bids."""
+
+    @pytest.mark.asyncio
+    async def test_link_job_to_bid(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(title="Link Test", platform="obolos.tech", url="https://obolos.tech/api/listings/L1")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech", status=BidStatus.SUBMITTED)
+        await svc._persist_bid(bid)
+
+        result = await svc.link_job(bid.id, "EXT-J1")
+        assert result["ok"] is True
+
+        reloaded = await svc.get_bid(bid.id)
+        assert reloaded.external_job_id == "EXT-J1"
+        assert reloaded.status == BidStatus.ACCEPTED
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_link_job_duplicate_rejected(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        bid = Bid(opportunity_id="opp", platform="test", external_job_id="J1")
+        await svc._persist_bid(bid)
+        result = await svc.link_job(bid.id, "J2")
+        assert result["ok"] is False
+        assert "already linked" in result["error"].lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_link_job_same_id_ok(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        bid = Bid(opportunity_id="opp", platform="test", external_job_id="J1")
+        await svc._persist_bid(bid)
+        result = await svc.link_job(bid.id, "J1")
+        assert result["ok"] is True  # idempotent
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_find_linkage_for_job(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        bid = Bid(
+            opportunity_id="opp-1", platform="test",
+            external_job_id="J1", project_id="proj-1",
+        )
+        await svc._persist_bid(bid)
+        linkage = await svc._find_linkage_for_job("J1")
+        assert linkage["bid_id"] == bid.id
+        assert linkage["project_id"] == "proj-1"
+        await svc.close()
+
+
+class TestDuplicateLifecycleTransitions:
+    """Edge: repeated complete/reject should be rejected cleanly."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_complete_rejected(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.complete_job("obolos.tech", "J1")
+        result2 = await svc.complete_job("obolos.tech", "J1")
+        assert result2["ok"] is False
+        assert "already" in result2["error"].lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_duplicate_reject_rejected(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.reject_job("obolos.tech", "J1")
+        result2 = await svc.reject_job("obolos.tech", "J1")
+        assert result2["ok"] is False
+        assert "already" in result2["error"].lower()
+        await svc.close()
+
+
+class TestPersistenceReload:
+    """Lifecycle data survives DB close/reopen."""
+
+    @pytest.mark.asyncio
+    async def test_bid_with_job_id_survives_reload(self, tmp_path: Path):
+        db = str(tmp_path / "mkt.db")
+        svc = MarketplaceService(db_path=db)
+        await svc.initialize()
+        bid = Bid(
+            opportunity_id="opp-1", platform="test",
+            external_job_id="EXT-J1", project_id="proj-1",
+            status=BidStatus.ACCEPTED,
+        )
+        await svc._persist_bid(bid)
+        await svc.close()
+
+        svc2 = MarketplaceService(db_path=db)
+        await svc2.initialize()
+        reloaded = await svc2.get_bid(bid.id)
+        assert reloaded.external_job_id == "EXT-J1"
+        assert reloaded.project_id == "proj-1"
+        assert reloaded.status == BidStatus.ACCEPTED
+        await svc2.close()
+
+    @pytest.mark.asyncio
+    async def test_outcome_survives_reload(self, tmp_path: Path):
+        from agent.marketplace.models import JobOutcome, JobOutcomeStatus
+        db = str(tmp_path / "mkt.db")
+        svc = MarketplaceService(db_path=db)
+        await svc.initialize()
+        outcome = JobOutcome(
+            external_job_id="J1", status=JobOutcomeStatus.COMPLETED,
+            revenue_amount=100.0, revenue_currency="USD", platform="obolos.tech",
+        )
+        await svc._persist_outcome(outcome)
+        await svc.close()
+
+        svc2 = MarketplaceService(db_path=db)
+        await svc2.initialize()
+        outcomes = await svc2.list_outcomes()
+        assert len(outcomes) == 1
+        assert outcomes[0].revenue_amount == 100.0
+        assert outcomes[0].status == JobOutcomeStatus.COMPLETED
+        await svc2.close()
+
+
+class TestEnrichedReporting:
+    """Report and show commands reflect real linkage."""
+
+    def _make_handler(self, marketplace_svc):
+        from unittest.mock import MagicMock
+
+        from agent.social.telegram_handler import TelegramHandler
+        agent = MagicMock()
+        agent.marketplace = marketplace_svc
+        handler = TelegramHandler.__new__(TelegramHandler)
+        handler._agent = agent
+        return handler
+
+    @pytest.mark.asyncio
+    async def test_show_displays_linked_bids(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+
+        opp = Opportunity(title="Linked Show", platform="obolos.tech",
+                          url="https://obolos.tech/api/listings/LS1")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech",
+                  status=BidStatus.SUBMITTED, external_job_id="J99", project_id="P1")
+        await svc._persist_bid(bid)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"show {opp.id}")
+        assert "Linked bids" in result
+        assert "submitted" in result.lower()
+        assert "J99" in result
+        assert "P1" in result[:200] or "project" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_bids_shows_job_linkage(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+
+        bid = Bid(opportunity_id="opp", platform="test", title="Linked Bid",
+                  external_job_id="J42", project_id="P2", price_usd=30.0)
+        await svc._persist_bid(bid)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("bids")
+        assert "J42" in result
+        assert "P2" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_report_lifecycle_summary(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {"revenue": 75}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        # Create data
+        opp = Opportunity(title="Report Test", platform="obolos.tech",
+                          url="https://obolos.tech/api/listings/R1")
+        await svc._persist_opportunity(opp)
+        bid = Bid(opportunity_id=opp.id, platform="obolos.tech",
+                  status=BidStatus.SUBMITTED, project_id="P1")
+        await svc._persist_bid(bid)
+        await svc.complete_job("obolos.tech", "J1")
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("report")
+        assert "1 total" in result  # 1 bid
+        assert "1 submitted" in result.lower() or "submitted" in result.lower()
+        assert "1 completed" in result
+        assert "75" in result  # revenue
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_link_job_telegram(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        bid = Bid(opportunity_id="opp", platform="test", status=BidStatus.SUBMITTED)
+        await svc._persist_bid(bid)
+
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"link-job {bid.id} EXT-J5")
+        assert "linked" in result.lower()
+        assert "EXT-J5" in result
+        assert "does not imply" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_link_job_missing_bid(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace("link-job nonexistent J1")
+        assert "not found" in result.lower()
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Final hardening: hints, job-submit persistence, terminal guards
+# ─────────────────────────────────────────────
+
+
+class TestNonListingHints:
+    """API marketplace items must not suggest bidding."""
+
+    def _make_handler(self, marketplace_svc):
+        from unittest.mock import MagicMock
+
+        from agent.social.telegram_handler import TelegramHandler
+        agent = MagicMock()
+        agent.marketplace = marketplace_svc
+        handler = TelegramHandler.__new__(TelegramHandler)
+        handler._agent = agent
+        return handler
+
+    @pytest.mark.asyncio
+    async def test_show_api_item_no_bid_hint(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        opp = Opportunity(title="API Item", platform="obolos.tech",
+                          url="https://obolos.tech/api/some-slug", category="api")
+        await svc._persist_opportunity(opp)
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"show {opp.id}")
+        assert "/marketplace bid" not in result
+        assert "listings" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_show_listing_has_bid_hint(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        await svc.initialize()
+        opp = Opportunity(title="Listing", platform="obolos.tech",
+                          url="https://obolos.tech/api/listings/L1")
+        await svc._persist_opportunity(opp)
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"show {opp.id}")
+        assert "/marketplace bid" in result
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_eval_api_item_no_bid_hint(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        opp = Opportunity(title="API Eval", platform="obolos.tech",
+                          url="https://obolos.tech/api/slug", skills_required=["python"])
+        await svc._persist_opportunity(opp)
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"eval {opp.id}")
+        assert "/marketplace bid" not in result
+        assert "listings only" in result.lower() or "listings" in result.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_eval_listing_has_bid_hint(self, tmp_path: Path):
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+        opp = Opportunity(title="Listing Eval", platform="obolos.tech",
+                          url="https://obolos.tech/api/listings/L1", skills_required=["python"])
+        await svc._persist_opportunity(opp)
+        handler = self._make_handler(svc)
+        result = await handler._cmd_marketplace(f"eval {opp.id}")
+        assert "/marketplace bid" in result
+        await svc.close()
+
+
+class TestJobSubmitPersistence:
+    """submit_job_work must persist a SUBMITTED outcome."""
+
+    @pytest.mark.asyncio
+    async def test_submit_persists_outcome(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        result = await svc.submit_job_work("obolos.tech", "J1", summary="Done")
+        assert result["ok"] is True
+        assert result.get("outcome_id")
+
+        outcomes = await svc.list_outcomes()
+        assert len(outcomes) == 1
+        assert outcomes[0].status.value == "submitted"
+        assert outcomes[0].external_job_id == "J1"
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_after_terminal_blocked(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.complete_job("obolos.tech", "J1")
+        result = await svc.submit_job_work("obolos.tech", "J1", summary="Late")
+        assert result["ok"] is False
+        assert "finalized" in result["error"].lower()
+        await svc.close()
+
+
+class TestContradictoryTerminalGuard:
+    """Cannot complete after reject, or reject after complete."""
+
+    @pytest.mark.asyncio
+    async def test_complete_then_reject_blocked(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        r1 = await svc.complete_job("obolos.tech", "J1")
+        assert r1["ok"] is True
+        r2 = await svc.reject_job("obolos.tech", "J1", reason="changed mind")
+        assert r2["ok"] is False
+        assert "finalized" in r2["error"].lower()
+        assert "completed" in r2["error"].lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_reject_then_complete_blocked(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        r1 = await svc.reject_job("obolos.tech", "J1")
+        assert r1["ok"] is True
+        r2 = await svc.complete_job("obolos.tech", "J1")
+        assert r2["ok"] is False
+        assert "finalized" in r2["error"].lower()
+        assert "rejected" in r2["error"].lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_then_complete_allowed(self, tmp_path: Path):
+        """Submit is not terminal — complete should still work after it."""
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.submit_job_work("obolos.tech", "J1", summary="Work done")
+        r2 = await svc.complete_job("obolos.tech", "J1")
+        assert r2["ok"] is True
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Duplicate job-submit guard
+# ─────────────────────────────────────────────
+
+
+class TestDuplicateJobSubmit:
+    """Repeated job-submit must not create duplicate SUBMITTED outcomes."""
+
+    @pytest.mark.asyncio
+    async def test_second_submit_blocked(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        r1 = await svc.submit_job_work("obolos.tech", "J1", summary="First")
+        assert r1["ok"] is True
+
+        r2 = await svc.submit_job_work("obolos.tech", "J1", summary="Duplicate")
+        assert r2["ok"] is False
+        assert "already submitted" in r2["error"].lower()
+        assert r2.get("existing_outcome_id")
+
+        # Only one SUBMITTED outcome exists
+        outcomes = await svc.list_outcomes()
+        submitted = [o for o in outcomes if o.external_job_id == "J1" and o.status.value == "submitted"]
+        assert len(submitted) == 1
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_then_complete_still_works(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {"revenue": 50}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.submit_job_work("obolos.tech", "J1", summary="Done")
+        r2 = await svc.complete_job("obolos.tech", "J1")
+        assert r2["ok"] is True
+
+        outcomes = await svc.list_outcomes()
+        statuses = sorted(o.status.value for o in outcomes if o.external_job_id == "J1")
+        assert statuses == ["completed", "submitted"]
+        await svc.close()
+
+
+class TestTelegramMarketplaceApprovalFlow:
+    """Operator must be able to approve marketplace bids from the command surface."""
+
+    def _make_handler(self, marketplace_svc):
+        from unittest.mock import MagicMock
+
+        from agent.social.telegram_handler import TelegramHandler
+        agent = MagicMock()
+        agent.marketplace = marketplace_svc
+        agent.approval_queue = getattr(marketplace_svc, "_approval_queue", None)
+        handler = TelegramHandler.__new__(TelegramHandler)
+        handler._agent = agent
+        handler._work_loop = None
+        return handler
+
+    @pytest.mark.asyncio
+    async def test_submit_approve_submit_flow_via_handler(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+
+        from agent.core.approval import ApprovalQueue
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"bid_id": "B1", "status": "pending"},
+        }
+        approval = ApprovalQueue()
+        svc = MarketplaceService(
+            gateway=gateway,
+            approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="Live Listing",
+            platform="obolos.tech",
+            platform_id="L1",
+            url="https://obolos.tech/api/listings/L1",
+            raw_data={"status": "open"},
+            budget_max=5.0,
+            skills_required=["python"],
+        )
+        await svc._persist_opportunity(opp)
+
+        handler = self._make_handler(svc)
+
+        bid_result = await handler._cmd_marketplace(f"bid {opp.id}")
+        assert "bid draft created" in bid_result.lower()
+
+        bids = await svc.list_bids(limit=10)
+        assert bids, "bid draft should be persisted"
+        bid = bids[0]
+
+        first_submit = await handler._cmd_marketplace(f"submit {bid.id}")
+        assert "requires approval" in first_submit.lower()
+
+        pending = approval.get_pending()
+        assert len(pending) == 1
+        approval_id = pending[0]["id"]
+
+        approve_result = await handler._cmd_queue(f"approve {approval_id}")
+        assert "approved" in approve_result.lower()
+
+        second_submit = await handler._cmd_marketplace(f"submit {bid.id}")
+        assert "submitted to obolos.tech" in second_submit.lower()
+        gateway.call_api_via_capability.assert_called_once()
+
+        approval_record = approval.get_request(approval_id)
+        assert approval_record is not None
+        assert approval_record["status"] == "executed"
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_marketplace_submit_message_mentions_yes_no(self, tmp_path: Path):
+        """Operator-facing submit reply must include the new /yes /no UX hint."""
+        from agent.core.approval import ApprovalQueue
+
+        approval = ApprovalQueue()
+        svc = MarketplaceService(
+            approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="UX Listing",
+            platform="obolos.tech",
+            platform_id="LX",
+            url="https://obolos.tech/api/listings/LX",
+            raw_data={"status": "open"},
+            budget_max=4.0,
+            skills_required=["python"],
+        )
+        await svc._persist_opportunity(opp)
+        handler = self._make_handler(svc)
+
+        await handler._cmd_marketplace(f"bid {opp.id}")
+        bid = (await svc.list_bids(limit=10))[0]
+        reply = await handler._cmd_marketplace(f"submit {bid.id}")
+
+        # New UX must mention the shorthand AND keep explicit ID visible.
+        assert "/yes" in reply
+        assert "/no" in reply
+        # Approval ID stays visible for debugging / explicit /queue route.
+        approval_id = approval.get_pending()[0]["id"]
+        assert approval_id in reply
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_marketplace_submit_then_yes_executes_bid(self, tmp_path: Path):
+        """Full UX: submit → /yes → next submit succeeds (without typing the id)."""
+        from unittest.mock import AsyncMock
+
+        from agent.core.approval import ApprovalQueue
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"bid_id": "B-YES", "status": "pending"},
+        }
+        approval = ApprovalQueue()
+        svc = MarketplaceService(
+            gateway=gateway,
+            approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            title="YesPath",
+            platform="obolos.tech",
+            platform_id="LY",
+            url="https://obolos.tech/api/listings/LY",
+            raw_data={"status": "open"},
+            budget_max=3.0,
+            skills_required=["python"],
+        )
+        await svc._persist_opportunity(opp)
+        handler = self._make_handler(svc)
+
+        await handler._cmd_marketplace(f"bid {opp.id}")
+        bid = (await svc.list_bids(limit=10))[0]
+        await handler._cmd_marketplace(f"submit {bid.id}")
+
+        # Operator types just `/yes` — single pending approval, no ambiguity.
+        approve = await handler._cmd_yes("")
+        assert "approved" in approve.lower()
+
+        # Second submit now executes via gateway.
+        result = await handler._cmd_marketplace(f"submit {bid.id}")
+        assert "submitted to obolos.tech" in result.lower()
+        gateway.call_api_via_capability.assert_called_once()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_then_reject_still_works(self, tmp_path: Path):
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.submit_job_work("obolos.tech", "J1", summary="Done")
+        r2 = await svc.reject_job("obolos.tech", "J1", reason="Bad")
+        assert r2["ok"] is True
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_report_no_inflated_submitted(self, tmp_path: Path):
+        """Report counts must not inflate from blocked duplicate submits."""
+        from unittest.mock import AsyncMock
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(gateway=gateway, db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        await svc.submit_job_work("obolos.tech", "J1", summary="First")
+        await svc.submit_job_work("obolos.tech", "J1", summary="Dup")  # blocked
+        await svc.submit_job_work("obolos.tech", "J1", summary="Dup2")  # blocked
+
+        outcomes = await svc.list_outcomes()
+        submitted = [o for o in outcomes if o.status.value == "submitted"]
+        assert len(submitted) == 1  # no inflation
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Auto-Scout (Cron proactive scouting)
+# ─────────────────────────────────────────────
+
+
+class TestAutoScout:
+    """Tests for the cron auto-scout that evaluates and prepares bids."""
+
+    def _make_cron(self, agent, bot=None, chat_id=0):
+        from agent.core.cron import AgentCron
+        return AgentCron(agent, telegram_bot=bot, owner_chat_id=chat_id)
+
+    def _make_svc(self, tmp_path):
+        from agent.core.approval import ApprovalQueue
+        approval = ApprovalQueue()
+        svc = MarketplaceService(
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=approval,
+        )
+        svc.registry.register(ObolosConnector())
+        return svc
+
+    def _make_listing_opp(self, *, title="Python Code Review", platform_id="L1",
+                          budget=10.0, skills=None, status="open"):
+        return Opportunity(
+            platform="obolos.tech",
+            platform_id=platform_id,
+            title=title,
+            url=f"https://obolos.tech/api/listings/{platform_id}",
+            category="listing",
+            budget_max=budget,
+            currency="USD",
+            skills_required=skills or ["python", "code-review"],
+            raw_data={"status": status},
+        )
+
+    @pytest.mark.asyncio
+    async def test_auto_scout_evaluates_and_bids(self, tmp_path: Path):
+        """Scout should evaluate fresh listings and prepare bids."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        opp = self._make_listing_opp()
+        await svc._persist_opportunity(opp)
+
+        await cron._auto_scout_listings(svc, [opp])
+
+        # Should have created a bid in READY status (awaiting approval)
+        bids = await svc.list_bids()
+        assert len(bids) == 1
+        assert bids[0].opportunity_id == opp.id
+        assert bids[0].price_usd > 0
+        assert bids[0].status == BidStatus.READY
+
+        # Should have sent Telegram notification with approve shorthand
+        assert bot.send_message.called
+        msg = bot.send_message.call_args[0][1]
+        assert "Python Code Review" in msg
+        assert "/yes" in msg or "/queue approve" in msg
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_auto_scout_skips_already_bid(self, tmp_path: Path):
+        """Scout should not create duplicate bids."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        opp = self._make_listing_opp()
+        await svc._persist_opportunity(opp)
+
+        # Pre-existing bid for this opportunity
+        existing_bid = Bid(opportunity_id=opp.id, platform="obolos.tech", price_usd=5.0)
+        await svc._persist_bid(existing_bid)
+
+        await cron._auto_scout_listings(svc, [opp])
+
+        # Should still be only 1 bid (no duplicate)
+        bids = await svc.list_bids()
+        assert len(bids) == 1
+        assert bids[0].id == existing_bid.id
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_auto_scout_skips_infeasible(self, tmp_path: Path):
+        """Scout should not bid on infeasible listings."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        # Listing requiring skills John doesn't have
+        opp = self._make_listing_opp(
+            title="Solidity Audit",
+            skills=["solidity", "evm", "smart-contracts", "formal-verification", "defi"],
+        )
+        await svc._persist_opportunity(opp)
+
+        await cron._auto_scout_listings(svc, [opp])
+
+        # No bid created for infeasible listing
+        bids = await svc.list_bids()
+        assert len(bids) == 0
+        assert not bot.send_message.called
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_auto_scout_respects_max_per_cycle(self, tmp_path: Path):
+        """Scout should cap bids per cycle to avoid spam."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        # 5 feasible listings, but max is 3 per cycle
+        opps = []
+        for i in range(5):
+            opp = self._make_listing_opp(
+                title=f"Python Job #{i}",
+                platform_id=f"L{i}",
+            )
+            await svc._persist_opportunity(opp)
+            opps.append(opp)
+
+        await cron._auto_scout_listings(svc, opps)
+
+        bids = await svc.list_bids()
+        assert len(bids) == cron._MAX_SCOUT_PER_CYCLE  # 3, not 5
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_auto_scout_empty_listings(self, tmp_path: Path):
+        """Scout should handle empty listings gracefully."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        await cron._auto_scout_listings(svc, [])
+
+        bids = await svc.list_bids()
+        assert len(bids) == 0
+        assert not bot.send_message.called
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_resubmit_approved_bids(self, tmp_path: Path):
+        """After operator approves, next cron cycle auto-submits the bid."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agent.core.approval import ApprovalQueue
+
+        approval = ApprovalQueue()
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {
+            "ok": True,
+            "normalized_response": {"bid_id": "B1", "status": "pending"},
+        }
+        svc = MarketplaceService(
+            gateway=gateway,
+            approval_queue=approval,
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        # Step 1: scout creates a bid in READY state
+        opp = self._make_listing_opp()
+        await svc._persist_opportunity(opp)
+        await cron._auto_scout_listings(svc, [opp])
+
+        bids = await svc.list_bids()
+        assert len(bids) == 1
+        assert bids[0].status == BidStatus.READY
+        approval_id = bids[0].metadata["approval_id"]
+
+        # Step 2: operator approves
+        approval.approve(approval_id)
+
+        # Step 3: next cron cycle re-submits
+        bot.reset_mock()
+        await cron._resubmit_approved_bids(svc)
+
+        # Bid should now be SUBMITTED
+        bids = await svc.list_bids()
+        assert bids[0].status == BidStatus.SUBMITTED
+
+        # Should have notified operator
+        assert bot.send_message.called
+        msg = bot.send_message.call_args[0][1]
+        assert "odoslaný po tvojom schválení" in msg
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_resubmit_skips_pending_bids(self, tmp_path: Path):
+        """Resubmit should not execute bids still pending approval."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        # Create bid in READY state (pending approval)
+        opp = self._make_listing_opp()
+        await svc._persist_opportunity(opp)
+        await cron._auto_scout_listings(svc, [opp])
+
+        bids = await svc.list_bids()
+        assert bids[0].status == BidStatus.READY
+
+        # Don't approve — just try resubmit
+        bot.reset_mock()
+        await cron._resubmit_approved_bids(svc)
+
+        # Should still be READY (not submitted, not failed)
+        bids = await svc.list_bids()
+        assert bids[0].status == BidStatus.READY
+
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Create-Listing (Client mode — John hires others)
+# ─────────────────────────────────────────────
+
+
+class TestCreateListing:
+    """Tests for John as client: creating paid listings to hire others."""
+
+    def _make_svc(self, tmp_path):
+        from agent.core.approval import ApprovalQueue
+        approval = ApprovalQueue()
+        svc = MarketplaceService(
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=approval,
+        )
+        svc.registry.register(ObolosConnector())
+        return svc, approval
+
+    @pytest.mark.asyncio
+    async def test_create_listing_requires_approval(self, tmp_path: Path):
+        """First call without approval_id proposes finance approval."""
+        svc, approval = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        result = await svc.create_listing(
+            platform="obolos.tech",
+            title="Need Python code review",
+            description="Review my module",
+            max_budget=10.0,
+            deadline="7d",
+        )
+
+        assert result["ok"] is False
+        assert result["pending_approval"] is True
+        assert "approval_id" in result
+
+        # Verify a FINANCE approval was created
+        proposals = approval.get_pending()
+        finance = [p for p in proposals if p.get("category") == "finance"]
+        assert len(finance) == 1
+        assert "obolos listing" in finance[0]["description"].lower()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_create_listing_rejects_zero_budget(self, tmp_path: Path):
+        """Listing must have a positive max_budget."""
+        svc, _ = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        result = await svc.create_listing(
+            platform="obolos.tech",
+            title="Free job",
+            max_budget=0.0,
+        )
+
+        assert result["ok"] is False
+        assert "positive max_budget" in result["error"].lower()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_create_listing_rejects_empty_title(self, tmp_path: Path):
+        """Listing must have a title."""
+        svc, _ = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        result = await svc.create_listing(
+            platform="obolos.tech",
+            title="   ",
+            max_budget=5.0,
+        )
+
+        assert result["ok"] is False
+        assert "title is required" in result["error"].lower()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_create_listing_executes_after_approval(self, tmp_path: Path):
+        """Second call with approved approval_id executes via connector."""
+        from unittest.mock import AsyncMock, patch
+
+        svc, approval = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        # Phase 1: propose
+        first = await svc.create_listing(
+            platform="obolos.tech",
+            title="Need code review",
+            max_budget=5.0,
+        )
+        assert first["pending_approval"] is True
+        approval_id = first["approval_id"]
+
+        # Owner approves
+        approval.approve(approval_id)
+
+        # Phase 2: execute — mock the connector's create_listing CLI call
+        mock_create = AsyncMock(return_value={
+            "ok": True,
+            "data": {"id": "listing-123", "status": "open"},
+        })
+        with patch.object(
+            svc.registry.get("obolos.tech"), "create_listing", mock_create,
+        ):
+            result = await svc.create_listing(
+                platform="obolos.tech",
+                title="Need code review",
+                max_budget=5.0,
+                approval_id=approval_id,
+            )
+
+        assert result["ok"] is True
+        assert result["data"]["id"] == "listing-123"
+        mock_create.assert_called_once()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_create_listing_blocked_after_denial(self, tmp_path: Path):
+        """Denied approval blocks execution."""
+        svc, approval = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        first = await svc.create_listing(
+            platform="obolos.tech",
+            title="Risky listing",
+            max_budget=100.0,
+        )
+        approval_id = first["approval_id"]
+        approval.deny(approval_id, reason="too expensive")
+
+        result = await svc.create_listing(
+            platform="obolos.tech",
+            title="Risky listing",
+            max_budget=100.0,
+            approval_id=approval_id,
+        )
+
+        assert result["ok"] is False
+        assert "denied" in result["error"].lower()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_create_listing_handles_unknown_platform(self, tmp_path: Path):
+        """Unknown platform returns clear error."""
+        svc, _ = self._make_svc(tmp_path)
+        await svc.initialize()
+
+        result = await svc.create_listing(
+            platform="nonexistent.platform",
+            title="Test",
+            max_budget=5.0,
+        )
+
+        assert result["ok"] is False
+        assert "create-listing support" in result["error"].lower()
+
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Same-wallet self-bidding protection
+# ─────────────────────────────────────────────
+
+
+class TestSameWalletProtection:
+    """Tests for skipping bids on listings created by John's own wallet."""
+
+    @pytest.mark.asyncio
+    async def test_skips_listing_created_by_own_wallet(
+        self, tmp_path: Path, monkeypatch,
+    ):
+        """get_listing_bid_eligibility refuses listings with our wallet as creator."""
+        monkeypatch.setenv("AGENT_OBOLOS_WALLET_ADDRESS", "0xMyWallet")
+
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            platform="obolos.tech",
+            platform_id="L1",
+            title="Self listing",
+            url="https://obolos.tech/api/listings/L1",
+            category="listing",
+            raw_data={"status": "open", "creator_wallet": "0xMyWallet"},
+        )
+
+        biddable, reason = svc.get_listing_bid_eligibility(opp)
+        assert biddable is False
+        assert "own listing" in reason.lower()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_allows_listing_from_other_wallet(
+        self, tmp_path: Path, monkeypatch,
+    ):
+        """Listings created by a different wallet remain biddable."""
+        monkeypatch.setenv("AGENT_OBOLOS_WALLET_ADDRESS", "0xMyWallet")
+
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            platform="obolos.tech",
+            platform_id="L2",
+            title="Other person listing",
+            url="https://obolos.tech/api/listings/L2",
+            category="listing",
+            raw_data={"status": "open", "creator_wallet": "0xOther"},
+        )
+
+        biddable, reason = svc.get_listing_bid_eligibility(opp)
+        assert biddable is True
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_wallet_resolved_from_vault_when_env_empty(
+        self, tmp_path: Path, monkeypatch,
+    ):
+        """When AGENT_OBOLOS_WALLET_ADDRESS env is empty, resolve via gateway vault lookup."""
+        monkeypatch.delenv("AGENT_OBOLOS_WALLET_ADDRESS", raising=False)
+
+        # Mock gateway with a secret_lookup that returns a wallet
+        class FakeGateway:
+            def __init__(self):
+                self._secret_lookup = lambda name: (
+                    "0xVaultWallet" if name == "obolos.tech.wallet_address" else ""
+                )
+
+        svc = MarketplaceService(
+            gateway=FakeGateway(),
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            platform="obolos.tech",
+            platform_id="LV",
+            title="Vault wallet listing",
+            url="https://obolos.tech/api/listings/LV",
+            category="listing",
+            raw_data={"status": "open", "creator_wallet": "0xvaultwallet"},
+        )
+        biddable, reason = svc.get_listing_bid_eligibility(opp)
+        assert biddable is False, f"vault wallet lookup failed, got {biddable}: {reason}"
+        assert "own listing" in reason.lower()
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_anp_id_and_evm_address_both_recognized(
+        self, tmp_path: Path, monkeypatch,
+    ):
+        """John has multiple identity formats (ANP id + EVM); both must match.
+
+        Vault stores ANP id under obolos.tech.wallet_address and EVM address
+        under ETH_ADDRESS. Listings reference creator by EVM address. Same-
+        wallet check must recognize both as 'me'.
+        """
+        monkeypatch.delenv("AGENT_OBOLOS_WALLET_ADDRESS", raising=False)
+
+        class FakeGateway:
+            def __init__(self):
+                secrets = {
+                    "obolos.tech.wallet_address": "als-john-b2jk",
+                    "ETH_ADDRESS": "0xa68603e12d0d7b4C6fb973fEB4b4EcCD3513FdB8",
+                }
+                self._secret_lookup = lambda name: secrets.get(name, "")
+
+        svc = MarketplaceService(
+            gateway=FakeGateway(),
+            db_path=str(tmp_path / "mkt.db"),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        # Listing with EVM creator → must be blocked (matches our ETH_ADDRESS)
+        opp_evm = Opportunity(
+            platform="obolos.tech", platform_id="LE",
+            title="EVM-creator listing",
+            url="https://obolos.tech/api/listings/LE",
+            category="listing",
+            raw_data={"status": "open",
+                      "client_address": "0xa68603e12d0d7b4c6fb973feb4b4eccd3513fdb8"},
+        )
+        biddable, reason = svc.get_listing_bid_eligibility(opp_evm)
+        assert not biddable, f"EVM match failed: {reason}"
+
+        # Listing with ANP id creator → also blocked
+        opp_anp = Opportunity(
+            platform="obolos.tech", platform_id="LA",
+            title="ANP-creator listing",
+            url="https://obolos.tech/api/listings/LA",
+            category="listing",
+            raw_data={"status": "open", "creator_wallet": "als-john-b2jk"},
+        )
+        biddable2, _ = svc.get_listing_bid_eligibility(opp_anp)
+        assert not biddable2, "ANP id match failed"
+
+        # Foreign EVM → biddable
+        opp_other = Opportunity(
+            platform="obolos.tech", platform_id="LO",
+            title="Other listing",
+            url="https://obolos.tech/api/listings/LO",
+            category="listing",
+            raw_data={"status": "open", "client_address": "0xdeadbeef0000"},
+        )
+        biddable3, _ = svc.get_listing_bid_eligibility(opp_other)
+        assert biddable3, "Foreign wallet incorrectly blocked"
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_resolve_my_wallets_returns_set(self, tmp_path: Path, monkeypatch):
+        """The plural API _resolve_my_wallets returns all known identities."""
+        monkeypatch.delenv("AGENT_OBOLOS_WALLET_ADDRESS", raising=False)
+
+        class FakeGateway:
+            def __init__(self):
+                secrets = {
+                    "obolos.tech.wallet_address": "als-john-b2jk",
+                    "ETH_ADDRESS": "0xABC123",
+                    "obolos.tech.client_address": "0xDEF456",
+                }
+                self._secret_lookup = lambda name: secrets.get(name, "")
+
+        svc = MarketplaceService(gateway=FakeGateway(),
+                                 db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        wallets = svc._resolve_my_wallets()
+        assert wallets == {"als-john-b2jk", "0xabc123", "0xdef456"}
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_wallet_match(
+        self, tmp_path: Path, monkeypatch,
+    ):
+        """Wallet comparison is case-insensitive (0xABC == 0xabc)."""
+        monkeypatch.setenv("AGENT_OBOLOS_WALLET_ADDRESS", "0xABC123")
+
+        svc = MarketplaceService(db_path=str(tmp_path / "mkt.db"))
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        opp = Opportunity(
+            platform="obolos.tech",
+            platform_id="L3",
+            title="Mixed case",
+            url="https://obolos.tech/api/listings/L3",
+            category="listing",
+            raw_data={"status": "open", "client_wallet": "0xabc123"},
+        )
+
+        biddable, _ = svc.get_listing_bid_eligibility(opp)
+        assert biddable is False
+
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Auto-scout exception handling (notify on failure)
+# ─────────────────────────────────────────────
+
+
+class TestAutoScoutFailureNotification:
+    """Auto-scout must notify operator even when submit_bid raises."""
+
+    @pytest.mark.asyncio
+    async def test_notifies_operator_on_submit_exception(self, tmp_path: Path):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agent.core.approval import ApprovalQueue
+        from agent.core.cron import AgentCron
+
+        svc = MarketplaceService(
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=ApprovalQueue(),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = AgentCron(agent, telegram_bot=bot, owner_chat_id=123)
+
+        opp = Opportunity(
+            platform="obolos.tech",
+            platform_id="L9",
+            title="Will explode",
+            url="https://obolos.tech/api/listings/L9",
+            category="listing",
+            budget_max=10.0,
+            skills_required=["python"],
+            raw_data={"status": "open"},
+        )
+        await svc._persist_opportunity(opp)
+
+        # Patch submit_bid to raise
+        async def boom(_bid):
+            raise RuntimeError("network fire")
+        svc.submit_bid = boom  # type: ignore[assignment]
+
+        await cron._auto_scout_listings(svc, [opp])
+
+        # Operator MUST be told about the failure
+        assert bot.send_message.called
+        msg = bot.send_message.call_args[0][1]
+        assert "Nepodarilo sa" in msg or "RuntimeError" in msg
+
+        await svc.close()
+
+
+# ─────────────────────────────────────────────
+# Cron: Accepted Job Detection
+# ─────────────────────────────────────────────
+
+
+class TestAcceptedJobPolling:
+    """Cron detects newly accepted jobs and alerts operator."""
+
+    def _make_cron(self, agent, bot=None, chat_id=0):
+        from agent.core.cron import AgentCron
+        return AgentCron(agent, telegram_bot=bot, owner_chat_id=chat_id)
+
+    @pytest.mark.asyncio
+    async def test_new_open_job_triggers_alert(self, tmp_path: Path):
+        from unittest.mock import AsyncMock, MagicMock
+        from agent.core.approval import ApprovalQueue
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(
+            gateway=gateway,
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=ApprovalQueue(),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        # Use "review" in title to exercise auto-work path (keyword match)
+        jobs = [
+            {"id": "job-001", "status": "open", "title": "Python code review task"},
+            {"id": "job-002", "status": "completed", "title": "Old finished job"},
+        ]
+
+        await cron._check_accepted_jobs(svc, jobs)
+
+        # Open job triggers alert + auto-work attempt
+        assert bot.send_message.call_count >= 1
+        first_msg = bot.send_message.call_args_list[0][0][1]
+        assert "job-001" in first_msg
+        assert "prijatý" in first_msg.lower() or "accepted" in first_msg.lower()
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_same_job_not_alerted_twice(self, tmp_path: Path):
+        from unittest.mock import AsyncMock, MagicMock
+        from agent.core.approval import ApprovalQueue
+
+        gateway = AsyncMock()
+        gateway.call_api_via_capability.return_value = {"ok": True, "normalized_response": {}}
+        svc = MarketplaceService(
+            gateway=gateway,
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=ApprovalQueue(),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        # Use "general task" to avoid auto-work (no keyword match)
+        jobs = [{"id": "job-001", "status": "open", "title": "General task"}]
+
+        # First scan — alerted
+        await cron._check_accepted_jobs(svc, jobs)
+        first_count = bot.send_message.call_count
+        assert first_count >= 1
+
+        # Second scan — same job, no new alert
+        bot.reset_mock()
+        await cron._check_accepted_jobs(svc, jobs)
+        assert bot.send_message.call_count == 0
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_jobs_no_alert(self, tmp_path: Path):
+        from unittest.mock import AsyncMock, MagicMock
+        from agent.core.approval import ApprovalQueue
+
+        svc = MarketplaceService(
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=ApprovalQueue(),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        await cron._check_accepted_jobs(svc, [])
+        assert not bot.send_message.called
+
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_completed_jobs_ignored(self, tmp_path: Path):
+        from unittest.mock import AsyncMock, MagicMock
+        from agent.core.approval import ApprovalQueue
+
+        svc = MarketplaceService(
+            db_path=str(tmp_path / "mkt.db"),
+            approval_queue=ApprovalQueue(),
+        )
+        svc.registry.register(ObolosConnector())
+        await svc.initialize()
+
+        agent = MagicMock()
+        agent.marketplace = svc
+        bot = AsyncMock()
+        cron = self._make_cron(agent, bot=bot, chat_id=123)
+
+        jobs = [
+            {"id": "j1", "status": "completed", "title": "Done"},
+            {"id": "j2", "status": "cancelled", "title": "Cancelled"},
+        ]
+
+        await cron._check_accepted_jobs(svc, jobs)
+        assert not bot.send_message.called
+
         await svc.close()

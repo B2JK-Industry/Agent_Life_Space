@@ -2014,3 +2014,60 @@ class TestVerifyTimeoutEnvParsing:
             except (ValueError, TypeError):
                 val = 120
             assert val == 120
+
+
+class TestCodegenParserPreamble:
+    """Codegen parser must tolerate preamble/postamble around the JSON array."""
+
+    def test_strips_preamble_text(self):
+        from agent.build.codegen import _parse_operations
+        raw = (
+            'The fix for the test failure: pytest is missing.\n\n'
+            '[{"path": "x.py", "content": "print(1)"}]'
+        )
+        ops = _parse_operations(raw, max_operations=10)
+        assert len(ops) == 1
+        assert ops[0].path == "x.py"
+        assert ops[0].content == "print(1)"
+
+    def test_strips_postamble_text(self):
+        from agent.build.codegen import _parse_operations
+        raw = (
+            '[{"path": "y.py", "content": "x = 1"}]\n\n'
+            'That should fix the issue.'
+        )
+        ops = _parse_operations(raw, max_operations=10)
+        assert len(ops) == 1
+        assert ops[0].path == "y.py"
+
+    def test_strips_both_preamble_and_postamble(self):
+        from agent.build.codegen import _parse_operations
+        raw = (
+            'Reasoning: the prior test failed because of foo.\n'
+            '[{"path": "fix.py", "content": "ok = True"}]\n'
+            'Done.'
+        )
+        ops = _parse_operations(raw, max_operations=10)
+        assert len(ops) == 1
+        assert ops[0].path == "fix.py"
+
+    def test_existing_markdown_fence_still_works(self):
+        from agent.build.codegen import _parse_operations
+        raw = '```json\n[{"path": "z.py", "content": "z = 0"}]\n```'
+        ops = _parse_operations(raw, max_operations=10)
+        assert len(ops) == 1
+        assert ops[0].path == "z.py"
+
+    def test_pure_json_array_unchanged(self):
+        from agent.build.codegen import _parse_operations
+        raw = '[{"path": "a.py", "content": "a = 1"}]'
+        ops = _parse_operations(raw, max_operations=10)
+        assert len(ops) == 1
+        assert ops[0].path == "a.py"
+
+    def test_invalid_json_still_raises(self):
+        import pytest
+        from agent.build.codegen import _parse_operations
+        raw = 'This is just text with no JSON in it'
+        with pytest.raises(RuntimeError, match="not valid JSON|no valid operations"):
+            _parse_operations(raw, max_operations=10)

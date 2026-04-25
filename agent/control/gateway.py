@@ -1534,6 +1534,39 @@ class ExternalGatewayService:
                 "query_params": {},
                 "json_payload": dict(json_payload),
             }
+        if route.request_mode == "obolos_jobs_complete_v1":
+            job_id = str(resource or "").strip().strip("/")
+            if not job_id:
+                raise ValueError("Job complete requires a job ID.")
+            return {
+                "resource": job_id,
+                "method": "POST",
+                "target_url": f"{target_url.rstrip('/')}/jobs/{job_id}/complete",
+                "query_params": {},
+                "json_payload": dict(json_payload),
+            }
+        if route.request_mode == "obolos_jobs_reject_v1":
+            job_id = str(resource or "").strip().strip("/")
+            if not job_id:
+                raise ValueError("Job reject requires a job ID.")
+            return {
+                "resource": job_id,
+                "method": "POST",
+                "target_url": f"{target_url.rstrip('/')}/jobs/{job_id}/reject",
+                "query_params": {},
+                "json_payload": dict(json_payload),
+            }
+        if route.request_mode == "obolos_anp_reputation_v1":
+            agent_id = str(resource or "").strip().strip("/")
+            if not agent_id:
+                raise ValueError("Reputation check requires an agent ID.")
+            return {
+                "resource": agent_id,
+                "method": "GET",
+                "target_url": f"{target_url.rstrip('/')}/anp/reputation/{agent_id}",
+                "query_params": {},
+                "json_payload": {},
+            }
         # Default: pass through form_data if provided
         spec = {
             "method": normalized_method or ("POST" if json_payload or form_data else "GET"),
@@ -1652,6 +1685,31 @@ class ExternalGatewayService:
                 "status": str(payload.get("status", "")),
                 "submission_id": str(payload.get("id", payload.get("submission_id", ""))),
             }
+        if route.response_mode == "obolos_jobs_complete_v1":
+            return {
+                "kind": "jobs_complete",
+                "provider_status": "ok",
+                "status": str(payload.get("status", "")),
+                "revenue": payload.get("revenue", payload.get("amount", payload.get("payout", None))),
+                "currency": str(payload.get("currency", "")),
+            }
+        if route.response_mode == "obolos_jobs_reject_v1":
+            return {
+                "kind": "jobs_reject",
+                "provider_status": "ok",
+                "status": str(payload.get("status", "")),
+                "reason": str(payload.get("reason", "")),
+            }
+        if route.response_mode == "obolos_anp_reputation_v1":
+            return {
+                "kind": "anp_reputation",
+                "provider_status": "ok",
+                "agent_id": str(payload.get("agentId", payload.get("agent_id", ""))),
+                "score": payload.get("score", payload.get("reputation", None)),
+                "jobs_completed": payload.get("jobsCompleted", payload.get("jobs_completed", 0)),
+                "jobs_failed": payload.get("jobsFailed", payload.get("jobs_failed", 0)),
+                "raw": payload,
+            }
         return {
             "kind": "external_api_call",
             "provider_status": "ok",
@@ -1722,25 +1780,93 @@ class ExternalGatewayService:
                 except Exception:
                     pass  # settlement hook failure must not break gateway
             return denial
+        # Surface upstream provider error detail so operators can debug live
+        # API failures without grepping through logs. Prefer structured JSON
+        # error fields, fall back to a short text excerpt, then HTTP status.
+        response_json = result.get("response_json") or {}
+        response_text = str(result.get("response_text") or "")
+        provider_detail = self._extract_provider_error_detail(
+            response_json=response_json if isinstance(response_json, dict) else {},
+            response_text=response_text,
+        )
+        gateway_error = result.get("error") or ""
+
+        # Build a layered detail string: gateway error → provider detail → status.
+        detail_parts: list[str] = []
+        if gateway_error:
+            detail_parts.append(str(gateway_error))
+        if provider_detail and provider_detail not in detail_parts:
+            detail_parts.append(f"Provider: {provider_detail}")
+        if not detail_parts:
+            detail_parts.append(
+                f"Provider '{provider_id}' returned HTTP {status_code or '0'}."
+            )
+        detail = " | ".join(detail_parts)
+
+        metadata: dict[str, Any] = {
+            "provider_id": provider_id,
+            "capability_id": capability_id,
+            "route_id": route_id,
+            "target_url": request_spec["target_url"],
+            "status_code": status_code,
+        }
+        if provider_detail:
+            metadata["provider_error"] = provider_detail
+        # Include a short, bounded response excerpt for operator visibility.
+        # Keep payloads small to avoid log/audit bloat and accidental dumps.
+        if response_text and not provider_detail:
+            metadata["response_excerpt"] = response_text[:500]
+
         return make_denial(
             code="external_api_call_failed",
             summary="External API call failed",
-            detail=(
-                result.get("error")
-                or f"Provider '{provider_id}' returned HTTP {status_code or '0'}."
-            ),
+            detail=detail,
             scope=provider_id,
             policy_id=policy.id,
             environment_profile_id=policy.environment_profile_id,
             suggested_action="Review the provider response, auth, and route configuration, then retry.",
-            metadata={
-                "provider_id": provider_id,
-                "capability_id": capability_id,
-                "route_id": route_id,
-                "target_url": request_spec["target_url"],
-                "status_code": status_code,
-            },
+            metadata=metadata,
         )
+
+    @staticmethod
+    def _extract_provider_error_detail(
+        *,
+        response_json: dict[str, Any],
+        response_text: str,
+    ) -> str:
+        """Extract the most useful error string from a provider response.
+
+        Tries structured JSON fields first (Obolos and most REST APIs put
+        their errors under "error" / "message" / "detail" / "errors").
+        Falls back to a trimmed text excerpt. Always bounded to 200 chars
+        so operator-facing detail stays compact and audit-safe.
+        """
+        # Structured JSON fields, in priority order
+        for field in ("error", "message", "detail", "error_message", "title"):
+            value = response_json.get(field)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:200]
+            if isinstance(value, dict):
+                # Some APIs nest: {"error": {"message": "..."}}
+                nested = value.get("message") or value.get("detail")
+                if isinstance(nested, str) and nested.strip():
+                    return nested.strip()[:200]
+        # Some APIs return {"errors": [{"message": "..."}, ...]}
+        errors_list = response_json.get("errors")
+        if isinstance(errors_list, list) and errors_list:
+            first = errors_list[0]
+            if isinstance(first, str) and first.strip():
+                return first.strip()[:200]
+            if isinstance(first, dict):
+                msg = first.get("message") or first.get("detail")
+                if isinstance(msg, str) and msg.strip():
+                    return msg.strip()[:200]
+        # Plain-text fallback (HTML / non-JSON responses)
+        if response_text:
+            stripped = response_text.strip()
+            if stripped and not stripped.startswith("<"):  # skip HTML blobs
+                return stripped[:200]
+        return ""
 
     async def _execute_http_request_with_retry(
         self,

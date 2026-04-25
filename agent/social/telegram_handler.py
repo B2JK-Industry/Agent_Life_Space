@@ -240,7 +240,12 @@ class TelegramHandler:
             "/pipeline": self._cmd_pipeline,
             "/settlement": self._cmd_settlement,
             "/marketplace": self._cmd_marketplace,
+            "/spec": self._cmd_spec,
+            "/yes": self._cmd_yes,
+            "/no": self._cmd_no,
             "/help": self._cmd_help,
+            "/initiative": self._cmd_initiative,
+            "/initiatives": self._cmd_initiatives,
         }
 
         handler = handlers.get(command)
@@ -278,15 +283,19 @@ class TelegramHandler:
             "/projects — zoznam projektov\n"
             "/runtime — čo beží na pozadí (cron, API, watchdog)\n"
             "/usage — spotreba tokenov a náklady\n"
-            "/queue — stav pracovnej fronty\n"
+            "/queue [pending|approve|deny] — stav pracovnej fronty a approvals\n"
+            "/yes [id] — schváliť pending approval (skratka `/queue approve`)\n"
+            "/no [id] [reason] — zamietnuť pending approval (skratka `/queue deny`)\n"
             "/intake — spusti review alebo build cez unified intake\n"
-            "/build — shortcut pre build intake\n"
+            "/build — shortcut pre build intake (so spec quality gate)\n"
+            "/spec [idea] — spec coach: pomôže ti napísať dobrý popis pre /build\n"
             "/jobs — zoznam product jobov (review, build)\n"
             "/deliver — delivery status, filter, retry a odoslanie\n"
             "/telemetry — runtime telemetry dashboard\n"
             "/settlement — payment settlement queue a akcie\n"
             "/workflow — recurring workflow management\n"
             "/pipeline — multi-job pipeline orchestration\n"
+            "/marketplace — Obolos scouting, bids, jobs, reporting\n"
             "/report — operator report, inbox, margin\n"
             "/help — tento help\n\n"
             "Alebo napíš čokoľvek — premýšľam a konám."
@@ -385,15 +394,243 @@ class TelegramHandler:
         return f"Úloha vytvorená: *{task.name}* (id: `{task.id}`)"
 
     async def _cmd_queue(self, args: str) -> str:
-        if not self._work_loop:
-            return "Work loop nie je aktívny."
-        status = self._work_loop.get_status()
+        approval_queue = getattr(self._agent, "approval_queue", None)
+        parts = args.strip().split()
+        action = parts[0].lower() if parts else ""
+
+        def _format_status(value: Any) -> str:
+            if value is None:
+                return "unknown"
+            return value.value if hasattr(value, "value") else str(value)
+
+        if action in {"pending", "approvals"}:
+            if approval_queue is None:
+                return "Approval queue nie je inicializovaná."
+            pending = approval_queue.get_pending()
+            if not pending:
+                return "Žiadne approvals nečakajú."
+            lines = [f"*Pending approvals* ({len(pending)}):"]
+            for req in pending[:10]:
+                desc = str(req.get("description", "")).strip() or "Bez popisu"
+                category = req.get("category", "?")
+                risk = req.get("risk_level", "?")
+                lines.append(
+                    f"• `{req.get('id', '?')}` [{category}/{risk}] {desc[:90]}"
+                )
+                reason = str(req.get("reason", "")).strip()
+                if reason:
+                    lines.append(f"  Reason: {reason[:120]}")
+            lines.append("\n`/queue approve <id>` | `/queue deny <id> [reason]`")
+            return "\n".join(lines)
+
+        if action == "approve":
+            if approval_queue is None:
+                return "Approval queue nie je inicializovaná."
+            if len(parts) < 2:
+                return "Použi: `/queue approve <approval_id>`"
+            request_id = parts[1]
+            approved = approval_queue.approve(request_id, decided_by="owner")
+            if approved is None:
+                existing = approval_queue.get_request(request_id)
+                if existing is not None:
+                    status = _format_status(existing.get("status"))
+                    return f"Approval `{request_id}` je už v stave *{status}*."
+                return f"Approval `{request_id}` not found."
+            status = _format_status(getattr(approved, "status", None))
+            if status == "expired":
+                return f"Approval `{approved.id}` expired before approval."
+            if status == "partially_approved":
+                return (
+                    f"Approval `{approved.id}` partially approved.\n"
+                    f"Status: *{status}*"
+                )
+            return (
+                f"Approval `{approved.id}` approved.\n"
+                f"Status: *{status}*\n"
+                f"Re-run the original command to continue execution."
+            )
+
+        if action == "deny":
+            if approval_queue is None:
+                return "Approval queue nie je inicializovaná."
+            if len(parts) < 2:
+                return "Použi: `/queue deny <approval_id> [reason]`"
+            request_id = parts[1]
+            reason = " ".join(parts[2:]).strip()
+            denied = approval_queue.deny(request_id, reason=reason, decided_by="owner")
+            if denied is None:
+                existing = approval_queue.get_request(request_id)
+                if existing is not None:
+                    status = _format_status(existing.get("status"))
+                    return f"Approval `{request_id}` je už v stave *{status}*."
+                return f"Approval `{request_id}` not found."
+            message = f"Approval `{denied.id}` denied."
+            if reason:
+                message += f"\nReason: {reason}"
+            return message
+
+        work_status = self._work_loop.get_status() if self._work_loop else None
+        pending = approval_queue.get_pending() if approval_queue is not None else []
+
+        lines = ["*Pracovná fronta*"]
+        if work_status is None:
+            lines.append("Work loop: neaktívny")
+        else:
+            lines.append(f"V rade: {work_status['queue_size']}")
+            lines.append(f"Spracúva sa: {'áno' if work_status['processing'] else 'nie'}")
+            lines.append(
+                "Celkom spracované: "
+                f"{work_status.get('total_attempted', work_status.get('total_success', 0))}"
+            )
+
+        if approval_queue is not None:
+            lines.append(f"\nPending approvals: {len(pending)}")
+            if pending:
+                next_req = pending[0]
+                lines.append(
+                    f"Next: `{next_req.get('id', '?')}` "
+                    f"({next_req.get('category', '?')}, {next_req.get('risk_level', '?')})"
+                )
+                lines.append("`/queue pending` | `/queue approve <id>` | `/queue deny <id> [reason]`")
+
+        if work_status is None and approval_queue is None:
+            return "Work loop ani approval queue nie sú aktívne."
+
+        return "\n".join(lines)
+
+    # ─── /yes /no — operator UX shorthand for approve/deny ───
+
+    def _resolve_yesno_target(self, raw_id: str) -> tuple[str, str]:
+        """Pick the approval `/yes` or `/no` should act on.
+
+        Returns (target_id, error_message). If error_message is non-empty,
+        no target was chosen and the caller should return that message.
+        """
+        approval_queue = getattr(self._agent, "approval_queue", None)
+        if approval_queue is None:
+            return "", "Approval queue nie je inicializovaná."
+
+        if raw_id:
+            # Explicit ID — accept exact match or unique short prefix.
+            existing = approval_queue.get_request(raw_id)
+            if existing is not None:
+                return str(existing.get("id", raw_id)), ""
+            pending = approval_queue.get_pending()
+            matches = [
+                str(r.get("id", "")) for r in pending
+                if str(r.get("id", "")).startswith(raw_id)
+            ]
+            if len(matches) == 1:
+                return matches[0], ""
+            if len(matches) > 1:
+                return "", (
+                    f"Prefix `{raw_id}` matchuje {len(matches)} approvals. "
+                    "Použi celé ID alebo `/queue pending`."
+                )
+            return "", f"Approval `{raw_id}` not found."
+
+        # No ID — must be exactly one pending approval, or refuse to guess.
+        pending = approval_queue.get_pending()
+        if not pending:
+            return "", "Žiadne approvals nečakajú."
+        if len(pending) > 1:
+            preview_lines = [
+                f"Je {len(pending)} pending approvals. `/yes` nevie ktorý:",
+            ]
+            for req in pending[:5]:
+                desc = str(req.get("description", "")).strip() or "Bez popisu"
+                preview_lines.append(f"• `{req.get('id', '?')}` {desc[:70]}")
+            preview_lines.append(
+                "\nPouži `/yes <id>` alebo `/no <id>` (alebo `/queue pending`)."
+            )
+            return "", "\n".join(preview_lines)
+        return str(pending[0].get("id", "")), ""
+
+    async def _cmd_yes(self, args: str) -> str:
+        """Approve the unique pending approval, or one named by id/prefix.
+
+        Shorthand for `/queue approve <id>`. Refuses to guess when there
+        is more than one pending approval.
+        """
+        approval_queue = getattr(self._agent, "approval_queue", None)
+        raw_id = args.strip().split()[0] if args.strip() else ""
+
+        target_id, err = self._resolve_yesno_target(raw_id)
+        if err:
+            return err
+
+        existing_before = approval_queue.get_request(target_id)
+        approved = approval_queue.approve(target_id, decided_by="owner")
+        if approved is None:
+            # Either expired during expire_stale() inside get_pending, or
+            # already resolved. Surface the truthful current state.
+            now = approval_queue.get_request(target_id) or existing_before
+            if now is not None:
+                status = now.get("status", "unknown")
+                if hasattr(status, "value"):
+                    status = status.value
+                return f"Approval `{target_id}` je už v stave *{status}*."
+            return f"Approval `{target_id}` not found."
+
+        status = approved.status.value if hasattr(approved.status, "value") else str(approved.status)
+        if status == "expired":
+            return f"Approval `{approved.id}` expired before approval."
+        if status == "partially_approved":
+            return (
+                f"Approval `{approved.id}` partially approved.\n"
+                f"Status: *{status}*"
+            )
         return (
-            f"*Pracovná fronta*\n"
-            f"V rade: {status['queue_size']}\n"
-            f"Spracúva sa: {'áno' if status['processing'] else 'nie'}\n"
-            f"Celkom spracované: {status.get('total_attempted', status.get('total_success', 0))}"
+            f"✅ Approval `{approved.id}` approved.\n"
+            f"Status: *{status}*\n"
+            f"Re-run the original command to continue execution."
         )
+
+    async def _cmd_no(self, args: str) -> str:
+        """Deny the unique pending approval, or one named by id/prefix.
+
+        Shorthand for `/queue deny <id> [reason]`. Tokens after the id
+        (or, for the no-id form, the entire args) are treated as reason.
+        Refuses to guess when there is more than one pending approval.
+        """
+        approval_queue = getattr(self._agent, "approval_queue", None)
+        tokens = args.strip().split() if args.strip() else []
+        # Heuristic: if first token looks like an approval id (12 hex chars),
+        # treat it as the explicit id and rest as reason. Otherwise the
+        # whole thing is reason for the unique-pending case.
+        raw_id = ""
+        reason = ""
+        if tokens:
+            first = tokens[0]
+            looks_like_id = (
+                len(first) >= 4 and len(first) <= 32
+                and all(c in "0123456789abcdefABCDEF" for c in first)
+            )
+            if looks_like_id:
+                raw_id = first
+                reason = " ".join(tokens[1:]).strip()
+            else:
+                reason = " ".join(tokens).strip()
+
+        target_id, err = self._resolve_yesno_target(raw_id)
+        if err:
+            return err
+
+        existing_before = approval_queue.get_request(target_id)
+        denied = approval_queue.deny(target_id, reason=reason, decided_by="owner")
+        if denied is None:
+            now = approval_queue.get_request(target_id) or existing_before
+            if now is not None:
+                status = now.get("status", "unknown")
+                if hasattr(status, "value"):
+                    status = status.value
+                return f"Approval `{target_id}` je už v stave *{status}*."
+            return f"Approval `{target_id}` not found."
+
+        message = f"❌ Approval `{denied.id}` denied."
+        if reason:
+            message += f"\nReason: {reason}"
+        return message
 
     async def _cmd_consolidate(self, args: str) -> str:
         """Run memory consolidation directly — no LLM needed."""
@@ -1696,14 +1933,58 @@ class TelegramHandler:
         return "\n".join(lines)
 
     async def _cmd_build(self, args: str) -> str:
-        """Shortcut pre /intake --type build."""
+        """Shortcut pre /intake --type build with spec quality gate."""
         if not args.strip():
             return (
                 "*Použitie:*\n"
-                "`/build [cesta] --description \"čo chceš postaviť\"`\n"
-                "`/build agent/review/ --description \"add verification tests\"`\n\n"
-                "Skratka pre `/intake [cesta] --type build --description ...`"
+                "`/build [cesta] --description \"čo chceš postaviť\"`\n\n"
+                "*Príklad dobrého popisu:*\n"
+                "`/build /tmp/cli --description \"Python CLI s príkazmi add/list/sum, "
+                "ukladá expenses do JSON, vstup CSV, výstup tabuľka, pytest tests pre všetky "
+                "command paths\"`\n\n"
+                "*Príklad slabého popisu:*\n"
+                "`/build /tmp/x --description \"urob mi expense tracker\"` → "
+                "John ti odporučí `/spec` na vylepšenie.\n\n"
+                "*Tip:* Ak nevieš ako popísať, použi `/spec <tvoja predstava>` — "
+                "John ti pomôže napísať správny spec."
             )
+
+        # Spec quality gate: parse description and warn if too vague.
+        # Only fires on /build (not /intake) to keep power-user flow direct.
+        from agent.brain.spec_coach import score_spec_quality
+        # Extract the description for scoring (everything after --description)
+        description_part = ""
+        if "--description" in args:
+            after = args.split("--description", 1)[1].strip()
+            # Strip leading quote if present, and trailing flags
+            description_part = after.strip().strip('"').strip("'")
+            # Description in /build is everything after --description (no other flags after)
+        # Skip the gate when --no-coach explicitly opts out (power user)
+        skip_gate = "--no-coach" in args
+        if skip_gate:
+            args = args.replace("--no-coach", "").strip()
+
+        if description_part and not skip_gate:
+            quality = score_spec_quality(description_part)
+            if quality.is_too_vague:
+                # Don't block — warn and offer /spec, but allow /build with --no-coach
+                lines = [
+                    "⚠️ *Tvoj popis je trochu vágny* "
+                    f"(skóre {quality.score:.1f}/1.0).",
+                    "",
+                    "Problémy:",
+                ]
+                for issue in quality.issues[:4]:
+                    lines.append(f"  • {issue}")
+                lines.extend([
+                    "",
+                    "*Odporúčam:* `/spec " + description_part[:60] + "`",
+                    "→ John ti pomôže prepísať to na konkrétny spec.",
+                    "",
+                    "*Alebo* ak vieš čo robíš: pridaj `--no-coach` a build ide priamo.",
+                ])
+                return "\n".join(lines)
+
         # Inject --type build BEFORE --description so it gets parsed
         if "--type" not in args:
             if "--description" in args:
@@ -1711,6 +1992,54 @@ class TelegramHandler:
             else:
                 args = f"{args} --type build"
         return await self._cmd_intake(args)
+
+    async def _cmd_spec(self, args: str) -> str:
+        """Spec coach — turn vague idea into a structured build spec.
+
+        Usage:
+          /spec <vague idea about what you want to build>
+          /spec --path /tmp/foo <idea>   — specify target path
+        """
+        text = args.strip()
+        if not text:
+            return (
+                "*Použitie:*\n"
+                "`/spec <tvoja predstava o tom čo chceš>`\n\n"
+                "*Príklady:*\n"
+                "• `/spec expense tracker s CLI`\n"
+                "• `/spec script ktorý parsuje moje GitHub PRs`\n"
+                "• `/spec API pre TODO list s SQLite`\n\n"
+                "John ti vygeneruje konkrétny spec a pripravený `/build` príkaz.\n"
+                "Cestu môžeš prepísať: `/spec --path /tmp/myproj <idea>`"
+            )
+
+        # Optional --path override
+        target_path = "."
+        if text.startswith("--path "):
+            parts = text.split(None, 2)
+            if len(parts) >= 3:
+                target_path = parts[1]
+                text = parts[2]
+            else:
+                return "Použitie: `/spec --path <cesta> <idea>`"
+
+        from agent.brain.spec_coach import coach_spec
+        # Detect language from agent default — defaults to Slovak
+        import os
+        language = os.environ.get("AGENT_DEFAULT_LANGUAGE", "sk")
+
+        result = await coach_spec(text, target_path=target_path, language=language)
+        if not result.get("ok"):
+            return f"❌ Spec coach failed: {result.get('error', 'unknown')}"
+
+        spec = result.get("spec_markdown", "").strip()
+        cost = result.get("cost_usd", 0.0)
+        # Append a footer with cost transparency and next-step hint
+        footer = (
+            f"\n\n_(coach cost: ${cost:.4f}; "
+            f"skopíruj `/build` príkaz vyššie alebo uprav podľa potreby)_"
+        )
+        return spec + footer
 
     async def _cmd_jobs(self, args: str) -> str:
         """List recent product jobs or show detail for a specific job."""
@@ -2004,6 +2333,104 @@ class TelegramHandler:
         action = parts[0].lower() if parts else ""
         subargs = parts[1].strip() if len(parts) > 1 else ""
 
+        # /marketplace create-listing --title "..." --description "..." --budget N --deadline Nd
+        # Optional: --approval-id <id> to execute after operator approval
+        if action == "create-listing":
+            # Use shlex for proper quote-aware tokenization (handles "Build *new* app", etc.)
+            import shlex
+            try:
+                tokens_raw = shlex.split(subargs)
+            except ValueError as exc:
+                return f"❌ Parsing error: {exc}. Použi úvodzovky správne."
+
+            title = ""
+            description = ""
+            budget = 0.0
+            budget_provided = False
+            deadline = "7d"
+            approval_id = ""
+            i = 0
+            while i < len(tokens_raw):
+                tok = tokens_raw[i]
+                if tok == "--title" and i + 1 < len(tokens_raw):
+                    title = tokens_raw[i + 1]
+                    i += 2
+                    continue
+                if tok == "--description" and i + 1 < len(tokens_raw):
+                    description = tokens_raw[i + 1]
+                    i += 2
+                    continue
+                if tok == "--budget" and i + 1 < len(tokens_raw):
+                    try:
+                        budget = float(tokens_raw[i + 1])
+                        budget_provided = True
+                    except ValueError:
+                        return f"❌ --budget musí byť číslo, dostal som: `{tokens_raw[i + 1]}`"
+                    i += 2
+                    continue
+                if tok == "--deadline" and i + 1 < len(tokens_raw):
+                    deadline = tokens_raw[i + 1]
+                    i += 2
+                    continue
+                if tok.startswith("--approval-id"):
+                    if "=" in tok:
+                        approval_id = tok.split("=", 1)[1]
+                        i += 1
+                    elif i + 1 < len(tokens_raw):
+                        approval_id = tokens_raw[i + 1]
+                        i += 2
+                    else:
+                        i += 1
+                    continue
+                i += 1
+
+            if not title:
+                return (
+                    "❌ --title je povinný.\n"
+                    "Usage: `/marketplace create-listing --title \"...\" "
+                    "--description \"...\" --budget 5 --deadline 7d`"
+                )
+            if not budget_provided or budget <= 0:
+                return (
+                    "❌ --budget musí byť kladné číslo (USDC).\n"
+                    "Usage: `/marketplace create-listing --title \"...\" --budget 5`\n"
+                    "_Spending USDC requires owner approval._"
+                )
+
+            # Markdown-safe rendering for echo (escape *, _, [, `)
+            def _md_escape(s: str) -> str:
+                for ch in ("\\", "`", "*", "_", "[", "]"):
+                    s = s.replace(ch, "\\" + ch)
+                return s
+            title_safe = _md_escape(title)
+
+            result = await mkt.create_listing(
+                platform="obolos.tech",
+                title=title, description=description,
+                max_budget=budget, deadline=deadline,
+                approval_id=approval_id,
+            )
+            if result.get("pending_approval"):
+                aid = result.get("approval_id", "")
+                return (
+                    f"💰 *Listing potrebuje súhlas (až ${budget:.2f} USDC):*\n"
+                    f"Confirm with `/yes` or reject with `/no`.\n"
+                    f"Approval ID: `{aid}`\n"
+                    f"_(explicit form: `/yes {aid}` / `/no {aid}` / `/queue approve {aid}`)_\n"
+                    f"\nPo schválení znova zavolaj rovnaký príkaz s `--approval-id={aid}`."
+                )
+            if result.get("ok"):
+                data = result.get("data", {})
+                return (
+                    f"✅ Listing vytvorený na obolos.tech:\n"
+                    f"  Title: *{title_safe}*\n"
+                    f"  ID: `{data.get('id', '?')}`\n"
+                    f"  Budget: ${budget:.2f}\n"
+                    f"  Status: {data.get('status', 'open')}\n"
+                    f"\n_Workeri budú bidovať. Pozri ich cez_ `/marketplace listings`."
+                )
+            return f"❌ Listing creation failed: {result.get('error', 'unknown')}"
+
         # /marketplace discover [platform] [--category X]
         if action == "discover":
             platform = ""
@@ -2025,7 +2452,9 @@ class TelegramHandler:
             lines = [f"*Discovered {len(opps)} opportunities:*\n"]
             for opp in opps[:10]:
                 budget = f" ({opp.budget_max} {opp.currency})" if opp.budget_max else ""
-                lines.append(f"  • `{opp.id[:8]}` *{opp.title[:60]}*{budget}")
+                platform_status = str(opp.raw_data.get("status", "")).strip().lower()
+                status_label = f" [{platform_status}]" if platform_status else ""
+                lines.append(f"  • `{opp.id[:8]}` *{opp.title[:60]}*{budget}{status_label}")
             lines.append("\n`/marketplace show <id>` | `/marketplace eval <id>`")
             return "\n".join(lines)
 
@@ -2045,6 +2474,9 @@ class TelegramHandler:
                 f"Platform: {opp.platform} (`{opp.platform_id}`)",
                 f"Status: {opp.status.value}",
             ]
+            platform_status = str(opp.raw_data.get("status", "")).strip().lower()
+            if platform_status:
+                lines.append(f"Platform status: {platform_status}")
             if opp.budget_max:
                 lines.append(f"Budget: {opp.budget_max} {opp.currency}")
             if opp.skills_required:
@@ -2054,11 +2486,34 @@ class TelegramHandler:
             if opp.url:
                 lines.append(f"URL: {opp.url}")
             lines.append(f"ID: `{opp.id}`")
-            lines.append(
-                f"\n`/marketplace eval {opp.id}` | "
-                f"`/marketplace bid {opp.id}` | "
-                f"`/marketplace track {opp.id}`"
-            )
+            # Show linked bids/jobs
+            all_bids = await mkt.list_bids(limit=50)
+            related = [b for b in all_bids if b.opportunity_id == opp.id]
+            if related:
+                lines.append("\n*Linked bids:*")
+                for b in related[:5]:
+                    job_link = f" → job `{b.external_job_id[:10]}`" if b.external_job_id else ""
+                    proj_link = f" → project `{b.project_id[:8]}`" if b.project_id else ""
+                    lines.append(f"  `{b.id[:8]}` {b.status.value} ${b.price_usd:.2f}{job_link}{proj_link}")
+            is_biddable, biddable_reason = mkt.get_listing_bid_eligibility(opp)
+            if opp.is_listing and is_biddable:
+                lines.append(
+                    f"\n`/marketplace eval {opp.id}` | "
+                    f"`/marketplace bid {opp.id}` | "
+                    f"`/marketplace track {opp.id}`"
+                )
+            elif opp.is_listing:
+                lines.append(
+                    f"\n`/marketplace eval {opp.id}` | "
+                    f"`/marketplace track {opp.id}`\n"
+                    f"_{biddable_reason}_"
+                )
+            else:
+                lines.append(
+                    f"\n`/marketplace eval {opp.id}` | "
+                    f"`/marketplace track {opp.id}`\n"
+                    f"_API marketplace item — use `/marketplace listings` for biddable work._"
+                )
             return "\n".join(lines)
 
         # /marketplace eval <opportunity_id>
@@ -2079,8 +2534,13 @@ class TelegramHandler:
                 lines.append(f"Matched: {', '.join(ev.matched_skills[:5])}")
             if ev.missing_skills:
                 lines.append(f"Missing: {', '.join(ev.missing_skills[:5])}")
-            if ev.verdict != FeasibilityVerdict.INFEASIBLE:
+            is_biddable, biddable_reason = mkt.get_listing_bid_eligibility(opp)
+            if ev.verdict != FeasibilityVerdict.INFEASIBLE and opp.is_listing and is_biddable:
                 lines.append(f"\n`/marketplace bid {opp.id}` to prepare a bid draft")
+            elif ev.verdict != FeasibilityVerdict.INFEASIBLE and opp.is_listing:
+                lines.append(f"\n_{biddable_reason}_")
+            elif ev.verdict != FeasibilityVerdict.INFEASIBLE:
+                lines.append("\n_API marketplace item — bidding available for work listings only._")
             return "\n".join(lines)
 
         # /marketplace bid <opportunity_id>
@@ -2088,13 +2548,9 @@ class TelegramHandler:
             opp = await mkt.get_opportunity(subargs.split()[0])
             if not opp:
                 return f"Opportunity `{subargs}` not found."
-            if not opp.is_listing:
-                return (
-                    f"Opportunity `{opp.id[:8]}` is an API marketplace item, "
-                    f"not a work listing.\n"
-                    f"Provider bids are only supported for work listings.\n"
-                    f"Use `/marketplace listings` to browse biddable work."
-                )
+            is_biddable, biddable_reason = mkt.get_listing_bid_eligibility(opp)
+            if not is_biddable:
+                return biddable_reason
             ev = mkt.evaluate(opp)
             if ev.verdict.value == "infeasible":
                 return f"Opportunity is infeasible: {ev.reasoning}"
@@ -2119,10 +2575,12 @@ class TelegramHandler:
                 return f"Bid `{bid.id[:8]}` was already submitted."
             result = await mkt.submit_bid(bid)
             if result.get("pending_approval"):
+                aid = result.get("approval_id", "")
                 return (
                     f"Bid `{bid.id[:8]}` requires approval before submission.\n"
-                    f"Approval ID: `{result.get('approval_id', '?')}`\n"
-                    f"Use `/queue approve {result.get('approval_id', '')}` to approve."
+                    f"Confirm with `/yes` or reject with `/no`.\n"
+                    f"Approval ID: `{aid}`\n"
+                    f"_(explicit: `/yes {aid}` / `/no {aid}` / `/queue approve {aid}`)_"
                 )
             if result.get("ok"):
                 return (
@@ -2137,14 +2595,29 @@ class TelegramHandler:
             bids = await mkt.list_bids(limit=10)
             if not bids:
                 return "No bid drafts stored."
-            lines = ["*Bid drafts:*\n"]
+            lines = ["*Bids:*\n"]
             for b in bids:
-                proj = f" → project `{b.project_id[:8]}`" if b.project_id else ""
-                lines.append(
-                    f"  • `{b.id[:8]}` {b.title[:50]} "
-                    f"(${b.price_usd:.2f}, {b.status.value}){proj}"
-                )
+                parts = [f"`{b.id[:8]}` {b.title[:40]} (${b.price_usd:.2f}, {b.status.value})"]
+                if b.project_id:
+                    parts.append(f"project `{b.project_id[:8]}`")
+                if b.external_job_id:
+                    parts.append(f"job `{b.external_job_id[:10]}`")
+                lines.append(f"  • {' → '.join(parts)}")
             return "\n".join(lines)
+
+        # /marketplace link-job <bid_id> <external_job_id>
+        if action == "link-job" and subargs:
+            tokens = subargs.split()
+            if len(tokens) < 2:
+                return "Usage: `/marketplace link-job <bid_id> <external_job_id>`"
+            bid_id, ext_job_id = tokens[0], tokens[1]
+            result = await mkt.link_job(bid_id, ext_job_id)
+            if result.get("ok"):
+                return (
+                    f"Job `{ext_job_id}` linked to bid `{bid_id[:8]}`.\n"
+                    f"_This records the association. It does not imply on-chain confirmation._"
+                )
+            return f"Link failed: {result.get('error', 'unknown')}"
 
         # /marketplace track <opportunity_id> — create ALS project to track this
         if action == "track" and subargs:
@@ -2175,7 +2648,8 @@ class TelegramHandler:
             lines = [f"*Work listings from {platform}:*\n"]
             for opp in listings[:10]:
                 budget = f" ({opp.budget_max} {opp.currency})" if opp.budget_max else ""
-                lines.append(f"  • `{opp.id[:8]}` *{opp.title[:55]}*{budget}")
+                platform_status = str(opp.raw_data.get("status", "")).strip().lower() or "unknown"
+                lines.append(f"  • `{opp.id[:8]}` *{opp.title[:55]}*{budget} [{platform_status}]")
             lines.append("\n`/marketplace show <id>` | `/marketplace bid <id>`")
             return "\n".join(lines)
 
@@ -2187,7 +2661,7 @@ class TelegramHandler:
                 return f"No jobs found on {platform}."
             lines = [f"*Jobs from {platform}:*\n"]
             for j in jobs[:10]:
-                jid = str(j.get("id", j.get("_id", "?")))[:12]
+                jid = str(j.get("id", j.get("_id", "?")))
                 title = j.get("title", j.get("description", "Untitled"))[:50]
                 status = j.get("status", "unknown")
                 lines.append(f"  • `{jid}` {title} [{status}]")
@@ -2214,6 +2688,186 @@ class TelegramHandler:
                 lines.append(f"From listing: `{detail['listing_id']}`")
             return "\n".join(lines)
 
+        # /marketplace job-submit <job_id> [--summary "..."]
+        if action == "job-submit" and subargs:
+            tokens = subargs.split()
+            job_id = tokens[0]
+            summary = ""
+            if "--summary" in subargs:
+                summary = subargs.split("--summary", 1)[1].strip().strip('"').strip("'")
+            result = await mkt.submit_job_work("obolos.tech", job_id, summary=summary)
+            if result.get("ok"):
+                return f"Work submitted for job `{job_id}`.\n_Platform confirmation pending._"
+            return f"Job work submission failed: {result.get('error', 'unknown')}"
+
+        # /marketplace job-complete <job_id> [notes]
+        if action == "job-complete" and subargs:
+            tokens = subargs.split(None, 1)
+            job_id = tokens[0]
+            notes = tokens[1] if len(tokens) > 1 else ""
+            result = await mkt.complete_job("obolos.tech", job_id, notes=notes)
+            if result.get("ok"):
+                normalized = result.get("normalized_response", {})
+                revenue = normalized.get("revenue")
+                rev_text = f"\nRevenue: {revenue} {normalized.get('currency', '')}" if revenue else "\n_Revenue not confirmed by platform._"
+                return (
+                    f"Job `{job_id}` marked as completed.{rev_text}\n"
+                    f"Outcome ID: `{result.get('outcome_id', '?')}`"
+                )
+            return f"Job completion failed: {result.get('error', 'unknown')}"
+
+        # /marketplace job-reject <job_id> [reason]
+        if action == "job-reject" and subargs:
+            tokens = subargs.split(None, 1)
+            job_id = tokens[0]
+            reason = tokens[1] if len(tokens) > 1 else ""
+            result = await mkt.reject_job("obolos.tech", job_id, reason=reason)
+            if result.get("ok"):
+                return f"Job `{job_id}` rejected.\nOutcome ID: `{result.get('outcome_id', '?')}`"
+            return f"Job rejection failed: {result.get('error', 'unknown')}"
+
+        # /marketplace message <job_id> <text> — send ANP message to client
+        if action == "message" and subargs:
+            tokens = subargs.split(None, 1)
+            if len(tokens) < 2:
+                return "Použi: `/marketplace message <job_id> <správa>`"
+            job_id = tokens[0]
+            content = tokens[1]
+            connector = mkt.registry.get("obolos.tech")
+            if not connector or not hasattr(connector, "send_anp_message"):
+                return "ANP messaging nie je dostupné."
+            result = await connector.send_anp_message(job_id, content=content)
+            if result.get("ok"):
+                return f"✉️ Správa odoslaná klientovi jobu `{job_id[:12]}`."
+            return f"Odoslanie zlyhalo: {result.get('error', 'unknown')}"
+
+        # /marketplace thread <job_id> — view ANP message thread
+        if action == "thread" and subargs:
+            job_id = subargs.split()[0]
+            connector = mkt.registry.get("obolos.tech")
+            if not connector or not hasattr(connector, "get_anp_thread"):
+                return "ANP thread nie je dostupné."
+            result = await connector.get_anp_thread(job_id)
+            if not result.get("ok"):
+                return f"Thread failed: {result.get('error', 'unknown')}"
+            messages = result.get("data", {}).get("messages", [])
+            if not messages:
+                return f"Žiadne správy v jobu `{job_id[:12]}`."
+            lines = [f"💬 *Thread jobu `{job_id[:12]}`* ({len(messages)} správ):"]
+            for m in messages[:10]:
+                sender = str(m.get("sender", "?"))[:12]
+                text = str(m.get("content", m.get("message", "")))[:100]
+                lines.append(f"  `{sender}...`: {text}")
+            return "\n".join(lines)
+
+        # /marketplace apis [query] — search x402 pay-per-call APIs
+        if action == "apis":
+            connector = mkt.registry.get("obolos.tech")
+            if not connector or not hasattr(connector, "search_apis"):
+                return "x402 API search nie je dostupné."
+            result = await connector.search_apis(subargs or "")
+            if not result.get("ok"):
+                return f"API search failed: {result.get('error', 'unknown')}"
+            apis = result.get("data", {}).get("apis", [])
+            if not apis:
+                return "Žiadne x402 APIs nájdené." + (f" (query: {subargs})" if subargs else "")
+            lines = [f"🔌 *x402 APIs* ({len(apis)} nájdených):"]
+            for api in apis[:8]:
+                name = api.get("name", api.get("slug", "?"))
+                price = api.get("price", "?")
+                desc = str(api.get("description", ""))[:60]
+                lines.append(f"  • *{name}* — {price}")
+                if desc:
+                    lines.append(f"    _{desc}_")
+            lines.append(f"\n`/marketplace call <api-slug>` — zavolaj API (platí USDC)")
+            return "\n".join(lines)
+
+        # /marketplace call <api-slug> [--body JSON] — call x402 API
+        if action == "call" and subargs:
+            connector = mkt.registry.get("obolos.tech")
+            if not connector or not hasattr(connector, "call_api"):
+                return "x402 API call nie je dostupné."
+            tokens = subargs.split(None, 1)
+            api_slug = tokens[0]
+            body = ""
+            if len(tokens) > 1 and "--body" in tokens[1]:
+                body = tokens[1].replace("--body", "").strip()
+            result = await connector.call_api(api_slug, body=body)
+            if result.get("ok"):
+                data = result.get("data", {})
+                raw = result.get("raw", "")
+                return (
+                    f"✅ *x402 API call úspešný:*\n"
+                    f"API: `{api_slug}`\n"
+                    f"Response: {str(data or raw)[:500]}"
+                )
+            return f"❌ API call failed: {result.get('error', 'unknown')}"
+
+        # /marketplace reputation <agent_id>
+        if action == "reputation" and subargs:
+            agent_id = subargs.split()[0]
+            rep = await mkt.get_reputation("obolos.tech", agent_id)
+            if not rep:
+                return f"Could not fetch reputation for `{agent_id}`."
+            lines = [
+                f"*Reputation:* `{rep.get('agent_id', agent_id)}`",
+                f"Score: {rep.get('score', 'unknown')}",
+                f"Jobs completed: {rep.get('jobs_completed', 0)}",
+                f"Jobs failed: {rep.get('jobs_failed', 0)}",
+            ]
+            return "\n".join(lines)
+
+        # /marketplace report — lifecycle summary
+        if action == "report":
+            stats = await mkt.get_stats()
+            bids = await mkt.list_bids(limit=100)
+            outcomes = await mkt.list_outcomes(limit=50)
+
+            # Bid status breakdown
+            bid_by_status: dict[str, int] = {}
+            bids_with_jobs = 0
+            bids_with_projects = 0
+            for b in bids:
+                bid_by_status[b.status.value] = bid_by_status.get(b.status.value, 0) + 1
+                if b.external_job_id:
+                    bids_with_jobs += 1
+                if b.project_id:
+                    bids_with_projects += 1
+
+            # Revenue summary
+            total_revenue = 0.0
+            revenue_known = 0
+            submitted_count = sum(1 for o in outcomes if o.status.value == "submitted")
+            completed_count = sum(1 for o in outcomes if o.status.value == "completed")
+            rejected_count = sum(1 for o in outcomes if o.status.value == "rejected")
+            for o in outcomes:
+                if o.revenue_amount is not None:
+                    total_revenue += o.revenue_amount
+                    revenue_known += 1
+
+            lines = [
+                "*Marketplace Report*\n",
+                f"Platforms: {', '.join(stats.get('platforms', []))}",
+                f"Opportunities: {stats.get('opportunities', 0)} stored",
+                f"Bids: {len(bids)} total",
+            ]
+            if bid_by_status:
+                status_parts = [f"{v} {k}" for k, v in sorted(bid_by_status.items())]
+                lines.append(f"  → {', '.join(status_parts)}")
+            lines.append(f"  → {bids_with_projects} linked to projects, {bids_with_jobs} linked to jobs")
+            lines.append(f"\nOutcomes: {len(outcomes)} recorded")
+            if outcomes:
+                lines.append(f"  → {submitted_count} submitted, {completed_count} completed, {rejected_count} rejected")
+                if revenue_known:
+                    lines.append(f"  → Revenue: {total_revenue:.2f} ({revenue_known} confirmed)")
+                else:
+                    lines.append("  → Revenue: none confirmed by platform")
+
+            if not bids and not outcomes:
+                lines.append("\n_No marketplace activity yet._")
+
+            return "\n".join(lines)
+
         # /marketplace list (default)
         if action == "list" or not action:
             opps = await mkt.list_opportunities(limit=8)
@@ -2230,7 +2884,9 @@ class TelegramHandler:
                 lines.append("*Recent opportunities:*")
                 for opp in opps[:8]:
                     budget = f" {opp.budget_max}{opp.currency}" if opp.budget_max else ""
-                    lines.append(f"  `{opp.id[:8]}` {opp.title[:45]} [{opp.status.value}]{budget}")
+                    platform_status = str(opp.raw_data.get("status", "")).strip().lower()
+                    status_label = platform_status or opp.status.value
+                    lines.append(f"  `{opp.id[:8]}` {opp.title[:45]} [{status_label}]{budget}")
             if bids:
                 lines.append("\n*Recent bid drafts:*")
                 for b in bids[:5]:
@@ -2245,22 +2901,46 @@ class TelegramHandler:
                 "  `/marketplace submit <bid_id>` — send bid (approval-gated)\n"
                 "  `/marketplace listings` — browse work listings\n"
                 "  `/marketplace jobs` — list accepted jobs\n"
+                "  `/marketplace job-submit <id>` — submit work\n"
+                "  `/marketplace job-complete <id>` — mark completed\n"
+                "  `/marketplace job-reject <id>` — reject/decline\n"
+                "  `/marketplace reputation <agent>` — trust check\n"
+                "  `/marketplace report` — outcomes summary\n"
                 "  `/marketplace track <id>` — track as project"
             )
             return "\n".join(lines)
 
         return (
-            "*Marketplace commands:*\n"
+            "*Marketplace commands* (dual role: client + worker)\n"
+            "*Worker — Scouting:*\n"
             "  `/marketplace discover` — API marketplace\n"
             "  `/marketplace listings` — work listings\n"
             "  `/marketplace show <id>` — opportunity detail\n"
             "  `/marketplace eval <id>` — assess feasibility\n"
+            "*Worker — Bidding:*\n"
             "  `/marketplace bid <id>` — prepare bid draft\n"
             "  `/marketplace submit <bid_id>` — send bid (approval-gated)\n"
             "  `/marketplace bids` — list bid drafts\n"
+            "*Worker — Jobs:*\n"
             "  `/marketplace jobs` — accepted jobs\n"
             "  `/marketplace job <id>` — job detail\n"
+            "  `/marketplace job-submit <id>` — submit work\n"
+            "  `/marketplace job-complete <id>` — mark completed\n"
+            "  `/marketplace job-reject <id>` — reject/decline\n"
+            "*Client — Hire others:*\n"
+            "  `/marketplace create-listing --title \"...\" --budget 5` — post paid work\n"
+            "    _(spends USDC, FINANCE approval required)_\n"
+            "*Communication:*\n"
+            "  `/marketplace message <job_id> <text>` — ANP message to client\n"
+            "  `/marketplace thread <job_id>` — view message history\n"
+            "*x402 APIs (sub-contracting):*\n"
+            "  `/marketplace apis [query]` — search pay-per-call APIs\n"
+            "  `/marketplace call <slug>` — call API (pays USDC)\n"
+            "*Tracking:*\n"
             "  `/marketplace track <id>` — track as ALS project\n"
+            "  `/marketplace link-job <bid_id> <job_id>` — link job to bid\n"
+            "  `/marketplace reputation <agent>` — trust check\n"
+            "  `/marketplace report` — lifecycle summary\n"
             "  `/marketplace list` — overview"
         )
 
@@ -2717,3 +3397,108 @@ class TelegramHandler:
                     logger.info("auto_task_created", name=first_sentence[:50])
                 except Exception:
                     pass
+
+    # --- Initiative commands ---
+
+    async def _cmd_initiative(self, args: str) -> str:
+        """`/initiative <goal>` — vytvor; `/initiative <id>` — detail;
+        `/initiative pause|resume|cancel <id>` — control.
+        """
+        engine = getattr(self._agent, "initiative", None)
+        if engine is None:
+            return (
+                "Initiative engine nie je k dispozícii (init zlyhal). "
+                "Skontroluj logy: `journalctl --user -u agent-life-space | grep initiative`."
+            )
+
+        args = (args or "").strip()
+        if not args:
+            return await self._cmd_initiatives("")
+
+        # Pause/resume/cancel
+        parts = args.split(maxsplit=1)
+        verb = parts[0].lower()
+        if verb in {"pause", "resume", "cancel"}:
+            if len(parts) < 2:
+                return f"Usage: `/initiative {verb} <id>`"
+            target = parts[1].strip()
+            ok = (
+                await engine.pause(target) if verb == "pause"
+                else await engine.resume(target) if verb == "resume"
+                else await engine.cancel(target, reason="manual cancel via Telegram")
+            )
+            return (
+                f"✅ Iniciatíva `{target}` — {verb} OK"
+                if ok
+                else f"❌ Iniciatíva `{target}` — {verb} zlyhal"
+            )
+
+        # Status query — ak je arg krátky a vyzerá ako id (12 hex chars)
+        if len(args) <= 16 and all(c in "0123456789abcdef" for c in args):
+            status = await engine.get_status(args)
+            if status.get("error"):
+                return f"❌ Iniciatíva `{args}` neexistuje."
+            steps_lines = []
+            for s in status.get("steps", []):
+                icon = (
+                    "✅" if s["status"] == "completed"
+                    else "❌" if s["status"] == "failed"
+                    else "⏸" if s["status"] == "blocked"
+                    else "⏳"
+                )
+                steps_lines.append(
+                    f"{icon} #{s['step_idx']} [{s['kind']}] {s['name'][:60]} — {s['status']}"
+                )
+            text = (
+                f"*Iniciatíva* `{status['id']}`\n"
+                f"*Title:* {status['title']}\n"
+                f"*Status:* {status['status']}\n"
+                f"*Pattern:* {(status.get('meta') or {}).get('pattern', {}).get('pattern_id', '?')}\n"
+                f"*Started:* {status.get('started_at', '-')}\n\n"
+                f"*Kroky:*\n" + "\n".join(steps_lines or ["(žiadne)"])
+            )
+            return text[:3900]
+
+        # Inak: vytvor novú iniciatívu z args ako NL goalu
+        try:
+            info = await engine.start_initiative(
+                goal_nl=args,
+                chat_id=self._owner_chat_id or 0,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return f"❌ Plánovanie zlyhalo: `{exc!s}`[:300]"
+        cost = info.get("estimated_cost_usd", 0.0)
+        mins = info.get("estimated_total_minutes", 0)
+        return (
+            f"🚀 *Iniciatíva spustená*\n\n"
+            f"`{info['initiative_id']}` — {info['title'][:80]}\n"
+            f"Pattern: `{info['pattern']}`\n"
+            f"Krokov: {info['steps_total']}\n"
+            f"Long-running: {info['is_long_running']}\n"
+            f"Odhad: ~{mins} min, ~${cost:.2f} USD\n\n"
+            f"Driver beží na pozadí (~30s tick). Status: `/initiative {info['initiative_id']}`"
+        )
+
+    async def _cmd_initiatives(self, args: str) -> str:
+        """`/initiatives` — zoznam aktívnych iniciatív."""
+        engine = getattr(self._agent, "initiative", None)
+        if engine is None:
+            return "Initiative engine nie je k dispozícii."
+        actives = await engine.list_active()
+        if not actives:
+            return (
+                "Žiadne aktívne iniciatívy. "
+                "Vytvor: `/initiative <NL goal>`\n\n"
+                "Príklad: `/initiative urob mi denný scraper na sreality.cz, "
+                "byty 2+kk Praha pod 8M Kč, pošli notifikáciu pri novej`."
+            )
+        lines = ["*Aktívne iniciatívy:*"]
+        for it in actives:
+            tags = " ".join(f"`{t}`" for t in it["tags"] if t != "initiative")
+            prog = it.get("progress", {})
+            lines.append(
+                f"- `{it['id']}` {it['title'][:70]} {tags} "
+                f"— {prog.get('completed', 0)}/{prog.get('total_tasks', 0)}"
+            )
+        lines.append("\n`/initiative <id>` pre detail | `/initiative pause|resume|cancel <id>`")
+        return "\n".join(lines)[:3900]

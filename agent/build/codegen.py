@@ -104,7 +104,8 @@ async def generate_build_operations(
         ],
         model=model,
         timeout=timeout,
-        max_turns=1,  # Single-turn text generation, no tool use needed
+        max_turns=1,
+        no_tools=True,  # Pure text-in/JSON-out — no file access needed
     ))
 
     if not response.success:
@@ -171,6 +172,14 @@ def _parse_operations(
     if text.endswith("```"):
         text = text[:-3]
     text = text.strip()
+
+    # Strip preamble/postamble text around the JSON array.
+    # Opus sometimes prefixes explanations like "The fix is..." before the JSON.
+    # Find the first '[' and matching last ']' to extract just the array.
+    if not text.startswith("[") and "[" in text:
+        text = text[text.index("["):]
+    if not text.endswith("]") and "]" in text:
+        text = text[:text.rindex("]") + 1]
 
     # Try parsing as JSON array
     try:

@@ -13,11 +13,18 @@ Hierarchy:
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
+
+
+def stable_marketplace_id(platform: str, platform_id: str, *, kind: str = "opportunity") -> str:
+    """Return a deterministic local ID for an external marketplace entity."""
+    digest = hashlib.sha256(f"{kind}:{platform}:{platform_id}".encode()).hexdigest()
+    return digest[:12]
 
 # ─────────────────────────────────────────────
 # Opportunity — normalized external listing
@@ -183,7 +190,8 @@ class Bid:
     price_usd: float = 0.0
     delivery_days: int = 0
     status: BidStatus = BidStatus.DRAFT
-    project_id: str = ""            # Linked ALS project, if created
+    project_id: str = ""            # Linked ALS project
+    external_job_id: str = ""       # Linked platform job ID (after acceptance)
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     submitted_at: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -199,6 +207,7 @@ class Bid:
             "delivery_days": self.delivery_days,
             "status": self.status.value,
             "project_id": self.project_id,
+            "external_job_id": self.external_job_id,
             "created_at": self.created_at,
             "submitted_at": self.submitted_at,
             "metadata": self.metadata,
@@ -216,7 +225,75 @@ class Bid:
             delivery_days=d.get("delivery_days", 0),
             status=BidStatus(d.get("status", "draft")),
             project_id=d.get("project_id", ""),
+            external_job_id=d.get("external_job_id", ""),
             created_at=d.get("created_at", ""),
             submitted_at=d.get("submitted_at", ""),
             metadata=d.get("metadata", {}),
+        )
+
+
+# ─────────────────────────────────────────────
+# Job Outcome — revenue/completion record
+# ─────────────────────────────────────────────
+
+
+class JobOutcomeStatus(str, Enum):
+    SUBMITTED = "submitted"          # Work submitted to platform
+    COMPLETED = "completed"          # Platform confirmed completion
+    REJECTED = "rejected"            # Platform rejected work
+    CANCELLED = "cancelled"          # Job cancelled
+    UNKNOWN = "unknown"              # Upstream state unclear
+
+
+@dataclass
+class JobOutcome:
+    """Records the final state and revenue of a marketplace job."""
+
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    platform: str = ""
+    external_job_id: str = ""
+    opportunity_id: str = ""
+    bid_id: str = ""
+    project_id: str = ""
+    status: JobOutcomeStatus = JobOutcomeStatus.UNKNOWN
+    revenue_amount: float | None = None   # None = unknown
+    revenue_currency: str = ""
+    completed_at: str = ""
+    platform_response: dict[str, Any] = field(default_factory=dict)
+    notes: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "platform": self.platform,
+            "external_job_id": self.external_job_id,
+            "opportunity_id": self.opportunity_id,
+            "bid_id": self.bid_id,
+            "project_id": self.project_id,
+            "status": self.status.value,
+            "revenue_amount": self.revenue_amount,
+            "revenue_currency": self.revenue_currency,
+            "completed_at": self.completed_at,
+            "platform_response": self.platform_response,
+            "notes": self.notes,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> JobOutcome:
+        return cls(
+            id=d.get("id", uuid.uuid4().hex[:12]),
+            platform=d.get("platform", ""),
+            external_job_id=d.get("external_job_id", ""),
+            opportunity_id=d.get("opportunity_id", ""),
+            bid_id=d.get("bid_id", ""),
+            project_id=d.get("project_id", ""),
+            status=JobOutcomeStatus(d.get("status", "unknown")),
+            revenue_amount=d.get("revenue_amount"),
+            revenue_currency=d.get("revenue_currency", ""),
+            completed_at=d.get("completed_at", ""),
+            platform_response=d.get("platform_response", {}),
+            notes=d.get("notes", ""),
+            created_at=d.get("created_at", ""),
         )

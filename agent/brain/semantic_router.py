@@ -68,6 +68,21 @@ _INTENTS: dict[str, list[str]] = {
         "oprav bug", "refaktoruj", "vytvor modul",
         "pridaj funkciu", "debug", "napíš test",
     ],
+    "work_search": [
+        "nájdi mi prácu", "hľadaj prácu", "je nejaká práca",
+        "čo je na obolose", "find work", "any jobs",
+        "zapoj sa do práce", "začni pracovať", "chcem zarábať",
+        "najdi robotu", "hladaj pracu", "sú nejaké joby",
+        "pozri obolos", "show listings", "browse jobs",
+        "zapoj sa do nejakej prace", "najdi si pracu",
+    ],
+    "work_status": [
+        "prihlásil si sa", "bidoval si", "stav bidov",
+        "koľko bidov", "stav práce", "aký je stav mojich bidov",
+        "did you apply", "bid status", "did you bid",
+        "koľko si zarobil", "zarobil si niečo", "earnings",
+        "marketplace report", "stav marketplace",
+    ],
 }
 
 # Threshold for confident match

@@ -178,6 +178,7 @@ def setup_tiered_logging(
     for h in list(root.handlers):
         if isinstance(h, _TierRouter):
             root.removeHandler(h)
+            h.close()  # release underlying file handles
         elif isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
             root.removeHandler(h)
     root.addHandler(router)
@@ -209,6 +210,8 @@ def setup_tiered_logging(
 SECRET_PATTERNS = {
     "api_key", "api_secret", "password", "token", "secret",
     "private_key", "credential", "auth", "bearer",
+    "wallet_address", "wallet_addr", "eth_address", "btc_address",
+    "account_address",
 }
 
 # Regex patterns for secrets that may appear as free text in string values
@@ -218,6 +221,8 @@ _FREE_TEXT_SECRET_PATTERNS = (
     _re.compile(r"(sk-ant-)[a-zA-Z0-9_-]{10,}"),
     _re.compile(r"(sk-)[a-zA-Z0-9_-]{10,}"),
     _re.compile(r"(agent_api_)[a-zA-Z0-9_-]{10,}"),
+    # Ethereum / EVM addresses (0x + 40 hex)
+    _re.compile(r"(0x)[a-fA-F0-9]{40}\b"),
 )
 
 

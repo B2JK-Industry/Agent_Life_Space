@@ -603,6 +603,13 @@ class AgentBrain:
 
         await self._auto_update_skills(reply)
 
+        # ── Layer 8.5: Marketplace rescue ──
+        # If the LLM made excuses about tools/access for a marketplace-related
+        # question, replace its answer with a real deterministic handler call.
+        # This catches the case where intent regex didn't fire but the question
+        # was clearly about work/bids/marketplace activity.
+        reply = await self._rescue_marketplace_excuse(text, reply)
+
         # NOTE: in-RAM buffer + persistent_conv save are now handled
         # by `_finalize_reply` which the top-level `process()` wrapper
         # invokes for every reply path (intents, dispatcher, cache,
@@ -982,6 +989,12 @@ class AgentBrain:
             if intent == telegram_intents.WEB_ACCESS_CAPABILITY:
                 return telegram_intents.handle_web_access_capability()
 
+            if intent == telegram_intents.WORK_STATUS:
+                return await telegram_intents.handle_work_status(self._agent)
+
+            if intent == telegram_intents.WORK_SEARCH:
+                return await telegram_intents.handle_work_search(self._agent)
+
             if intent == telegram_intents.SELF_UPDATE_QUESTION:
                 return telegram_intents.handle_self_update_question()
 
@@ -1080,6 +1093,59 @@ class AgentBrain:
             except Exception:
                 pass
         return self._learner
+
+    # ── Marketplace rescue keywords ──
+    _MARKETPLACE_QUESTION_SIGNALS = frozenset({
+        "prácu", "pracu", "prác", "prac", "job", "jobs", "bid", "bids",
+        "obolos", "marketplace", "listing", "ponuk", "ponúk",
+        "prihlás", "prihlas", "zarob", "zarábať", "zarabat",
+        "work", "gig", "earning",
+        "x402", "api", "apis", "obrázok", "obrazok", "image",
+        "scraping", "služby", "sluzby",
+    })
+    _EXCUSE_SIGNALS = frozenset({
+        "nemôžem", "nemozem", "nedokážem", "nedokazem",
+        "nemám prístup", "nemam pristup", "bez prístupu",
+        "tool execution", "tools", "nie som schopný",
+        "can't", "cannot", "unable", "no access",
+        "vypnutý", "vypnuty", "disabled",
+    })
+
+    async def _rescue_marketplace_excuse(self, question: str, reply: str) -> str:
+        """Replace LLM excuses with real marketplace data for work-related questions.
+
+        If the LLM said "I can't" for a marketplace question, we know that's
+        wrong — /marketplace commands work in sandbox mode. Replace the excuse
+        with a deterministic handler call.
+        """
+        q_lower = question.lower()
+        r_lower = reply.lower()
+
+        # Is the question about work/marketplace?
+        q_relevant = any(sig in q_lower for sig in self._MARKETPLACE_QUESTION_SIGNALS)
+        if not q_relevant:
+            return reply
+
+        # Is the reply an excuse?
+        r_excuse = any(sig in r_lower for sig in self._EXCUSE_SIGNALS)
+        if not r_excuse:
+            return reply
+
+        logger.warning("marketplace_excuse_rescued",
+                       question=question[:80], excuse_snippet=reply[:100])
+
+        # Decide: status question or search question?
+        from agent.brain import telegram_intents
+        status_signals = {"prihlás", "prihlas", "bidoval", "stav", "status", "did you", "have you"}
+        is_status = any(sig in q_lower for sig in status_signals)
+
+        try:
+            if is_status:
+                return await telegram_intents.handle_work_status(self._agent)
+            return await telegram_intents.handle_work_search(self._agent)
+        except Exception:
+            logger.exception("marketplace_rescue_handler_failed")
+            return reply
 
     async def _auto_update_skills(self, reply: str) -> None:
         """Scan reply for evidence of skill usage and auto-update skills.json."""

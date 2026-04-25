@@ -78,6 +78,8 @@ WORKFLOW_INVENTORY = "workflow_inventory"  # "aké workflowy máš aktívne?"
 MEDIUM_REASONING = "medium_reasoning"  # "what is still missing for X?"
 WEATHER_REPORT_SETUP = "weather_report_setup"  # "every morning send me weather in X"
 WEATHER_REPORT_CITY_REPLY = "weather_report_city_reply"  # plain city after follow-up
+WORK_SEARCH = "work_search"  # "nájdi mi prácu", "čo je na obolose?", "find work"
+WORK_STATUS = "work_status"  # "prihlásil si sa?", "bidoval si?", "stav bidu"
 
 
 @dataclass
@@ -772,6 +774,44 @@ _MEDIUM_REASONING_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(ako|how)\s+(by\s+si|would\s+you)\s+.{0,20}(rozdelil|split|stage|decompos)", re.IGNORECASE),
 )
 
+# Work search — "nájdi mi prácu", "čo je na obolose?", "find me work"
+# Triggers a live scan of Obolos marketplace listings so the operator
+# can pick one and approve a bid. Covers both Slovak and English.
+_WORK_SEARCH_REGEXES: tuple[re.Pattern[str], ...] = (
+    # Slovak: "nájdi mi prácu", "hľadaj prácu", "je nejaká práca?"
+    re.compile(r"\b(nájdi|najdi|hľadaj|hladaj|vyhľadaj|vyhladaj)\s+.{0,10}(prác|prac|job|rob)", re.IGNORECASE),
+    re.compile(r"\b(je|sú|su|máš|mas)\s+.{0,15}(prác|prac|job|listing|ponuk)", re.IGNORECASE),
+    re.compile(r"\b(čo|co)\s+(je|sú|su)\s+.{0,10}(na\s+)?obolos", re.IGNORECASE),
+    re.compile(r"\b(ukáž|ukaz|pozri|prehľadaj|prehladaj)\s+.{0,10}(obolos|marketplace|listing)", re.IGNORECASE),
+    re.compile(r"\b(vieš|viete|skúsiš|skusis)\s+.{0,15}(nájsť|najst|hľadať|hladat)\s+.{0,10}(prác|prac|job|rob)", re.IGNORECASE),
+    # English: "find me work", "any jobs?", "what's on obolos?"
+    re.compile(r"\b(find|search|look\s+for|scan|browse)\s+.{0,10}(work|job|listing|gig)", re.IGNORECASE),
+    re.compile(r"\b(any|what)\s+.{0,10}(jobs?|listings?|work|gigs?)\s+.{0,10}(on|available|open)", re.IGNORECASE),
+    re.compile(r"\bwhat.{0,10}(on|at)\s+obolos", re.IGNORECASE),
+    re.compile(r"\b(show|list|check)\s+.{0,10}(open|available)\s+.{0,10}(listing|job|work)", re.IGNORECASE),
+    # Action: "zapoj sa do práce", "začni pracovať", "chcem zarábať"
+    re.compile(r"\b(zapoj|zapojit)\s+sa\s+.{0,20}(prác|prac|rob|job|listing)", re.IGNORECASE),
+    re.compile(r"\b(začni|zacni|start|pusť sa|pust sa)\s+.{0,10}(pracov|prac|rob|zaráb|zarab|hľad|hlad)", re.IGNORECASE),
+    re.compile(r"\b(chcem|chci)\s+.{0,10}(zaráb|zarab|pracov|rob|job|zarob)", re.IGNORECASE),
+    # Minimal: "práca?", "jobs?", "obolos?"
+    re.compile(r"^\s*(obolos|marketplace)\s*\??\s*$", re.IGNORECASE),
+)
+
+# Work status — "prihlásil si sa?", "bidoval si?", "stav mojich bidov"
+# Questions about marketplace activity — bids, jobs, applications.
+_WORK_STATUS_REGEXES: tuple[re.Pattern[str], ...] = (
+    # Slovak: "prihlásil si sa?", "bidoval si?", "poslal si ponuku?"
+    re.compile(r"\b(prihlásil|prihlasil|bidoval|ponúkol|ponukol|poslal)\s+(si|som)\s+(sa\s+)?(o|na|k)?\b", re.IGNORECASE),
+    re.compile(r"\b(stav|status)\s+.{0,15}(bid|ponuk|prác|prac|job|prihláš|prihlas)\b", re.IGNORECASE),
+    re.compile(r"\b(aký|aky|jaky|jaký)\s+(je\s+)?(stav|status).{0,15}(bid|ponuk|prihláš|prihlas|prác|prac)\b", re.IGNORECASE),
+    re.compile(r"\b(koľko|kolko)\s+(bidov|ponúk|ponuk|prihlásení|prihlaseni)\b", re.IGNORECASE),
+    # English: "did you bid?", "did you apply?", "bid status?"
+    re.compile(r"\bdid\s+you\s+(bid|apply|submit|send)\b", re.IGNORECASE),
+    re.compile(r"\bhave\s+you\s+(bid|applied|submitted|sent)\b", re.IGNORECASE),
+    re.compile(r"\b(bid|application|submission)\s+status\b", re.IGNORECASE),
+    re.compile(r"\b(my|your)\s+(bids?|applications?|submissions?)\b", re.IGNORECASE),
+)
+
 # Review request — "sprav review", "urob code review", "review this repo"
 _REVIEW_REQUEST_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(sprav|urob|run|do)\s+.{0,10}review\b", re.IGNORECASE),
@@ -1027,6 +1067,14 @@ def detect_intent(text: str) -> IntentMatch | None:
     if _matches_any(stripped, _PROJECT_DECOMPOSITION_REGEXES):
         return IntentMatch(intent=PROJECT_DECOMPOSITION, payload={})
 
+    # 13.11. Work status — "prihlásil si sa?", "bidoval si?", "stav bidov"
+    if _matches_any(stripped, _WORK_STATUS_REGEXES):
+        return IntentMatch(intent=WORK_STATUS, payload={})
+
+    # 13.12. Work search — "nájdi mi prácu", "čo je na obolose?", "find work"
+    if _matches_any(stripped, _WORK_SEARCH_REGEXES):
+        return IntentMatch(intent=WORK_SEARCH, payload={})
+
     # 14. Skills query.
     if _matches_any(stripped, _SKILLS_REGEXES):
         return IntentMatch(intent=SKILLS, payload={})
@@ -1151,6 +1199,7 @@ def handle_capability() -> str:
         "  • Conversation + memory (per-chat history, persistent SQLite, RAG)\n"
         "  • Code review (`/review <path>`) — deterministic pipeline with artifacts\n"
         "  • Build pipeline (`/build <task>`) — codegen → Docker sandbox → verification\n"
+        "  • Marketplace earning (`/marketplace`) — find work on obolos.tech, bid, submit deliverables\n"
         "  • Web read (`/web <url>` or natural language)\n"
         "  • Project tracking (`/projects`) — link jobs to long-running initiatives\n"
         "  • Recurring workflows (`/workflow`) — scheduled review/build jobs\n"
@@ -2040,6 +2089,203 @@ def handle_weather_report_setup(city: str, agent: Any) -> str:
     return "\n".join(lines)
 
 
+async def handle_work_status(agent: Any) -> str:
+    """Show current marketplace bid/job activity — real data only.
+
+    Answers "prihlásil si sa?", "bidoval si?", "stav bidov".
+    Never fabricates. Pulls from local SQLite persistence.
+    """
+    mkt = getattr(agent, "marketplace", None)
+    if mkt is None:
+        return "Marketplace nie je inicializovaný."
+
+    try:
+        bids = await mkt.list_bids(limit=20)
+    except Exception:
+        bids = []
+    try:
+        outcomes = await mkt.list_outcomes(limit=20)
+    except Exception:
+        outcomes = []
+
+    if not bids and not outcomes:
+        return (
+            "Zatiaľ žiadna marketplace aktivita — žiadne bidy ani joby.\n"
+            "Použi `/marketplace listings` alebo sa opýtaj *nájdi mi prácu*."
+        )
+
+    lines = ["📊 *Stav marketplace aktivity:*", ""]
+
+    if bids:
+        by_status: dict[str, int] = {}
+        for b in bids:
+            by_status[b.status.value] = by_status.get(b.status.value, 0) + 1
+        status_parts = [f"{count}× {status}" for status, count in sorted(by_status.items())]
+        lines.append(f"🏷 *Bidy:* {len(bids)} celkom ({', '.join(status_parts)})")
+
+        # Show last 3 bids with detail
+        for b in bids[:3]:
+            opp = None
+            try:
+                opp = await mkt.get_opportunity(b.opportunity_id)
+            except Exception:
+                pass
+            title = opp.title[:40] if opp else b.title[:40]
+            lines.append(f"  `{b.id[:8]}` {b.status.value} ${b.price_usd:.2f} — {title}")
+
+    if outcomes:
+        by_status_o: dict[str, int] = {}
+        for o in outcomes:
+            by_status_o[o.status.value] = by_status_o.get(o.status.value, 0) + 1
+        parts = [f"{c}× {s}" for s, c in sorted(by_status_o.items())]
+        lines.append(f"\n📈 *Outcomes:* {len(outcomes)} ({', '.join(parts)})")
+        revenue = sum(o.revenue_amount or 0 for o in outcomes if o.revenue_amount)
+        if revenue:
+            lines.append(f"💰 Revenue: ${revenue:.2f}")
+
+    lines.extend([
+        "",
+        "`/marketplace bids` — detail bidov",
+        "`/marketplace report` — kompletný report",
+        "`/marketplace listings` — hľadať novú prácu",
+    ])
+
+    return "\n".join(lines)
+
+
+async def handle_work_search(agent: Any) -> str:
+    """Scan Obolos marketplace (regular + ANP) and proactively propose bids.
+
+    Instead of just showing a passive menu, John:
+    1. Scans both regular listings AND ANP listings
+    2. Filters to open, unbid, feasible ones
+    3. Auto-prepares bid drafts for the best matches
+    4. Presents them with /yes to approve or /no to skip
+
+    The operator sees concrete proposals, not a catalog.
+    """
+    mkt = getattr(agent, "marketplace", None)
+    if mkt is None:
+        return (
+            "Marketplace nie je inicializovaný. "
+            "Skontroluj `/status` alebo reštartuj agenta."
+        )
+
+    # Scan both regular and ANP listings
+    all_listings: list[Any] = []
+    try:
+        regular = await mkt.list_listings(platform="obolos.tech", limit=10)
+        all_listings.extend(regular)
+    except Exception:
+        logger.warning("work_search_regular_failed")
+
+    connector = mkt.registry.get("obolos.tech")
+    if connector and hasattr(connector, "list_anp_listings"):
+        try:
+            anp = await connector.list_anp_listings(mkt._gateway, limit=10)
+            all_listings.extend(anp)
+        except Exception:
+            logger.warning("work_search_anp_failed")
+
+    # Filter: open only
+    open_listings = [
+        o for o in all_listings
+        if str(o.raw_data.get("status", "")).strip().lower() == "open"
+    ]
+
+    if not open_listings:
+        return (
+            "Momentálne nie sú žiadne otvorené ponuky na Obolos.tech.\n"
+            "Skenujme každých 6h — upozorním ťa keď sa niečo objaví."
+        )
+
+    # Filter: skip already-bid
+    try:
+        existing_bids = await mkt.list_bids(limit=200)
+    except Exception:
+        existing_bids = []
+    bid_opp_ids = {b.opportunity_id for b in existing_bids}
+    new_listings = [o for o in open_listings if o.id not in bid_opp_ids]
+
+    if not new_listings:
+        bid_count = len([b for b in existing_bids if b.status.value in ("submitted", "ready", "draft")])
+        return (
+            f"Všetky otvorené listings už mám pokryté ({bid_count} aktívnych bidov).\n"
+            f"Čakám na akceptáciu od klientov.\n"
+            f"`/marketplace bids` — stav bidov\n"
+            f"`/marketplace report` — kompletný prehľad"
+        )
+
+    # Evaluate and pick the best new opportunities
+    proposals: list[tuple[Any, Any]] = []  # (opp, evaluation)
+    for opp in new_listings:
+        try:
+            biddable, reason = mkt.get_listing_bid_eligibility(opp)
+            if not biddable:
+                continue
+            ev = mkt.evaluate(opp)
+            if ev.verdict.value != "infeasible":
+                proposals.append((opp, ev))
+        except Exception:
+            continue
+
+    if not proposals:
+        return (
+            f"Našiel som {len(new_listings)} nových listings, "
+            f"ale žiadny nie je v mojich schopnostiach alebo je zablokovaný.\n"
+            f"`/marketplace listings` — celý zoznam"
+        )
+
+    # Sort: feasible first, then by budget desc
+    proposals.sort(key=lambda x: (
+        0 if x[1].verdict.value == "feasible" else 1,
+        -(x[0].budget_max or 0),
+    ))
+
+    # Auto-prepare bids for top proposals
+    lines = ["🔍 *Našiel som prácu na Obolose!*", ""]
+    prepared_count = 0
+
+    for opp, ev in proposals[:3]:
+        budget = f"${opp.budget_max:.2f}" if opp.budget_max else "?"
+        verdict_emoji = "✅" if ev.verdict.value == "feasible" else "🟡"
+        is_anp = "/anp/" in (opp.url or "")
+
+        lines.append(f"📋 *{opp.title[:55]}* — {budget} USDC")
+        if opp.description:
+            lines.append(f"   _{opp.description[:100]}_")
+        lines.append(f"   {verdict_emoji} {ev.verdict.value} ({ev.confidence:.0%})")
+
+        # Auto-prepare bid
+        try:
+            bid = mkt.prepare_bid(opp, ev)
+            await mkt._persist_bid(bid)
+            await mkt._persist_opportunity(opp)
+
+            if is_anp:
+                # ANP bids go directly, no approval needed for draft
+                lines.append(f"   💰 Navrhovaná cena: ${bid.price_usd:.2f}")
+                lines.append(f"   `/marketplace submit {bid.id[:12]}` → potom `/yes`")
+            else:
+                lines.append(f"   💰 Navrhovaná cena: ${bid.price_usd:.2f}")
+                lines.append(f"   `/marketplace submit {bid.id[:12]}` → potom `/yes`")
+            prepared_count += 1
+        except Exception:
+            lines.append(f"   `/marketplace bid {opp.id[:12]}` — pripraviť manuálne")
+        lines.append("")
+
+    if prepared_count:
+        lines.append(f"Pripravil som {prepared_count} ponúk. Pošli ich cez `/marketplace submit <id>` a potom `/yes`.")
+    else:
+        lines.append("Vyber si z ponúk vyššie a použi `/marketplace bid <id>`.")
+
+    remaining = len(proposals) - 3
+    if remaining > 0:
+        lines.append(f"_(+ {remaining} ďalších — `/marketplace listings`)_")
+
+    return "\n".join(lines)
+
+
 def handle_comparison(subject: str, agent: Any) -> str:
     """Fail-safe comparison handler.
 
@@ -2156,4 +2402,6 @@ __all__ = [
     "handle_web_access_capability",
     "handle_web_monitor_capability",
     "handle_web_open",
+    "handle_work_search",
+    "handle_work_status",
 ]

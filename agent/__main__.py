@@ -68,8 +68,69 @@ def _apply_runtime_env_defaults(data_dir: str) -> None:
     os.environ.update({"AGENT_DATA_DIR": data_dir})
 
 
+def _kill_orphan_agent_processes() -> int:
+    """Kill any stray `python -m agent` processes left from prior failed runs.
+
+    Bug pozorovaný 2× v praxi: po failed restart-e zostal v `ps` orphan PID
+    bez pidfile (parent=1). Nový proces stále spadol kvôli Telegram getUpdates
+    conflict (dvaja pollers). Tento helper preventívne kill-ne všetky orphan
+    `python -m agent` procesy okrem aktuálneho PIDu.
+
+    Bezpečné: kill iba procesy bežiace pod rovnakým UID + matchujúce CMD.
+    Returns count of killed processes.
+    """
+    import signal as _signal
+    import subprocess as _subprocess
+
+    my_pid = os.getpid()
+    killed = 0
+    try:
+        # Find all python processes running `agent` module (or `python -m agent`)
+        result = _subprocess.run(
+            ["pgrep", "-fu", str(os.getuid()), "python -m agent"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.strip().splitlines():
+            try:
+                pid = int(line.strip())
+                if pid == my_pid:
+                    continue
+                # Re-verify it's truly an agent process (not pgrep itself)
+                with open(f"/proc/{pid}/cmdline", "rb") as f:
+                    cmdline = f.read().decode(errors="replace")
+                if "python" not in cmdline or "agent" not in cmdline:
+                    continue
+                logger.warning(
+                    "killing_orphan_agent_process", pid=pid, cmdline=cmdline[:100]
+                )
+                os.kill(pid, _signal.SIGTERM)
+                killed += 1
+            except (ProcessLookupError, FileNotFoundError, ValueError, PermissionError):
+                continue
+    except (FileNotFoundError, _subprocess.TimeoutExpired):
+        # pgrep nedostupný (non-Linux) alebo timeout — skip silently
+        pass
+
+    if killed:
+        # Daj orphans 2s na clean shutdown
+        import time as _time
+        _time.sleep(2)
+    return killed
+
+
 def _check_pidfile() -> None:
-    """Prevent duplicate agent instances. Fail-fast if already running."""
+    """Prevent duplicate agent instances. Fail-fast if already running.
+
+    Pred check-om PIDfilu zabíja orphan agent procesy bez pidfile. Toto rieši
+    častý failure mode kde systemd reštart agenta zlyhá kvôli Telegram getUpdates
+    conflict s previous orphan instance.
+    """
+    # POZN: _kill_orphan_agent_processes() bolo dočasne vypnuté — spôsobilo
+    # restart bomb (každý nový daemon zabil predchádzajúci → systemd restart loop).
+    # Lepšie: spustenie cez systemd s `KillMode=process` a manuálny kill <pid>
+    # pri orphan situácii. Refactor neskôr.
+    # _kill_orphan_agent_processes()
+
     if os.path.exists(PIDFILE):
         try:
             with open(PIDFILE) as _pf:
