@@ -49,6 +49,35 @@ COMPACT_AFTER_STEPS = 5
 # Maximálna dĺžka jedného summary v compactnutom bloku (chars)
 COMPACT_SUMMARY_CHAR_LIMIT = 800
 
+# Cost prediction (USD per minute of estimated work, by step kind).
+# Kalibrované cez observované náklady V2/V3 iniciatív (~$0.10-0.20 per analyze
+# krok 5min, ~$0.05-0.10 per code krok 5min). Konzervatívne nahor.
+_COST_USD_PER_MIN_BY_KIND: dict[str, float] = {
+    "analyze": 0.04,   # research-heavy, viac turnov, väčší context
+    "design": 0.03,    # schema design + decision making
+    "code": 0.025,     # file edits, fewer LLM tokens per minute
+    "test": 0.02,      # test write + execution analysis
+    "verify": 0.015,   # rýchle judge calls
+    "deploy": 0.01,    # mostly tool execution
+    "schedule": 0.005, # 1 turn cron registration
+    "monitor": 0.005,  # no-op trigger
+    "notify": 0.005,   # 1 telegram send
+    "approval": 0.005, # 1 approval propose
+}
+
+
+def estimate_initiative_cost_usd(plan: "InitiativePlan") -> float:
+    """Konzervatívny odhad celkovej USD ceny iniciatívy podľa kind × estimated_minutes.
+
+    Použité pri start_initiative aby majiteľ videl "ťa to bude stáť ~$X" pred
+    spustením. Odhad je high-side (lepšie prekvapiť pozitívne).
+    """
+    total = 0.0
+    for step in plan.steps:
+        rate = _COST_USD_PER_MIN_BY_KIND.get(step.kind.value, 0.02)
+        total += step.estimated_minutes * rate
+    return round(total, 2)
+
 
 class InitiativeEngine:
     """Orchestrátor iniciatív — spája planner, executor a perzistentné stavové moduly."""
@@ -178,6 +207,7 @@ class InitiativeEngine:
             long_running=plan.is_long_running,
         )
 
+        cost_usd = estimate_initiative_cost_usd(plan)
         return {
             "initiative_id": project.id,
             "title": proj_name,
@@ -185,6 +215,8 @@ class InitiativeEngine:
             "steps_total": len(plan.steps),
             "is_long_running": plan.is_long_running,
             "task_ids": list(idx_to_task_id.values()),
+            "estimated_cost_usd": cost_usd,
+            "estimated_total_minutes": plan.estimated_total_minutes,
         }
 
     async def pause(self, initiative_id: str) -> bool:

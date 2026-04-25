@@ -3467,12 +3467,15 @@ class TelegramHandler:
             )
         except Exception as exc:  # noqa: BLE001
             return f"❌ Plánovanie zlyhalo: `{exc!s}`[:300]"
+        cost = info.get("estimated_cost_usd", 0.0)
+        mins = info.get("estimated_total_minutes", 0)
         return (
             f"🚀 *Iniciatíva spustená*\n\n"
             f"`{info['initiative_id']}` — {info['title'][:80]}\n"
             f"Pattern: `{info['pattern']}`\n"
             f"Krokov: {info['steps_total']}\n"
-            f"Long-running: {info['is_long_running']}\n\n"
+            f"Long-running: {info['is_long_running']}\n"
+            f"Odhad: ~{mins} min, ~${cost:.2f} USD\n\n"
             f"Driver beží na pozadí (~30s tick). Status: `/initiative {info['initiative_id']}`"
         )
 
