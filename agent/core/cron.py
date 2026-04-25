@@ -42,6 +42,30 @@ class AgentCron:
         self._running = False
         self._tasks: list[asyncio.Task[Any]] = []
         self._marketplace_lock = asyncio.Lock()
+        # Persistent notification dedup — lazy init pri prvom použití
+        self._dedup: Any = None
+        self._dedup_init_lock = asyncio.Lock()
+
+    def _notification_dedup(self) -> Any:
+        """Vracia singleton NotificationDedup. Lazy init."""
+        return self._dedup
+
+    async def _ensure_dedup(self) -> None:
+        if self._dedup is not None:
+            return
+        async with self._dedup_init_lock:
+            if self._dedup is not None:
+                return
+            from agent.core.notification_dedup import NotificationDedup
+            data_dir = getattr(self._agent, "_data_dir", None)
+            if data_dir is None:
+                from pathlib import Path
+                data_dir = Path("agent")
+            cron_dir = data_dir / "cron"
+            cron_dir.mkdir(parents=True, exist_ok=True)
+            dedup = NotificationDedup(db_path=str(cron_dir / "notifications.db"))
+            await dedup.initialize()
+            self._dedup = dedup
 
     async def start(self) -> None:
         if self._running:
@@ -580,9 +604,10 @@ class AgentCron:
     async def _marketplace_monitor_loop(self) -> None:
         """Scan Obolos marketplace for new opportunities every N hours.
 
-        Zero LLM tokens. Deterministic scan + Telegram delivery.
+        Zero LLM tokens. Deterministic scan + Telegram delivery (with dedup).
         """
         await asyncio.sleep(120)  # let agent settle
+        await self._ensure_dedup()
         while self._running:
             try:
                 async with self._marketplace_lock:
@@ -687,15 +712,33 @@ class AgentCron:
 
         report = "\n".join(lines)
 
-        # Deliver via Telegram (use self._bot, not self._agent.telegram)
-        if self._bot and self._owner_chat_id:
-            try:
-                await self._bot.send_message(self._owner_chat_id, report)
-                logger.info("cron_marketplace_report_sent", listings=len(listings), fresh=len(fresh))
-            except Exception:
-                logger.warning("cron_marketplace_telegram_send_failed")
-        else:
+        # Deliver via Telegram — IBA ak je niečo akcionovateľné nové.
+        # Predtým bol report posielaný každých ~10 min bez ohľadu na obsah,
+        # spamoval Telegram aj keď nič nové nebolo. Nový princíp:
+        # 1. fresh listings musia byť > 0 (nezasielame "no fresh listings"),
+        # 2. dedup-key je hash množiny fresh platform_id (ak rovnaký set ako naposledy → skip),
+        # 3. fallback TTL 24h aby aspoň raz denne pripomenulo aktívne listings.
+        if not (self._bot and self._owner_chat_id):
             logger.info("cron_marketplace_report_no_telegram", report_length=len(report))
+        elif not fresh:
+            logger.info("cron_marketplace_report_skipped_empty",
+                        listings=len(listings), fresh=0)
+        else:
+            dedup = self._notification_dedup()
+            fresh_ids_key = ",".join(sorted(o.platform_id for o in fresh))[:200]
+            sent = await dedup.send_once(
+                bot=self._bot,
+                chat_id=self._owner_chat_id,
+                text=report,
+                dedup_key=f"marketplace_report:{fresh_ids_key}",
+                ttl_hours=24,
+            )
+            if sent:
+                logger.info("cron_marketplace_report_sent",
+                            listings=len(listings), fresh=len(fresh))
+            else:
+                logger.info("cron_marketplace_report_deduped",
+                            listings=len(listings), fresh=len(fresh))
 
         # ── Proactive scouting: auto-evaluate + auto-bid for matching listings ──
         await self._auto_scout_listings(mkt, fresh)
@@ -1054,8 +1097,19 @@ class AgentCron:
             ])
 
         msg = "\n".join(lines)
+        # Dedup new-job notification: 1× per job_id, ttl 7 days (job lifetime)
+        dedup = self._notification_dedup()
+        if dedup is None:
+            await self._ensure_dedup()
+            dedup = self._notification_dedup()
         try:
-            await self._bot.send_message(self._owner_chat_id, msg)
+            await dedup.send_once(
+                bot=self._bot,
+                chat_id=self._owner_chat_id,
+                text=msg,
+                dedup_key=f"new_job:{job_id}",
+                ttl_hours=168,  # 7 days
+            )
         except Exception:
             logger.warning("cron_new_job_telegram_failed")
 
@@ -1152,13 +1206,23 @@ class AgentCron:
                 retry_jobs[job_id] = retry_count
                 setattr(self, self._RETRY_JOB_IDS_KEY, retry_jobs)
                 if self._bot and self._owner_chat_id:
+                    # Dedup: 1 alert per job_id per 24h (retries sa logujú, ale Telegram NIE).
+                    dedup = self._notification_dedup()
+                    if dedup is None:
+                        await self._ensure_dedup()
+                        dedup = self._notification_dedup()
                     try:
-                        await self._bot.send_message(
-                            self._owner_chat_id,
-                            f"⚠️ *Auto-work submit zlyhal (retry {retry_count}/{self._MAX_JOB_RETRIES}):*\n"
-                            f"Job ID: `{job_id}`\n"
-                            f"Error: {error[:150]}\n"
-                            f"Skúsim znova pri ďalšom scane.",
+                        await dedup.send_once(
+                            bot=self._bot,
+                            chat_id=self._owner_chat_id,
+                            text=(
+                                f"⚠️ *Auto-work submit zlyhal:*\n"
+                                f"Job ID: `{job_id}`\n"
+                                f"Error: {error[:150]}\n"
+                                f"Retries pokračujú ticho, ďalší alert len pri novej chybe alebo úspechu."
+                            ),
+                            dedup_key=f"auto_work_failed:{job_id}",
+                            ttl_hours=24,
                         )
                     except Exception:
                         pass
@@ -1170,12 +1234,21 @@ class AgentCron:
             retry_jobs[job_id] = retry_jobs.get(job_id, 0) + 1
             setattr(self, self._RETRY_JOB_IDS_KEY, retry_jobs)
             if self._bot and self._owner_chat_id:
+                dedup = self._notification_dedup()
+                if dedup is None:
+                    await self._ensure_dedup()
+                    dedup = self._notification_dedup()
                 try:
-                    await self._bot.send_message(
-                        self._owner_chat_id,
-                        f"❌ *Auto-work zlyhal:*\n"
-                        f"Job ID: `{job_id}`\n"
-                        f"Chyba v pipeline. Použi `/marketplace job-submit {job_id[:12]}` manuálne.",
+                    await dedup.send_once(
+                        bot=self._bot,
+                        chat_id=self._owner_chat_id,
+                        text=(
+                            f"❌ *Auto-work zlyhal:*\n"
+                            f"Job ID: `{job_id}`\n"
+                            f"Chyba v pipeline. Použi `/marketplace job-submit {job_id[:12]}` manuálne."
+                        ),
+                        dedup_key=f"auto_work_fatal:{job_id}",
+                        ttl_hours=24,
                     )
                 except Exception:
                     pass
@@ -1300,15 +1373,24 @@ class AgentCron:
         api_price = best_api.get("price", "?")
 
         if self._bot and self._owner_chat_id:
+            dedup = self._notification_dedup()
+            if dedup is None:
+                await self._ensure_dedup()
+                dedup = self._notification_dedup()
             try:
-                await self._bot.send_message(
-                    self._owner_chat_id,
-                    f"🔄 *Našiel som x402 sub-contractor pre job:*\n"
-                    f"Job: `{job_id[:12]}` — {title[:50]}\n"
-                    f"API: *{api_name}* (cena: {api_price})\n\n"
-                    f"Toto by stálo USDC. Chceš aby som to zavolal?\n"
-                    f"  `/yes` — zavolaj API a odošli výsledok\n"
-                    f"  `/no` — odmietni job",
+                await dedup.send_once(
+                    bot=self._bot,
+                    chat_id=self._owner_chat_id,
+                    text=(
+                        f"🔄 *Našiel som x402 sub-contractor pre job:*\n"
+                        f"Job: `{job_id[:12]}` — {title[:50]}\n"
+                        f"API: *{api_name}* (cena: {api_price})\n\n"
+                        f"Toto by stálo USDC. Chceš aby som to zavolal?\n"
+                        f"  `/yes` — zavolaj API a odošli výsledok\n"
+                        f"  `/no` — odmietni job"
+                    ),
+                    dedup_key=f"subcontract_found:{job_id}:{api_name[:30]}",
+                    ttl_hours=24,
                 )
             except Exception:
                 pass
