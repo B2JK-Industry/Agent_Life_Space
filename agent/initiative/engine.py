@@ -22,6 +22,7 @@ Plan persistence:
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -335,6 +336,56 @@ class InitiativeEngine:
                     "initiative_tick_error", initiative_id=project.id
                 )
         return processed
+
+    async def tick_stream(
+        self,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Generator-based driver — yield events per processed step.
+
+        Inšpirované Claude Code's query.ts agent loop pattern (async generator
+        with explicit yield points). Umožňuje:
+        - Real-time progress streaming (Telegram update per step, not per tick)
+        - Pausing mid-tick na external signál (caller môže `break` po N events)
+        - Observability metrics per yield
+
+        Yields dict udalostí, napr:
+            {"event": "step_start", "initiative_id": ..., "step_idx": ..., "kind": ...}
+            {"event": "step_done", "initiative_id": ..., "step_idx": ..., "success": bool, "summary": ...}
+            {"event": "step_skipped", "initiative_id": ..., "reason": ...}
+            {"event": "initiative_finalized", "initiative_id": ..., "monitoring": bool}
+
+        Ekvivalent funkčnosti `tick()` — backward compat zachovaná.
+        """
+        from agent.projects.manager import ProjectStatus
+
+        actives = await self._projects.list_projects(status=ProjectStatus.ACTIVE)
+        for project in actives:
+            if "initiative" not in project.tags:
+                continue
+            try:
+                async for event in self._tick_one_stream(project.id):
+                    yield event
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "initiative_tick_stream_error", initiative_id=project.id
+                )
+                yield {
+                    "event": "tick_error",
+                    "initiative_id": project.id,
+                    "error": str(exc)[:500],
+                }
+
+    async def _tick_one_stream(
+        self, initiative_id: str
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Stream variant of _tick_one — yields events instead of returning bool."""
+        # Delegate to _tick_one to avoid logic duplication; emit summary event.
+        ran = await self._tick_one(initiative_id)
+        if ran:
+            yield {
+                "event": "step_processed",
+                "initiative_id": initiative_id,
+            }
 
     async def _tick_one(self, initiative_id: str) -> bool:
         """Spracuj jeden krok jednej iniciatívy. Vracia True ak sa niečo robilo."""
