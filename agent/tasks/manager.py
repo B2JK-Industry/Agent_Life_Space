@@ -178,6 +178,43 @@ class TaskManager:
             await self._db.close()
             self._db = None
 
+    async def refresh_from_db(self) -> int:
+        """Reload tasks from DB — picks up tasks added by external processes.
+
+        Pre cron driver loops keď InitiativeEngine.start_initiative() pridá
+        nové tasks zvonku (napr. cez direct python script). Bez refresh by
+        TaskManager.get_task() vrátil None pre nové task IDs a driver by
+        ich preskočil.
+
+        Returns count of tasks loaded (vrátane existing — nie delta).
+        """
+        if not self._initialized or self._db is None:
+            return 0
+        loaded: dict[str, Task] = {}
+        async with self._db.execute("SELECT id, data FROM tasks") as cursor:
+            async for row in cursor:
+                data = orjson.loads(row[1])
+                t = Task.from_dict(data)
+                loaded[t.id] = t
+        added = len(loaded) - len(self._tasks)
+        # Replace tasks ktoré už neexistujú (cancelled externally) + add new ones.
+        # Existujúce in-memory tasks ktoré sú v DB necháme bez zmeny aby sme
+        # nestratili runtime stav (napr. just-completed task pred persist).
+        for tid, t in loaded.items():
+            if tid not in self._tasks:
+                self._tasks[tid] = t
+        # Optionally drop tasks that disappeared from DB (cancelled externally)
+        for tid in list(self._tasks.keys()):
+            if tid not in loaded:
+                del self._tasks[tid]
+        if added != 0:
+            logger.info(
+                "task_manager_refreshed",
+                total=len(loaded),
+                added=added,
+            )
+        return len(loaded)
+
     async def create_task(
         self,
         name: str,

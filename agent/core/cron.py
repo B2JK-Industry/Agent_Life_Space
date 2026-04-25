@@ -1425,6 +1425,15 @@ class AgentCron:
                     except Exception:  # noqa: BLE001
                         logger.exception("initiative_driver_bot_attach_failed")
 
+                # Refresh TaskManager pre prípad že InitiativeEngine.start_initiative()
+                # bola volaná zvonku (direct python script) a pridala nové tasks
+                # do DB ktoré in-memory cache ešte nevidí.
+                tm = getattr(self._agent, "tasks", None)
+                if tm is not None and hasattr(tm, "refresh_from_db"):
+                    try:
+                        await tm.refresh_from_db()
+                    except Exception:  # noqa: BLE001
+                        logger.exception("initiative_driver_refresh_failed")
                 processed = await engine.tick()
                 if processed:
                     logger.info("initiative_driver_processed", count=processed)

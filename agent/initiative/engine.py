@@ -187,6 +187,12 @@ class InitiativeEngine:
         }
 
     async def pause(self, initiative_id: str) -> bool:
+        """Pauses the initiative AND cancels any cron tasks it spawned.
+
+        Bez cancel cron-u by pause len zastavil driver-step exekúciu, ale
+        SCHEDULE krokom registrované TaskType.CRON tasks by ďalej spúšťali
+        scraper / monitor — pause-eutá iniciatíva by stále spamovala.
+        """
         from agent.projects.manager import ProjectStatus
 
         p = await self._projects.get(initiative_id)
@@ -194,6 +200,28 @@ class InitiativeEngine:
             return False
         p.status = ProjectStatus.PAUSED
         await self._projects.update(p)
+
+        # Cancel cron tasks linked to this initiative (created by SCHEDULE step)
+        cancelled: list[str] = []
+        for t in self._tasks.list_tasks():
+            meta = t.metadata or {}
+            if meta.get("initiative_id") != initiative_id:
+                continue
+            if t.task_type.value != "cron":
+                continue
+            if t.status.value in {"completed", "failed", "cancelled"}:
+                continue
+            try:
+                await self._tasks.cancel_task(t.id)
+                cancelled.append(t.id)
+            except Exception:  # noqa: BLE001
+                logger.exception("pause_cancel_cron_failed", task_id=t.id)
+        if cancelled:
+            logger.info(
+                "initiative_paused_cron_cancelled",
+                initiative_id=initiative_id,
+                cancelled_cron_tasks=len(cancelled),
+            )
         return True
 
     async def resume(self, initiative_id: str) -> bool:
