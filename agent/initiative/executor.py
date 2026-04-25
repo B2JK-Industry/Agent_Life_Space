@@ -305,13 +305,18 @@ class StepExecutor:
 
         from agent.core.llm_provider import GenerateRequest
 
+        # VERIFY krok môže potrebovať Read + Bash (ruff/mypy/pytest run) ak je
+        # description "Lint + type check + integračná verifikácia". Per-kind budget
+        # (4 turny pre VERIFY) namiesto hardcoded 1. Bash sandbox lockdown ignoruje
+        # — overuje sa cez Read na test outputs alebo agent-written log files.
+        verify_turns = self._turns_for(StepKind.VERIFY, attempt=1)
         response = await self._provider.generate(
             GenerateRequest(
                 messages=[{"role": "user", "content": prompt}],
                 model=self._model_id,
-                max_turns=1,
-                timeout=120,
-                allow_file_access=False,
+                max_turns=verify_turns,
+                timeout=180,
+                allow_file_access=True,  # may need to Read source files
                 cwd=self._project_root,
             )
         )
