@@ -421,16 +421,26 @@ class AgentCron:
                 logger.exception("cron_retention_pruning_error")
 
     async def _do_retention_pruning(self) -> None:
-        if not hasattr(self._agent, "control_plane"):
-            return
-        try:
-            pruned = self._agent.control_plane.prune_retained_artifacts(limit=5000)
-            if pruned:
-                logger.info("cron_retention_pruned", count=len(pruned))
-            else:
-                logger.info("cron_retention_pruned", count=0)
-        except Exception:
-            logger.exception("cron_retention_prune_error")
+        if hasattr(self._agent, "control_plane"):
+            try:
+                pruned = self._agent.control_plane.prune_retained_artifacts(limit=5000)
+                if pruned:
+                    logger.info("cron_retention_pruned", count=len(pruned))
+                else:
+                    logger.info("cron_retention_pruned", count=0)
+            except Exception:
+                logger.exception("cron_retention_prune_error")
+
+        # Prune dead notification dedup entries (older than 7 days).
+        # Bez prune by notification_log v cron/notifications.db rástla forever.
+        dedup = self._notification_dedup()
+        if dedup is not None:
+            try:
+                deleted = await dedup.prune_older_than(hours=168)
+                if deleted:
+                    logger.info("cron_notification_dedup_pruned", count=deleted)
+            except Exception:
+                logger.exception("cron_notification_dedup_prune_error")
 
     # --- Data Cleanup (nightly at ~00:00 UTC) ---
 

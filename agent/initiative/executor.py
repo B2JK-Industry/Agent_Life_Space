@@ -175,6 +175,69 @@ class StepExecutor:
             attempt=attempt,
         )
 
+    def _resolve_cwd(
+        self, initiative_id: str, step: PlannedStep
+    ) -> tuple[str, str | None]:
+        """Resolve cwd pre LLM call + optional workspace_id.
+
+        Coordinator Mode v1: Ak `step.metadata.coordinator=True`, vytvor izolovaný
+        workspace cez WorkspaceManager (ak je dostupný v environment) a pusť LLM
+        v ňom. Tým je file-write izolovaný — sub-agent nemôže omylom prepísať
+        agent core code, len modifikuje súbory v workspace.
+
+        Bez coordinator flag-u sa použije project_root (default behavior).
+        """
+        coordinator = bool((step.metadata or {}).get("coordinator", False))
+        if not coordinator:
+            return self._project_root, None
+
+        # Lazy import — workspace_manager je optional dependency
+        try:
+            from agent.work.workspace import WorkspaceManager
+        except ImportError:
+            logger.warning(
+                "coordinator_workspace_import_failed_fallback_to_project_root",
+                initiative_id=initiative_id,
+                step_idx=step.idx,
+            )
+            return self._project_root, None
+
+        # Use injected workspace_manager if available, else create transient
+        wm: WorkspaceManager | None = getattr(self, "_workspace_manager", None)
+        if wm is None:
+            try:
+                wm = WorkspaceManager()
+                wm.initialize()
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "coordinator_workspace_init_failed",
+                    initiative_id=initiative_id,
+                )
+                return self._project_root, None
+
+        try:
+            ws = wm.create(
+                name=f"initiative:{initiative_id}:step{step.idx}",
+                owner_id=initiative_id,
+                project_id=initiative_id,
+                task_id=f"step{step.idx}",
+            )
+            wm.activate(ws.id)
+            logger.info(
+                "coordinator_workspace_created",
+                initiative_id=initiative_id,
+                step_idx=step.idx,
+                workspace_id=ws.id,
+                path=ws.path,
+            )
+            return ws.path, ws.id
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "coordinator_workspace_create_failed",
+                initiative_id=initiative_id,
+            )
+            return self._project_root, None
+
     async def _handle_llm_step(
         self,
         *,
@@ -217,6 +280,7 @@ class StepExecutor:
         from agent.core.llm_provider import GenerateRequest
 
         turns = self._turns_for(step.kind, attempt)
+        cwd, workspace_id = self._resolve_cwd(initiative_id, step)
         response = await self._provider.generate(
             GenerateRequest(
                 messages=[{"role": "user", "content": prompt}],
@@ -224,7 +288,7 @@ class StepExecutor:
                 max_turns=turns,
                 timeout=self._timeout,
                 allow_file_access=step.kind in FILE_TOUCHING_KINDS,
-                cwd=self._project_root,
+                cwd=cwd,
             )
         )
 
@@ -270,15 +334,29 @@ class StepExecutor:
                 metadata={"max_turns_hit": max_turns_hit, "turns_used": turns, "attempt": attempt},
             )
 
+        result_meta: dict[str, Any] = {
+            "model": self._model_id,
+            "kind": step.kind.value,
+            "turns_used": turns,
+            "attempt": attempt,
+        }
+        if workspace_id:
+            result_meta["workspace_id"] = workspace_id
+            # Mark workspace as completed (best-effort)
+            try:
+                from agent.work.workspace import WorkspaceManager
+
+                wm = getattr(self, "_workspace_manager", None) or WorkspaceManager()
+                if not getattr(wm, "_db", None):
+                    wm.initialize()
+                wm.complete(workspace_id, output=produced_text[:1000])
+            except Exception:  # noqa: BLE001
+                logger.exception("coordinator_workspace_complete_failed")
+
         return StepExecutionResult(
             success=True,
             summary=produced_text[:3900],
-            metadata={
-                "model": self._model_id,
-                "kind": step.kind.value,
-                "turns_used": turns,
-                "attempt": attempt,
-            },
+            metadata=result_meta,
         )
 
     async def _handle_verify(
