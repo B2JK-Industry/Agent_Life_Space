@@ -1,0 +1,69 @@
+{
+  "_embedded": {
+    "estates": [
+      {
+        "hash_id": 11111111,
+        "name": "Prodej bytu 2+kk 60 m²",
+        "price_czk": {"value_raw": 5500000},
+        "locality": "Praha 2",
+        "has_floor_plan": 1,
+        "labels": ["nová"],
+        "seo": {
+          "category_type_cb": 1,
+          "category_main_cb": 1,
+          "category_sub_cb": 4
+        },
+        "items": [
+          {"name": "Celková plocha", "value": "60 m²"}
+        ],
+        "_links": {
+          "images": [
+            {"href": "https://cdn.sreality.cz/img/11111111/1.jpg"}
+          ]
+        }
+      },
+      {
+        "hash_id": 22222222,
+        "name": "Prodej bytu 2+kk 45 m²",
+        "price_czk": {"value_raw": 9000000},
+        "locality": "Praha 1",
+        "has_floor_plan": 0,
+        "labels": [],
+        "seo": {
+          "category_type_cb": 1,
+          "category_main_cb": 1,
+          "category_sub_cb": 4
+        },
+        "items": [
+          {"name": "Celková plocha", "value": "45 m²"}
+        ],
+        "_links": {
+          "images": [
+            {"href": "https://cdn.sreality.cz/img/22222222/1.jpg"}
+          ]
+        }
+      },
+      {
+        "hash_id": 33333333,
+        "name": "Prodej bytu 2+kk 55 m²",
+        "price_czk": {"value_raw": 3500000},
+        "locality": "Praha 3",
+        "has_floor_plan": 0,
+        "labels": [],
+        "seo": {
+          "category_type_cb": 1,
+          "category_main_cb": 1,
+          "category_sub_cb": 4
+        },
+        "items": [
+          {"name": "Celková plocha", "value": "55 m²"}
+        ],
+        "_links": {
+          "images": [
+            {"href": "https://cdn.sreality.cz/img/33333333/1.jpg"}
+          ]
+        }
+      }
+    ]
+  }
+}

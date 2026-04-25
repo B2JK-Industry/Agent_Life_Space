@@ -132,6 +132,7 @@ class AgentOrchestrator:
         self.initiative: Any = None
         self._secrets_manager: Any = None
         self._secrets_lookup_disabled = False
+        self.realestate: Any = None
         self.control_plane = ControlPlaneStateService(
             storage=ControlPlaneStorage(
                 db_path=str(self._data_dir / "control" / "control.db")
@@ -319,6 +320,62 @@ class AgentOrchestrator:
             logger.info("initiative_engine_initialized")
         except Exception:  # noqa: BLE001
             logger.exception("initiative_engine_init_failed")
+
+        # Real Estate Watcher
+        try:
+            import httpx  # noqa: PLC0415
+            from agent.realestate.report import DailyReporter
+            from agent.realestate.runner import RealEstateRunner
+            from agent.realestate.scorer import RealEstateScorer
+            from agent.realestate.scraper import RealtyScraper
+            from agent.realestate.store import RealEstateStore
+            from agent.tasks.manager import TaskType
+
+            (self._data_dir / "realestate").mkdir(parents=True, exist_ok=True)
+            from agent.realestate.notifier import RealEstateNotifier  # noqa: PLC0415
+
+            _re_store = RealEstateStore(
+                db_path=str(self._data_dir / "realestate" / "realestate.db")
+            )
+            _re_http = httpx.AsyncClient()
+            _re_scraper = RealtyScraper(store=_re_store, http_client=_re_http)
+            _re_scorer = RealEstateScorer()
+            _re_reporter = DailyReporter()
+            _re_notifier = RealEstateNotifier(
+                store=_re_store,
+                telegram_bot=None,  # injected later via runner.set_telegram_bot()
+            )
+            self.realestate = RealEstateRunner(
+                store=_re_store,
+                scraper=_re_scraper,
+                scorer=_re_scorer,
+                notifier=_re_notifier,
+                reporter=_re_reporter,
+            )
+            await self.realestate.initialize()
+            # Register CRON tasks (idempotent by name check)
+            existing_task_names = {t.name for t in self.tasks._tasks.values()}
+            if "realestate_scrape" not in existing_task_names:
+                await self.tasks.create_task(
+                    name="realestate_scrape",
+                    description="Real estate watcher — scrape cycle každých 6h",
+                    task_type=TaskType.CRON,
+                    cron_expression="0 */6 * * *",
+                    tags=["realestate", "cron"],
+                    metadata={"module": "realestate", "action": "run_cycle"},
+                )
+            if "realestate_daily_report" not in existing_task_names:
+                await self.tasks.create_task(
+                    name="realestate_daily_report",
+                    description="Real estate watcher — denný report o 8:00",
+                    task_type=TaskType.CRON,
+                    cron_expression="0 8 * * *",
+                    tags=["realestate", "cron"],
+                    metadata={"module": "realestate", "action": "run_report"},
+                )
+            logger.info("realestate_initialized")
+        except Exception:  # noqa: BLE001
+            logger.exception("realestate_init_failed")
 
         # Register message handlers
         self.router.register_handler(ModuleID.BRAIN, self._handle_brain_message)
